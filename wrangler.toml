@@ -1,0 +1,20 @@
+name = "fleet-secure"
+compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "fleet-secure"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+migrations_dir = "migrations"
+
+[vars]
+APP_TIMEZONE = "Africa/Harare"
+INITIAL_ADMIN_USERNAME = "admin"
+INITIAL_ADMIN_NAME = "System Administrator"
+# Set secrets via Cloudflare Pages dashboard or `wrangler pages secret put`:
+# SESSION_SECRET
+# INITIAL_ADMIN_PIN
+# RESEND_API_KEY
+# EMAIL_FROM

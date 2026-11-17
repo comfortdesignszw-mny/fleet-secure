@@ -1,0 +1,8 @@
+{
+  "name": "Fleet Secure",
+  "description": "Auditable fleet tracking system for car rental yard operations, mileage, fuel monitoring, and tamper-evident logs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
