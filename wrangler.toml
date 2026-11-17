@@ -13,6 +13,9 @@ migrations_dir = "migrations"
 APP_TIMEZONE = "Africa/Harare"
 INITIAL_ADMIN_USERNAME = "admin"
 INITIAL_ADMIN_NAME = "System Administrator"
+
+[assets]
+  directory = "./dist"
 # Set secrets via Cloudflare Pages dashboard or `wrangler pages secret put`:
 # SESSION_SECRET
 # INITIAL_ADMIN_PIN
