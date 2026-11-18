@@ -20,8 +20,13 @@ export interface D1DatabaseLike {
   exec(query: string): Promise<D1ExecResult>;
 }
 
+export interface AssetsFetcherLike {
+  fetch(input: Request | string, init?: RequestInit): Promise<Response>;
+}
+
 export interface AppEnv {
   DB: D1DatabaseLike;
+  ASSETS?: AssetsFetcherLike;
   SESSION_SECRET?: string;
   INITIAL_ADMIN_USERNAME?: string;
   INITIAL_ADMIN_PIN?: string;

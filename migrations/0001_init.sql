@@ -56,6 +56,8 @@ CREATE TABLE IF NOT EXISTS trips (
   client_name TEXT,
   destination TEXT,
   reason TEXT,
+  days_hired INTEGER,
+  expected_return_date TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 

@@ -65,7 +65,11 @@ function isHttpsRequest(c: AppContext): boolean {
     .split(',')[0]
     .trim()
     .toLowerCase();
-  if (effectiveHost.endsWith('.run.app') || effectiveHost.endsWith('.pages.dev')) {
+  if (
+    effectiveHost.endsWith('.run.app') ||
+    effectiveHost.endsWith('.pages.dev') ||
+    effectiveHost.endsWith('.workers.dev')
+  ) {
     return true;
   }
 

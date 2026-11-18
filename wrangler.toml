@@ -1,13 +1,32 @@
 name = "fleet-secure"
+main = "src/index.ts"
 compatibility_date = "2025-02-01"
 compatibility_flags = ["nodejs_compat"]
 
 [assets]
-directory = "./dist"
+directory = "dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = ["/api/*"]
 
 [[d1_databases]]
 binding = "DB"
 database_name = "fleet-secure"
-database_id = "61daa03c-7307-4132-b07b-9bbaba5aa3ff"
+# Omit database_id so Wrangler v4 can auto-provision or match the D1 database in CI,
+# or set your existing D1 UUID explicitly if you already created one:
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+migrations_dir = "migrations"
 
+[triggers]
+crons = ["0 * * * *"]
 
+[vars]
+APP_TIMEZONE = "Africa/Harare"
+INITIAL_ADMIN_USERNAME = "admin"
+INITIAL_ADMIN_NAME = "System Administrator"
+ALLOW_PREVIEW_SIGNUP = "false"
+# Set secrets via Cloudflare Workers dashboard or `npx wrangler secret put`:
+# SESSION_SECRET
+# INITIAL_ADMIN_PIN
+# RESEND_API_KEY
+# EMAIL_FROM

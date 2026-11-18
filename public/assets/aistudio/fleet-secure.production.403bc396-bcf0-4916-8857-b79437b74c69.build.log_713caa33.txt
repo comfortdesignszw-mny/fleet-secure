@@ -1,0 +1,81 @@
+2026-11-18T13:46:44.737Z	Initializing build environment...
+2026-11-18T13:47:06.278Z	Success: Finished initializing build environment
+2026-11-18T13:47:07.130Z	Cloning repository...
+2026-11-18T13:47:08.206Z	Restoring from dependencies cache
+2026-11-18T13:47:08.211Z	Restoring from build output cache
+2026-11-18T13:47:08.216Z	Detected the following tools from environment: bun@1.4.4, nodejs@24.22.1
+2026-11-18T13:47:14.529Z	Success: Dependencies restored from build cache.
+2026-11-18T13:47:14.531Z	Installing project dependencies: bun install --frozen-lockfile
+2026-11-18T13:47:14.729Z	bun install v1.4.4 (38afee6c8)
+2026-11-18T13:47:15.265Z	
+2026-11-18T13:47:15.265Z	+ @types/express@4.17.25
+2026-11-18T13:47:15.265Z	+ @types/node@22.20.5
+2026-11-18T13:47:15.265Z	+ @types/react@19.3.0
+2026-11-18T13:47:15.265Z	+ @types/react-dom@19.3.0
+2026-11-18T13:47:15.265Z	+ autoprefixer@10.6.2
+2026-11-18T13:47:15.265Z	+ esbuild@0.25.12
+2026-11-18T13:47:15.265Z	+ tailwindcss@4.3.5
+2026-11-18T13:47:15.265Z	+ tsx@4.23.15
+2026-11-18T13:47:15.265Z	+ typescript@7.0.2
+2026-11-18T13:47:15.265Z	+ @google/genai@2.32.0
+2026-11-18T13:47:15.265Z	+ @tailwindcss/vite@4.3.5
+2026-11-18T13:47:15.266Z	+ @vitejs/plugin-react@6.3.0
+2026-11-18T13:47:15.266Z	+ dotenv@17.4.2
+2026-11-18T13:47:15.266Z	+ express@4.22.3
+2026-11-18T13:47:15.266Z	+ hono@4.13.19
+2026-11-18T13:47:15.266Z	+ lucide-react@0.546.0
+2026-11-18T13:47:15.266Z	+ motion@12.43.0
+2026-11-18T13:47:15.266Z	+ react@19.3.1
+2026-11-18T13:47:15.266Z	+ react-dom@19.3.1
+2026-11-18T13:47:15.266Z	+ vite@8.3.8
+2026-11-18T13:47:15.266Z	+ vite-plugin-pwa@2.0.0
+2026-11-18T13:47:15.266Z	
+2026-11-18T13:47:15.266Z	469 packages installed [567.00ms]
+2026-11-18T13:47:15.266Z	
+2026-11-18T13:47:15.266Z	Blocked 2 postinstalls. Run `bun pm untrusted` for details.
+2026-11-18T13:47:15.467Z	Executing user build command: bun run build
+2026-11-18T13:47:15.588Z	$ vite build
+2026-11-18T13:47:16.355Z	(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+2026-11-18T13:47:16.355Z	  - `__dirname` (vite.config.ts:103:40). Use `import.meta.dirname` instead
+2026-11-18T13:47:16.355Z	Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+2026-11-18T13:47:16.388Z	vite v8.3.8 building client environment for production...
+2026-11-18T13:47:16.406Z	transforming...
+2026-11-18T13:47:16.774Z	✓ 1685 modules transformed.
+2026-11-18T13:47:16.846Z	rendering chunks...
+2026-11-18T13:47:16.930Z	computing gzip size...
+2026-11-18T13:47:16.939Z	dist/registerSW.js                0.13 kB
+2026-11-18T13:47:16.939Z	dist/manifest.webmanifest         0.57 kB
+2026-11-18T13:47:16.939Z	dist/index.html                   2.21 kB │ gzip:   0.85 kB
+2026-11-18T13:47:16.939Z	dist/assets/index-BXFDYx0L.css   55.83 kB │ gzip:   9.65 kB
+2026-11-18T13:47:16.939Z	dist/assets/index-Bmt2qdz0.js   508.16 kB │ gzip: 124.10 kB
+2026-11-18T13:47:16.939Z	
+2026-11-18T13:47:16.940Z	[plugin builtin:vite-reporter] 
+2026-11-18T13:47:16.940Z	(!) Some chunks are larger than 500 kB after minification. Consider:
+2026-11-18T13:47:16.940Z	- Using dynamic import() to code-split the application
+2026-11-18T13:47:16.940Z	- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+2026-11-18T13:47:16.940Z	- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+2026-11-18T13:47:16.940Z	✓ built in 551ms
+2026-11-18T13:47:20.440Z	
+2026-11-18T13:47:20.440Z	PWA v2.0.0
+2026-11-18T13:47:20.440Z	mode      generateSW
+2026-11-18T13:47:20.440Z	precache  21 entries (1083.70 KiB)
+2026-11-18T13:47:20.440Z	files generated
+2026-11-18T13:47:20.440Z	  dist/sw.js
+2026-11-18T13:47:20.440Z	  dist/workbox-835c8c05.js
+2026-11-18T13:47:20.583Z	Success: Build command completed
+2026-11-18T13:47:20.792Z	Executing user deploy command: npx wrangler deploy
+2026-11-18T13:47:24.263Z	
+2026-11-18T13:47:24.263Z	 ⛅️ wrangler 4.164.0
+2026-11-18T13:47:24.263Z	────────────────────
+2026-11-18T13:47:24.350Z	
+2026-11-18T13:47:24.350Z	Cloudflare collects anonymous telemetry about your usage of Wrangler. Learn more at https://github.com/cloudflare/workers-sdk/tree/main/packages/wrangler/telemetry.md
+2026-11-18T13:47:24.353Z	
+2026-11-18T13:47:24.422Z	✘ [ERROR] The entry-point file at "src/index.ts" was not found.
+2026-11-18T13:47:24.423Z	
+2026-11-18T13:47:24.423Z	  
+2026-11-18T13:47:24.423Z	  This might mean that your entry-point file needs to be generated (which is the general case when a framework is being used).
+2026-11-18T13:47:24.423Z	  If that's the case please run your project's build command and try again.
+2026-11-18T13:47:24.423Z	
+2026-11-18T13:47:24.423Z	
+2026-11-18T13:47:24.490Z	🪵  Logs were written to "/opt/buildhome/.config/.wrangler/logs/wrangler-2026-11-18_13-47-23_618.log"
+2026-11-18T13:47:24.625Z	Failed: error occurred while running deploy command

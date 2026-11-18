@@ -47,63 +47,34 @@ Replaces paper vehicle record books with immutable OUT/IN trip logs, automatic m
 
 ---
 
-## Step-by-Step Deployment to Cloudflare Pages + D1 (via GitHub)
+## Step-by-Step Deployment to Cloudflare Workers + D1 (via GitHub)
 
-### Step 1: Create the Cloudflare D1 Database
-Install or run Wrangler and log in:
+### Step 1: Connect GitHub to Cloudflare Workers
+1. Push this repository to GitHub.
+2. In the **Cloudflare Dashboard**, go to **Workers & Pages -> Create -> Workers -> Connect to Git**.
+3. Select your repository and configure:
+   - **Build command:** `bun run build` (or `npm run build`)
+   - **Deploy command:** `npx wrangler deploy`
+4. `wrangler.toml` is already configured with `main = "src/index.ts"`, `[assets]` serving `dist/`, hourly cron triggers, and the `DB` D1 binding.
+
+### Step 2: Configure D1 Database (Optional Manual Pinning)
+With Wrangler v4, omitting `database_id` in `wrangler.toml` allows automatic D1 provisioning during `npx wrangler deploy`, and the Worker automatically bootstraps tables on first request.
+If you prefer to create and pin your D1 database manually:
 ```bash
 npx wrangler login
 npx wrangler d1 create fleet-secure
-```
-Copy the `database_id` printed in the terminal output.
-
-### Step 2: Update `wrangler.toml`
-Open `wrangler.toml` and replace `REPLACE_WITH_YOUR_D1_DATABASE_ID` with your real `database_id`:
-```toml
-[[d1_databases]]
-binding = "DB"
-database_name = "fleet-secure"
-database_id = "YOUR-REAL-D1-DATABASE-ID"
-migrations_dir = "migrations"
-```
-
-### Step 3: Run Database Migrations
-Apply the initial tables to your remote D1 database:
-```bash
 npx wrangler d1 migrations apply fleet-secure --remote
 ```
+Then uncomment `database_id = "..."` in `wrangler.toml` and paste your real UUID.
 
-### Step 4: Connect GitHub to Cloudflare Pages
-1. Push this repository to GitHub.
-2. In the **Cloudflare Dashboard**, go to **Workers & Pages -> Create -> Pages -> Connect to Git**.
-3. Select your repository and configure the build:
-   - **Build command:** `npm run build`
-   - **Build output directory:** `dist`
-4. Click **Save and Deploy**.
-
-### Step 5: Bind D1 (`DB`) in Cloudflare Pages
-1. In your Pages project, open **Settings -> Functions -> D1 database bindings**.
-2. Add binding:
-   - **Variable name:** `DB`
-   - **D1 database:** `fleet-secure`
-3. Save.
-
-### Step 6: Set Production Secrets
-In **Settings -> Environment variables** (Production), add **Encrypted / Secret** variables:
+### Step 3: Set Production Secrets
+In **Workers & Pages -> Settings -> Variables and Secrets** (or via `npx wrangler secret put`), add:
 - `SESSION_SECRET`: A long random string (at least 32 characters).
 - `INITIAL_ADMIN_PIN`: Your starting Admin PIN/password (you will be forced to change it on first login).
 - `INITIAL_ADMIN_USERNAME` *(optional, defaults to `admin`)*.
 - `RESEND_API_KEY` *(optional, for email alerts)* and `EMAIL_FROM` *(e.g. `alerts@yourdomain.com`)*.
 
-Redeploy once after adding bindings and secrets so Pages Functions pick them up.
-
-### Step 7: Optional Hourly Overdue-Hire Cron Worker
-If you want overdue-hire alerts checked every hour even when nobody has the app open:
-1. Put your real `database_id` into `wrangler.cron.toml`.
-2. Deploy the lightweight cron worker:
-   ```bash
-   npx wrangler deploy -c wrangler.cron.toml
-   ```
+Redeploy once after adding secrets so the Worker picks them up.
 
 ---
 
