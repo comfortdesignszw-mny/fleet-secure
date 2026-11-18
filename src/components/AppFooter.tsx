@@ -17,7 +17,7 @@ export const AppFooter: React.FC<AppFooterProps> = ({ compact = false }) => {
           <span className="inline-flex h-6 w-6 items-center justify-center rounded-lg bg-gradient-to-br from-blue-700 to-cyan-500 text-white shadow-sm">
             <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
           </span>
-          <span>© Fleet Secure. All Rights Reserved</span>
+          <span>© 2026 Fleet Secure. All Rights Reserved</span>
         </div>
 
         <div className="flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-xs sm:text-sm text-slate-600">
