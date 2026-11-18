@@ -6,7 +6,7 @@ pages_build_output_dir = "dist"
 [[d1_databases]]
 binding = "DB"
 database_name = "fleet-secure"
-database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+database_id = "61daa03c-7307-4132-b07b-9bbaba5aa3ff"
 migrations_dir = "migrations"
 
 [vars]
