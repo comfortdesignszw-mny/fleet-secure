@@ -25,6 +25,7 @@ APP_TIMEZONE = "Africa/Harare"
 INITIAL_ADMIN_USERNAME = "admin"
 INITIAL_ADMIN_NAME = "Munyaradzi Muchineripi"
 ALLOW_PREVIEW_SIGNUP = "false"
+EMAIL_FROM = "fleetsecure.alerts@resend.dev"
 # Set secrets via Cloudflare Workers dashboard or `npx wrangler secret put`:
 # SESSION_SECRET
 # INITIAL_ADMIN_PIN
