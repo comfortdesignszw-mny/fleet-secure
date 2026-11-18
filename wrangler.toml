@@ -4,7 +4,6 @@ compatibility_flags = ["nodejs_compat"]
 
 [assets]
 directory = "./dist"
-"not_found_handling": "single-page-applicatin"
 
 [[d1_databases]]
 binding = "DB"
