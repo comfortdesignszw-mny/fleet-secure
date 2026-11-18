@@ -23,7 +23,7 @@ crons = ["0 * * * *"]
 [vars]
 APP_TIMEZONE = "Africa/Harare"
 INITIAL_ADMIN_USERNAME = "admin"
-INITIAL_ADMIN_NAME = "System Administrator"
+INITIAL_ADMIN_NAME = "Munyaradzi Muchineripi"
 ALLOW_PREVIEW_SIGNUP = "false"
 # Set secrets via Cloudflare Workers dashboard or `npx wrangler secret put`:
 # SESSION_SECRET
