@@ -12,6 +12,7 @@ import {
   type VehicleClass,
 } from '../shared/types';
 import type { RouteAuthDeps } from './directories';
+import { checkAndNotifyOverdueHires } from './notifications';
 import type { AppEnv, D1DatabaseLike } from './types';
 
 function toHarareDateStr(date: Date): string {
@@ -47,7 +48,7 @@ export function registerDashboardRoutes(
   const { requireAuth, requirePinChanged } = deps;
 
   // Read-only dashboard visible to EVERY logged-in user (Driver, Supervisor, Admin)
-  app.get('/dashboard', requireAuth, requirePinChanged(), async (c) => {
+  app.get('/dashboard', requireAuth, async (c) => {
     const now = new Date();
     const todayStr = toHarareDateStr(now);
     const monthStartStr = `${todayStr.slice(0, 7)}-01`;
@@ -56,6 +57,8 @@ export function registerDashboardRoutes(
     const toParam = (c.req.query('to') || '').trim();
     const rangeFrom = /^\d{4}-\d{2}-\d{2}$/.test(fromParam) ? fromParam : monthStartStr;
     const rangeTo = /^\d{4}-\d{2}-\d{2}$/.test(toParam) ? toParam : todayStr;
+
+    await checkAndNotifyOverdueHires(c.env.DB, { env: c.env });
 
     const overdueHours = await getOverdueHours(c.env.DB);
     const nowMs = now.getTime();
@@ -90,7 +93,8 @@ export function registerDashboardRoutes(
     // 2. All trips (for accurate Harare date grouping, monthly totals, flags, overdue, and per-vehicle stats)
     const { results: tripRows } = await c.env.DB.prepare(
       `SELECT
-         t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason, t.created_at,
+         t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason,
+         t.days_hired, t.expected_return_date, t.created_at,
          v.reg_number, v.make_model, v.vehicle_type, v.vehicle_class,
          d.full_name AS driver_name, d.phone AS driver_phone,
          tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -169,6 +173,14 @@ export function registerDashboardRoutes(
       }
 
       if (status === 'OPEN') {
+        const daysHired =
+          r.days_hired !== null && r.days_hired !== undefined ? Number(r.days_hired) : null;
+        const expectedReturnDate = r.expected_return_date ? String(r.expected_return_date) : null;
+        const isReturnDue =
+          tripType === 'HIRE' &&
+          Boolean(expectedReturnDate) &&
+          expectedReturnDate! <= todayStr;
+
         longestVehiclesOut.push({
           id: Number(r.id),
           trip_type: tripType,
@@ -178,6 +190,9 @@ export function registerDashboardRoutes(
           client_name: r.client_name ? String(r.client_name) : null,
           destination: r.destination ? String(r.destination) : null,
           reason: r.reason ? String(r.reason) : null,
+          days_hired: daysHired,
+          expected_return_date: expectedReturnDate,
+          is_return_due: isReturnDue,
           created_at: String(r.created_at),
           reg_number: String(r.reg_number),
           make_model: String(r.make_model),

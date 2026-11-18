@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownLeft,
@@ -7,15 +7,18 @@ import {
   CheckCircle2,
   ClipboardCheck,
   Clock,
+  Database,
   HelpCircle,
   KeyRound,
+  Plus,
   RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Trash2,
   WifiOff,
+  X,
 } from 'lucide-react';
-import { api } from '../lib/api';
+import { api, ApiError } from '../lib/api';
 import {
   OFFLINE_QUEUE_EVENT,
   flushOfflineQueue,
@@ -31,6 +34,7 @@ import {
   type TripType,
   type UserPublic,
 } from '../shared/types';
+import { DashboardView } from './DashboardView';
 import { TripInForm } from './TripInForm';
 import { TripOutForm } from './TripOutForm';
 
@@ -50,13 +54,25 @@ export type NavSection =
 interface HomeViewProps {
   user: UserPublic;
   companyName: string;
+  homeResetKey?: number;
   onNavigate: (section: NavSection, tripId?: number) => void;
+  onOpenVehicle: (vehicleId: number) => void;
+  onOpenPinSettings: () => void;
 }
 
 type ActiveYardMode =
   | { kind: 'OUT'; tripType: TripType }
   | { kind: 'IN'; tripType: TripType; tripId?: number | null }
   | null;
+
+function getHarareTodayDateStr(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
 
 function formatElapsed(outAt: string): string {
   const diffMs = Math.max(0, Date.now() - new Date(outAt).getTime());
@@ -70,17 +86,38 @@ function formatElapsed(outAt: string): string {
   return `${days}d ${remHours}h out`;
 }
 
-export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigate }) => {
+export const HomeView: React.FC<HomeViewProps> = ({
+  user,
+  companyName,
+  homeResetKey = 0,
+  onNavigate,
+  onOpenVehicle,
+  onOpenPinSettings,
+}) => {
   const [mode, setMode] = useState<ActiveYardMode>(null);
   const [ongoing, setOngoing] = useState<TripSummary[]>([]);
   const [loadingOngoing, setLoadingOngoing] = useState(true);
   const [queuedEntries, setQueuedEntries] = useState<QueuedTripEntry[]>(() => getOfflineQueue());
   const [syncingQueue, setSyncingQueue] = useState(false);
+  const [showSandboxSeed, setShowSandboxSeed] = useState(false);
+  const [seedingDemo, setSeedingDemo] = useState(false);
+  const [pinActionWarning, setPinActionWarning] = useState(false);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [headerRecordOpen, setHeaderRecordOpen] = useState(false);
   const [savedBanner, setSavedBanner] = useState<{
     message: string;
     flags: TripFlag[];
     tripId: number | null;
   } | null>(null);
+
+  const dueReturns = useMemo(() => {
+    const todayHarare = getHarareTodayDateStr();
+    return ongoing.filter(
+      (t) =>
+        t.trip_type === 'HIRE' &&
+        (t.is_return_due || (t.expected_return_date !== null && t.expected_return_date <= todayHarare))
+    );
+  }, [ongoing]);
 
   const loadOngoing = useCallback(async () => {
     setLoadingOngoing(true);
@@ -105,14 +142,120 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
   }, []);
 
   useEffect(() => {
+    setMode(null);
+    setPinActionWarning(false);
+    setQuickActionsOpen(false);
+    setHeaderRecordOpen(false);
+  }, [homeResetKey]);
+
+  useEffect(() => {
+    if (!headerRecordOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setHeaderRecordOpen(false);
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [headerRecordOpen]);
+
+  useEffect(() => {
+    if (!user.must_change_pin) {
+      setPinActionWarning(false);
+    }
+  }, [user.must_change_pin]);
+
+  useEffect(() => {
     loadOngoing();
   }, [loadOngoing]);
+
+  useEffect(() => {
+    if (user.role !== 'ADMIN' || user.must_change_pin) return;
+    api
+      .getPreviewStatus()
+      .then((res) => {
+        setShowSandboxSeed(res.previewSignupEnabled && res.vehicleCount === 0);
+      })
+      .catch(() => {
+        setShowSandboxSeed(false);
+      });
+  }, [user.role, user.must_change_pin]);
 
   useEffect(() => {
     const refresh = () => setQueuedEntries(getOfflineQueue());
     window.addEventListener(OFFLINE_QUEUE_EVENT, refresh);
     return () => window.removeEventListener(OFFLINE_QUEUE_EVENT, refresh);
   }, []);
+
+  const openYardAction = (nextMode: Exclude<ActiveYardMode, null>) => {
+    setHeaderRecordOpen(false);
+    if (user.must_change_pin) {
+      setPinActionWarning(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    setPinActionWarning(false);
+    setMode(nextMode);
+  };
+
+  const compactActions: Array<{
+    label: string;
+    hint: string;
+    mode: Exclude<ActiveYardMode, null>;
+    icon: React.ComponentType<{ className?: string }>;
+    badgeClass: string;
+  }> = [
+    {
+      label: 'Hire Out a Vehicle',
+      hint: 'Client, mileage & fuel out',
+      mode: { kind: 'OUT', tripType: 'HIRE' },
+      icon: ArrowUpRight,
+      badgeClass: 'from-blue-700 to-blue-600',
+    },
+    {
+      label: 'Send on Errands',
+      hint: 'Destination, mileage & fuel out',
+      mode: { kind: 'OUT', tripType: 'ERRAND' },
+      icon: Car,
+      badgeClass: 'from-blue-600 to-cyan-500',
+    },
+    {
+      label: 'Record Hire Return',
+      hint: 'Close hire & check mileage',
+      mode: { kind: 'IN', tripType: 'HIRE' },
+      icon: ArrowDownLeft,
+      badgeClass: 'from-cyan-600 to-blue-600',
+    },
+    {
+      label: 'Record an Errand Return',
+      hint: 'Closing mileage & fuel',
+      mode: { kind: 'IN', tripType: 'ERRAND' },
+      icon: ClipboardCheck,
+      badgeClass: 'from-sky-600 to-cyan-500',
+    },
+  ];
+
+  const handleLoadDemoData = async () => {
+    setSeedingDemo(true);
+    try {
+      const res = await api.seedDemoData();
+      setShowSandboxSeed(false);
+      setSavedBanner({
+        message: `Loaded sample preview fleet: ${res.vehiclesAdded} vehicles, ${res.driversAdded} drivers, and ${res.tripsAdded} sample trips.`,
+        flags: [],
+        tripId: null,
+      });
+      await loadOngoing();
+    } catch (err) {
+      setSavedBanner({
+        message: err instanceof ApiError ? err.message : 'Could not load sample fleet data.',
+        flags: [],
+        tripId: null,
+      });
+    } finally {
+      setSeedingDemo(false);
+    }
+  };
 
   const handleSyncNow = async () => {
     setSyncingQueue(true);
@@ -190,35 +333,198 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
   }
 
   return (
-    <div className="space-y-8">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <p className="text-sm font-medium text-slate-500">
+          <p className="text-sm font-medium text-cyan-700">
             {companyName} · {ROLE_LABELS[user.role]}
           </p>
-          <h1 className="mt-1 font-display text-2xl sm:text-3xl font-bold text-slate-900">
+          <h1 className="mt-1 font-display text-2xl sm:text-3xl font-bold text-blue-950">
             Welcome, {user.full_name}
           </h1>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2.5 self-start sm:self-auto">
           <button
             type="button"
-            onClick={() => onNavigate('change-pin')}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            onClick={() => setHeaderRecordOpen(true)}
+            aria-expanded={headerRecordOpen}
+            aria-haspopup="dialog"
+            className="cyan-glow-btn inline-flex min-h-[40px] items-center gap-1.5 rounded-xl px-3.5 py-2 text-xs font-semibold whitespace-nowrap shrink-0"
           >
-            <KeyRound className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <span>Change PIN</span>
+            <Plus className="h-4 w-4" aria-hidden="true" />
+            <span>Record</span>
           </button>
+
           <button
             type="button"
             onClick={() => onNavigate('help')}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+            className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 py-2 text-xs font-semibold text-blue-900 whitespace-nowrap shrink-0"
           >
-            <HelpCircle className="h-4 w-4 text-slate-500" aria-hidden="true" />
+            <HelpCircle className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Help</span>
           </button>
         </div>
       </div>
+
+      {headerRecordOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Quick Actions menu"
+          onClick={() => setHeaderRecordOpen(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-2xl border border-blue-200 bg-white p-5 shadow-2xl space-y-3"
+          >
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-cyan-700">
+                  Quick Actions
+                </div>
+                <h2 className="font-display text-lg font-bold text-blue-950">
+                  Record Vehicle Movement
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHeaderRecordOpen(false)}
+                aria-label="Close quick actions"
+                className="cyan-glow-outline flex min-h-[40px] min-w-[40px] items-center justify-center rounded-xl border border-blue-200 bg-white text-slate-600"
+              >
+                <X className="h-4 w-4" aria-hidden="true" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 gap-2">
+              {compactActions.map((act) => {
+                const Icon = act.icon;
+                return (
+                  <button
+                    key={act.label}
+                    type="button"
+                    onClick={() => openYardAction(act.mode)}
+                    className="cyan-glow-card group flex min-h-[56px] items-center gap-3 rounded-xl border border-blue-200/80 bg-blue-50/30 px-3.5 py-2.5 text-left transition-all hover:border-cyan-400"
+                  >
+                    <div
+                      className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${act.badgeClass} text-white shadow-xs`}
+                    >
+                      <Icon className="h-4 w-4" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-blue-950 group-hover:text-blue-700 truncate">
+                        {act.label}
+                      </div>
+                      <div className="text-xs text-slate-500 truncate">{act.hint}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {user.must_change_pin && (
+        <section
+          role={pinActionWarning ? 'alert' : 'region'}
+          aria-label="First login PIN setup prompt"
+          className={`cyan-glow-card rounded-2xl border p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between ${
+            pinActionWarning
+              ? 'border-amber-400 bg-amber-50'
+              : 'border-cyan-300 bg-gradient-to-r from-amber-50 via-white to-cyan-50'
+          }`}
+        >
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-amber-500 to-blue-700 text-white shadow-sm">
+              <KeyRound className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-blue-950">
+                {pinActionWarning
+                  ? 'Please Set Your Personal PIN First'
+                  : 'First Login: Change Your Temporary PIN'}
+              </h2>
+              <p className="mt-0.5 text-sm text-slate-700">
+                {pinActionWarning
+                  ? 'Before recording a trip or return, please change your temporary PIN to a personal PIN of your choice in Settings.'
+                  : 'For your account security, please replace your temporary sign-in PIN with a personal PIN that only you know.'}
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onOpenPinSettings}
+            className="cyan-glow-btn inline-flex min-h-[48px] shrink-0 items-center justify-center gap-2 rounded-xl px-5 text-sm font-semibold whitespace-nowrap"
+          >
+            <KeyRound className="h-4 w-4" aria-hidden="true" />
+            <span>Change PIN in Settings</span>
+          </button>
+        </section>
+      )}
+
+      {dueReturns.length > 0 && (
+        <section
+          role="alert"
+          aria-label="Vehicle return due reminders"
+          className="rounded-2xl border border-red-300 bg-red-50/90 p-4 sm:p-5 space-y-3"
+        >
+          <div className="flex items-center gap-2.5 text-red-900">
+            <AlertTriangle className="h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
+            <h2 className="text-base font-bold">
+              Vehicle Return Due Reminder ({dueReturns.length})
+            </h2>
+          </div>
+          <div className="divide-y divide-red-200 rounded-xl border border-red-200 bg-white">
+            {dueReturns.map((t) => (
+              <div
+                key={t.id}
+                className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
+              >
+                <div className="text-sm text-blue-950">
+                  <strong className="font-mono">{t.reg_number}</strong> ({t.make_model}) hired to{' '}
+                  <strong>{t.client_name}</strong> is due to return on{' '}
+                  <strong className="font-mono text-red-700">{t.expected_return_date}</strong>.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => openYardAction({ kind: 'IN', tripType: 'HIRE', tripId: t.id })}
+                  className="cyan-glow-btn min-h-[40px] self-start sm:self-center rounded-xl px-3.5 text-xs font-semibold whitespace-nowrap shrink-0"
+                >
+                  Record Return
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {showSandboxSeed && (
+        <section className="cyan-glow-card rounded-2xl border border-cyan-300 bg-gradient-to-r from-blue-50 via-white to-cyan-50 p-5 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-start gap-3.5">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-blue-700 to-cyan-500 text-white shadow-sm">
+              <Database className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="text-base font-bold text-blue-950">
+                Preview Sandbox: Fleet is Empty
+              </h2>
+              <p className="mt-0.5 text-sm text-slate-600">
+                Load 10 sample vehicles, 8 drivers, and 2 trips with one click so you can test Hire Out, Errand Return, Flags, Audit Trail, and Reports immediately.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            disabled={seedingDemo}
+            onClick={handleLoadDemoData}
+            className="cyan-glow-btn min-h-[48px] shrink-0 rounded-xl px-5 text-sm font-semibold whitespace-nowrap disabled:opacity-60"
+          >
+            {seedingDemo ? 'Loading Sample Data...' : 'Load Sample Fleet'}
+          </button>
+        </section>
+      )}
 
       {savedBanner && (
         <div
@@ -226,12 +532,12 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
           className={`rounded-2xl border p-4 space-y-2 ${
             savedBanner.flags.some((f) => f.severity === 'HIGH')
               ? 'border-amber-300 bg-amber-50 text-amber-950'
-              : 'border-emerald-200 bg-emerald-50 text-emerald-950'
+              : 'border-cyan-300 bg-cyan-50/70 text-blue-950'
           }`}
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2 font-semibold text-sm">
-              <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+              <CheckCircle2 className="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
               <span>{savedBanner.message}</span>
             </div>
             <div className="flex items-center gap-3">
@@ -239,7 +545,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
                 <button
                   type="button"
                   onClick={() => onNavigate('trips', savedBanner.tripId!)}
-                  className="text-sm font-semibold underline underline-offset-2"
+                  className="text-sm font-semibold text-blue-700 underline underline-offset-2 hover:text-cyan-700"
                 >
                   View Trip #{savedBanner.tripId}
                 </button>
@@ -247,7 +553,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
               <button
                 type="button"
                 onClick={() => setSavedBanner(null)}
-                className="text-sm font-medium opacity-75 hover:opacity-100"
+                className="text-sm font-medium text-blue-800 opacity-75 hover:opacity-100"
               >
                 Dismiss
               </button>
@@ -284,7 +590,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
               type="button"
               disabled={syncingQueue}
               onClick={handleSyncNow}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold disabled:opacity-60"
             >
               <RefreshCw
                 className={`h-4 w-4 ${syncingQueue ? 'animate-spin' : ''}`}
@@ -318,7 +624,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
                     setQueuedEntries(getOfflineQueue());
                   }}
                   aria-label={`Remove queued entry ${item.summaryLabel}`}
-                  className="inline-flex min-h-[40px] self-start sm:self-center items-center gap-1.5 rounded-lg border border-slate-200 px-3 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  className="cyan-glow-outline inline-flex min-h-[40px] self-start sm:self-center items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
                 >
                   <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
                   <span>Discard</span>
@@ -329,88 +635,88 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
         </section>
       )}
 
-      {/* Primary Yard Actions (4 large tap targets) */}
-      <section aria-labelledby="yard-actions-heading">
-        <h2 id="yard-actions-heading" className="text-base font-semibold text-slate-800">
-          Record Vehicle Movement
-        </h2>
-        <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => setMode({ kind: 'OUT', tripType: 'HIRE' })}
-            className="flex min-h-[88px] items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
-          >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-900 text-white">
-              <ArrowUpRight className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-900">Hire Out a Vehicle</div>
-              <div className="mt-0.5 text-sm text-slate-600">
-                Record client name, mileage, and fuel when leaving
-              </div>
-            </div>
-          </button>
+      {/* Embedded Fleet Dashboard on Top (right after Welcome & alerts) */}
+      <DashboardView
+        embedded
+        onOpenVehicle={onOpenVehicle}
+        onOpenTrip={(tid) => onNavigate('trips', tid)}
+      />
 
+      {/* Quick Actions (compact bar just below Dashboard, + Record toggles small quick-action buttons) */}
+      <section
+        aria-labelledby="yard-actions-heading"
+        className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 id="yard-actions-heading" className="text-sm font-bold text-blue-950">
+              Quick Actions
+            </h2>
+            <p className="text-xs text-slate-500">
+              Tap + Record to log a vehicle hire, errand, or return
+            </p>
+          </div>
           <button
             type="button"
-            onClick={() => setMode({ kind: 'IN', tripType: 'HIRE' })}
-            className="flex min-h-[88px] items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
+            onClick={() => setQuickActionsOpen((v) => !v)}
+            aria-expanded={quickActionsOpen}
+            className="cyan-glow-btn inline-flex min-h-[36px] shrink-0 items-center gap-1.5 rounded-xl px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
           >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-emerald-700 text-white">
-              <ArrowDownLeft className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-900">Return a Hired Vehicle</div>
-              <div className="mt-0.5 text-sm text-slate-600">
-                Close an open hire and check total mileage and fuel
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMode({ kind: 'OUT', tripType: 'ERRAND' })}
-            className="flex min-h-[88px] items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
-          >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-amber-600 text-white">
-              <Car className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-900">Send on Errand</div>
-              <div className="mt-0.5 text-sm text-slate-600">
-                Log staff destination, reason, mileage, and fuel
-              </div>
-            </div>
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setMode({ kind: 'IN', tripType: 'ERRAND' })}
-            className="flex min-h-[88px] items-center gap-4 rounded-2xl border border-slate-200 bg-white p-5 text-left transition-colors hover:border-slate-400 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900"
-          >
-            <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-sky-700 text-white">
-              <ClipboardCheck className="h-6 w-6" aria-hidden="true" />
-            </div>
-            <div>
-              <div className="text-lg font-semibold text-slate-900">Errand Returned</div>
-              <div className="mt-0.5 text-sm text-slate-600">
-                Record return mileage and closing fuel level
-              </div>
-            </div>
+            {quickActionsOpen ? (
+              <>
+                <X className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Hide</span>
+              </>
+            ) : (
+              <>
+                <Plus className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>Record</span>
+              </>
+            )}
           </button>
         </div>
+
+        {quickActionsOpen && (
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 border-t border-blue-100 pt-3">
+            {compactActions.map((act) => {
+              const Icon = act.icon;
+              return (
+                <button
+                  key={act.label}
+                  type="button"
+                  onClick={() => openYardAction(act.mode)}
+                  className="cyan-glow-card group flex min-h-[54px] items-center gap-2.5 rounded-xl border border-blue-200/80 bg-blue-50/30 px-3 py-2 text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500"
+                >
+                  <div
+                    className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br ${act.badgeClass} text-white shadow-xs`}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs font-semibold text-blue-950 group-hover:text-blue-700 leading-tight">
+                      {act.label}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-slate-500 truncate">
+                      {act.hint}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </section>
 
       {/* Ongoing Trips (Live) */}
-      <section aria-labelledby="ongoing-heading" className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        <div className="flex items-center justify-between gap-4 border-b border-slate-200 px-5 py-4">
-          <h2 id="ongoing-heading" className="text-base font-semibold text-slate-900">
+      <section aria-labelledby="ongoing-heading" className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden shadow-sm shadow-blue-900/5">
+        <div className="flex items-center justify-between gap-4 border-b border-blue-100 bg-gradient-to-r from-white to-blue-50/60 px-5 py-4">
+          <h2 id="ongoing-heading" className="text-base font-semibold text-blue-950">
             Ongoing Trips ({ongoing.length})
           </h2>
           <button
             type="button"
             onClick={() => onNavigate('trips')}
-            className="text-sm font-semibold text-slate-700 hover:text-slate-900 underline underline-offset-2"
+            className="text-sm font-semibold text-blue-700 hover:text-cyan-600 underline underline-offset-2"
           >
             All Trips
           </button>
@@ -423,23 +729,23 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
             All vehicles are currently parked in the yard.
           </div>
         ) : (
-          <div className="divide-y divide-slate-200">
+          <div className="divide-y divide-blue-100">
             {ongoing.map((t) => (
               <div
                 key={t.id}
-                className="p-4 sm:px-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between"
+                className="p-4 sm:px-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between transition-colors hover:bg-cyan-50/40"
               >
                 <div
                   onClick={() => onNavigate('trips', t.id)}
                   className="space-y-1 cursor-pointer min-w-0"
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-mono text-base font-bold text-slate-900">
+                    <span className="font-mono text-base font-bold text-blue-950">
                       {t.reg_number}
                     </span>
-                    <span aria-hidden="true" className="text-slate-400">·</span>
+                    <span aria-hidden="true" className="text-cyan-500">·</span>
                     <span className="text-base font-medium text-slate-800">{t.make_model}</span>
-                    <span aria-hidden="true" className="text-slate-400">·</span>
+                    <span aria-hidden="true" className="text-cyan-500">·</span>
                     <span
                       className={`inline-flex items-center gap-1 text-sm font-semibold ${
                         t.is_overdue ? 'text-red-700' : 'text-amber-700'
@@ -448,7 +754,7 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
                       <Clock className="h-4 w-4" aria-hidden="true" />
                       <span>
                         {formatElapsed(t.out_at)}
-                        {t.is_overdue ? ' (Overdue)' : ''}
+                        {t.is_return_due ? ' (Return Due)' : t.is_overdue ? ' (Overdue)' : ''}
                       </span>
                     </span>
                   </div>
@@ -457,15 +763,19 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
                   </div>
                   <div className="text-xs font-mono tabular-nums text-slate-500">
                     Left {formatHarareTime(t.out_at)} · {t.mileage_out.toLocaleString()} km · Fuel {t.fuel_out}
+                    {t.trip_type === 'HIRE' && t.days_hired !== null ? ` · ${t.days_hired}d hire` : ''}
+                    {t.trip_type === 'HIRE' && t.expected_return_date
+                      ? ` · Due ${t.expected_return_date}`
+                      : ''}
                   </div>
                 </div>
 
                 <button
                   type="button"
                   onClick={() =>
-                    setMode({ kind: 'IN', tripType: t.trip_type, tripId: t.id })
+                    openYardAction({ kind: 'IN', tripType: t.trip_type, tripId: t.id })
                   }
-                  className="min-h-[48px] self-start sm:self-center rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+                  className="cyan-glow-btn min-h-[48px] self-start sm:self-center rounded-xl px-4 text-sm font-semibold whitespace-nowrap shrink-0"
                 >
                   Record Return
                 </button>
@@ -477,18 +787,22 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
 
       {(user.role === 'SUPERVISOR' || user.role === 'ADMIN') && (
         <section aria-labelledby="admin-tools-heading">
-          <h2 id="admin-tools-heading" className="text-base font-semibold text-slate-800">
-            Supervisor & Admin Quick Access
+          <h2 id="admin-tools-heading" className="text-base font-semibold text-blue-950">
+            Supervisor &amp; Admin Quick Access
           </h2>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <button
               type="button"
               onClick={() => onNavigate('audit')}
-              className="flex min-h-[72px] items-center gap-3.5 rounded-2xl border border-slate-200 bg-white p-5 text-left hover:border-slate-400 hover:bg-slate-50"
+              className="cyan-glow-card group flex min-h-[76px] items-center gap-3.5 rounded-2xl border border-blue-200/80 bg-white p-5 text-left"
             >
-              <ShieldCheck className="h-6 w-6 shrink-0 text-emerald-700" aria-hidden="true" />
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-cyan-600 group-hover:bg-cyan-500 group-hover:text-white transition-colors">
+                <ShieldCheck className="h-6 w-6" aria-hidden="true" />
+              </div>
               <div>
-                <div className="text-base font-semibold text-slate-900">Audit Log & Integrity Check</div>
+                <div className="text-base font-semibold text-blue-950 group-hover:text-blue-700">
+                  Audit Log &amp; Integrity Check
+                </div>
                 <div className="text-sm text-slate-600">
                   Inspect permanent logs and verify the SHA-256 hash chain
                 </div>
@@ -499,11 +813,15 @@ export const HomeView: React.FC<HomeViewProps> = ({ user, companyName, onNavigat
               <button
                 type="button"
                 onClick={() => onNavigate('settings')}
-                className="flex min-h-[72px] items-center gap-3.5 rounded-2xl border border-slate-200 bg-white p-5 text-left hover:border-slate-400 hover:bg-slate-50"
+                className="cyan-glow-card group flex min-h-[76px] items-center gap-3.5 rounded-2xl border border-blue-200/80 bg-white p-5 text-left"
               >
-                <SlidersHorizontal className="h-6 w-6 shrink-0 text-slate-800" aria-hidden="true" />
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                  <SlidersHorizontal className="h-6 w-6" aria-hidden="true" />
+                </div>
                 <div>
-                  <div className="text-base font-semibold text-slate-900">Settings & Staff Accounts</div>
+                  <div className="text-base font-semibold text-blue-950 group-hover:text-blue-700">
+                    Settings &amp; Staff Accounts
+                  </div>
                   <div className="text-sm text-slate-600">
                     Manage users, roles, fuel rules, and company profile
                   </div>

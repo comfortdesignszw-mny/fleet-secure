@@ -173,9 +173,19 @@ export async function notifyManagersInApp(
   }
 }
 
+function toHarareDateStr(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 /**
- * Scans open HIRE trips against `overdue_hire_hours` and creates HIGH-priority
- * alerts once per overdue trip. Safe to invoke on cron ticks or periodic polls.
+ * Scans open HIRE trips against `overdue_hire_hours` and `expected_return_date`,
+ * creating HIGH-priority alerts once per overdue / due-return trip.
+ * Safe to invoke on cron ticks, dashboard loads, or periodic polls.
  */
 export async function checkAndNotifyOverdueHires(
   db: D1DatabaseLike,
@@ -190,7 +200,8 @@ export async function checkAndNotifyOverdueHires(
 
     const { results: openHires } = await db
       .prepare(
-        `SELECT t.id, t.client_name, v.reg_number, v.make_model, d.full_name AS driver_name, tout.out_at
+        `SELECT t.id, t.client_name, t.days_hired, t.expected_return_date,
+                v.reg_number, v.make_model, d.full_name AS driver_name, tout.out_at
          FROM trips t
          JOIN trip_out tout ON tout.trip_id = t.id
          JOIN vehicles v ON v.id = t.vehicle_id
@@ -200,6 +211,8 @@ export async function checkAndNotifyOverdueHires(
       .all<{
         id: number;
         client_name: string | null;
+        days_hired: number | null;
+        expected_return_date: string | null;
         reg_number: string;
         make_model: string;
         driver_name: string;
@@ -207,49 +220,89 @@ export async function checkAndNotifyOverdueHires(
       }>();
 
     const nowMs = Date.now();
+    const todayHarare = toHarareDateStr(new Date(nowMs));
     let newlyNotified = 0;
 
     for (const hire of openHires) {
       const elapsedHours = (nowMs - new Date(hire.out_at).getTime()) / 3_600_000;
-      if (elapsedHours <= limitHours) continue;
+      if (elapsedHours > limitHours) {
+        const existingOverdue = await db
+          .prepare(
+            `SELECT id FROM notifications WHERE event_type = 'HIRE_OVERDUE' AND trip_id = ? LIMIT 1`
+          )
+          .bind(hire.id)
+          .first<{ id: number }>();
 
-      const existingAlert = await db
-        .prepare(
-          `SELECT id FROM notifications WHERE event_type = 'HIRE_OVERDUE' AND trip_id = ? LIMIT 1`
-        )
-        .bind(hire.id)
-        .first<{ id: number }>();
+        if (!existingOverdue) {
+          const hoursText = Math.floor(elapsedHours);
+          await notifyManagersInApp(
+            db,
+            {
+              eventType: 'HIRE_OVERDUE',
+              priority: 'HIGH',
+              title: `Overdue Hire: ${hire.reg_number} (${hoursText}h out)`,
+              body: `${hire.reg_number} (${hire.make_model}) hired to ${hire.client_name || 'client'} with driver ${hire.driver_name} has been out for ${hoursText} hours (limit: ${limitHours}h).`,
+              tripId: hire.id,
+            },
+            options
+          );
 
-      if (existingAlert) continue;
+          await recordAudit(db, {
+            userId: null,
+            username: 'system',
+            userRole: 'SYSTEM',
+            action: 'OVERDUE_HIRE_DETECTED',
+            entity: 'trips',
+            entityId: hire.id,
+            newValue: {
+              reg_number: hire.reg_number,
+              elapsed_hours: hoursText,
+              limit_hours: limitHours,
+            },
+          });
 
-      const hoursText = Math.floor(elapsedHours);
-      await notifyManagersInApp(
-        db,
-        {
-          eventType: 'HIRE_OVERDUE',
-          priority: 'HIGH',
-          title: `Overdue Hire: ${hire.reg_number} (${hoursText}h out)`,
-          body: `${hire.reg_number} (${hire.make_model}) hired to ${hire.client_name || 'client'} with driver ${hire.driver_name} has been out for ${hoursText} hours (limit: ${limitHours}h).`,
-          tripId: hire.id,
-        },
-        options
-      );
+          newlyNotified++;
+        }
+      }
 
-      await recordAudit(db, {
-        userId: null,
-        username: 'system',
-        userRole: 'SYSTEM',
-        action: 'OVERDUE_HIRE_DETECTED',
-        entity: 'trips',
-        entityId: hire.id,
-        newValue: {
-          reg_number: hire.reg_number,
-          elapsed_hours: hoursText,
-          limit_hours: limitHours,
-        },
-      });
+      if (hire.expected_return_date && hire.expected_return_date <= todayHarare) {
+        const existingDue = await db
+          .prepare(
+            `SELECT id FROM notifications WHERE event_type = 'HIRE_RETURN_DUE' AND trip_id = ? LIMIT 1`
+          )
+          .bind(hire.id)
+          .first<{ id: number }>();
 
-      newlyNotified++;
+        if (!existingDue) {
+          await notifyManagersInApp(
+            db,
+            {
+              eventType: 'HIRE_RETURN_DUE',
+              priority: 'HIGH',
+              title: `Vehicle Return Due: ${hire.reg_number} (Due ${hire.expected_return_date})`,
+              body: `Reminder: ${hire.reg_number} (${hire.make_model}) hired to ${hire.client_name || 'client'} with driver ${hire.driver_name} is due to return on ${hire.expected_return_date}.`,
+              tripId: hire.id,
+            },
+            options
+          );
+
+          await recordAudit(db, {
+            userId: null,
+            username: 'system',
+            userRole: 'SYSTEM',
+            action: 'HIRE_RETURN_DUE_DETECTED',
+            entity: 'trips',
+            entityId: hire.id,
+            newValue: {
+              reg_number: hire.reg_number,
+              days_hired: hire.days_hired,
+              expected_return_date: hire.expected_return_date,
+            },
+          });
+
+          newlyNotified++;
+        }
+      }
     }
 
     return { checked: openHires.length, newlyNotified };

@@ -133,7 +133,7 @@ export function registerDirectoryRoutes(
     const vehicleClass = (c.req.query('vehicle_class') || '').trim();
     const includeInactive = c.req.query('includeInactive') === '1';
     const page = Math.max(1, Number(c.req.query('page') || 1));
-    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || 25)));
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 25)));
     const offset = (page - 1) * limit;
 
     const clauses: string[] = [];
@@ -209,7 +209,7 @@ export function registerDirectoryRoutes(
 
     const { results: trips } = await c.env.DB.prepare(
       `SELECT
-         t.id, t.trip_type, t.status, t.client_name, t.destination,
+         t.id, t.trip_type, t.status, t.client_name, t.destination, t.days_hired, t.expected_return_date,
          d.full_name AS driver_name,
          tout.out_at, tout.mileage_out,
          tin.in_at, tin.mileage_in, tin.total_mileage
@@ -509,7 +509,7 @@ export function registerDirectoryRoutes(
     const expiringOnly = c.req.query('expiring') === '1';
     const includeInactive = c.req.query('includeInactive') === '1';
     const page = Math.max(1, Number(c.req.query('page') || 1));
-    const limit = Math.min(100, Math.max(1, Number(c.req.query('limit') || 25)));
+    const limit = Math.min(500, Math.max(1, Number(c.req.query('limit') || 25)));
     const offset = (page - 1) * limit;
 
     const clauses: string[] = [];
@@ -580,7 +580,7 @@ export function registerDirectoryRoutes(
 
     const { results: trips } = await c.env.DB.prepare(
       `SELECT
-         t.id, t.trip_type, t.status, t.client_name, t.destination,
+         t.id, t.trip_type, t.status, t.client_name, t.destination, t.days_hired, t.expected_return_date,
          v.reg_number, v.make_model,
          tout.out_at,
          tin.in_at, tin.total_mileage

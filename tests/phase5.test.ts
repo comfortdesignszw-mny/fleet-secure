@@ -283,3 +283,144 @@ test('External email graceful skip & WhatsApp stub interface', async () => {
   assert.equal(waRes.ok, true);
   assert.equal(waRes.stubbed, true);
 });
+
+test('Hire days_hired, expected_return_date persistence across histories, and HIRE_RETURN_DUE notifications', async () => {
+  const { db, env } = createTestEnv();
+  const app = createApp();
+
+  const adminCookie = await loginAndChangePin(app, env, 'admin', '1234', '9999');
+
+  const vRes = await app.fetch(
+    new Request('http://localhost/api/vehicles', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        reg_number: 'AGB 4412',
+        vehicle_type: 'SUV',
+        make_model: 'Toyota Fortuner',
+        condition: 'Very Good',
+        last_known_mileage: 22000,
+      }),
+    }),
+    env
+  );
+  assert.equal(vRes.status, 201);
+  const v = ((await vRes.json()) as { vehicle: { id: number } }).vehicle;
+
+  const dRes = await app.fetch(
+    new Request('http://localhost/api/drivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        full_name: 'Rudo Chikwanda',
+        licence_number: 'ZW-88412',
+        phone: '+263772441122',
+        address: 'Harare',
+        licence_expiry: '2029-12-31',
+      }),
+    }),
+    env
+  );
+  assert.equal(dRes.status, 201);
+  const d = ((await dRes.json()) as { driver: { id: number } }).driver;
+
+  const todayHarare = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+
+  const outRes = await app.fetch(
+    new Request('http://localhost/api/trips/out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        trip_type: 'HIRE',
+        vehicle_id: v.id,
+        driver_id: d.id,
+        client_name: 'Zambezi Logistics',
+        days_hired: 3,
+        expected_return_date: todayHarare,
+        mileage_out: 22000,
+        fuel_out: 'Full',
+        opening_checklist_by: 'Test Admin',
+      }),
+    }),
+    env
+  );
+  assert.equal(outRes.status, 201);
+  const outBody = (await outRes.json()) as { trip: TripSummary };
+  assert.equal(outBody.trip.days_hired, 3);
+  assert.equal(outBody.trip.expected_return_date, todayHarare);
+  assert.equal(outBody.trip.is_return_due, true);
+
+  // Verify persistence in GET /trips, GET /trips/:id, GET /vehicles/:id, GET /drivers/:id, GET /dashboard
+  const listRes = await app.fetch(
+    new Request('http://localhost/api/trips', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(listRes.status, 200);
+  const listBody = (await listRes.json()) as { items: TripSummary[] };
+  assert.equal(listBody.items[0].days_hired, 3);
+  assert.equal(listBody.items[0].expected_return_date, todayHarare);
+  assert.equal(listBody.items[0].is_return_due, true);
+
+  const detailRes = await app.fetch(
+    new Request(`http://localhost/api/trips/${outBody.trip.id}`, { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(detailRes.status, 200);
+  const detailBody = (await detailRes.json()) as { trip: TripSummary };
+  assert.equal(detailBody.trip.days_hired, 3);
+  assert.equal(detailBody.trip.expected_return_date, todayHarare);
+
+  const vehDetailRes = await app.fetch(
+    new Request(`http://localhost/api/vehicles/${v.id}`, { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(vehDetailRes.status, 200);
+  const vehDetailBody = (await vehDetailRes.json()) as {
+    trips: Array<{ days_hired: number | null; expected_return_date: string | null }>;
+  };
+  assert.equal(vehDetailBody.trips[0].days_hired, 3);
+  assert.equal(vehDetailBody.trips[0].expected_return_date, todayHarare);
+
+  const drvDetailRes = await app.fetch(
+    new Request(`http://localhost/api/drivers/${d.id}`, { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(drvDetailRes.status, 200);
+  const drvDetailBody = (await drvDetailRes.json()) as {
+    trips: Array<{ days_hired: number | null; expected_return_date: string | null }>;
+  };
+  assert.equal(drvDetailBody.trips[0].days_hired, 3);
+  assert.equal(drvDetailBody.trips[0].expected_return_date, todayHarare);
+
+  const dashRes = await app.fetch(
+    new Request('http://localhost/api/dashboard', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(dashRes.status, 200);
+  const dashBody = (await dashRes.json()) as { longest_vehicles_out: TripSummary[] };
+  assert.equal(dashBody.longest_vehicles_out[0].days_hired, 3);
+  assert.equal(dashBody.longest_vehicles_out[0].expected_return_date, todayHarare);
+  assert.equal(dashBody.longest_vehicles_out[0].is_return_due, true);
+
+  // Verify HIRE_RETURN_DUE notification created & deduplicated
+  const notifRes = await app.fetch(
+    new Request('http://localhost/api/notifications', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(notifRes.status, 200);
+  const notifBody = (await notifRes.json()) as { items: NotificationRecord[] };
+  const dueAlerts = notifBody.items.filter(
+    (n) => n.event_type === 'HIRE_RETURN_DUE' && n.trip_id === outBody.trip.id
+  );
+  assert.equal(dueAlerts.length, 1);
+  assert.ok(dueAlerts[0].body.includes(todayHarare));
+  assert.ok(dueAlerts[0].body.includes('AGB 4412'));
+
+  const repeatCheck = await checkAndNotifyOverdueHires(db, { env });
+  assert.equal(repeatCheck.newlyNotified, 0);
+});

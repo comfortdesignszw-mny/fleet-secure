@@ -1,22 +1,17 @@
 import { api, ApiError } from './api';
-import type { FuelLevel, TripFlag, TripSummary, TripType } from '../shared/types';
+import type {
+  CreateTripOutPayload,
+  FuelLevel,
+  TripFlag,
+  TripSummary,
+} from '../shared/types';
 
 export const OFFLINE_QUEUE_KEY = 'fleet_secure_offline_queue_v1';
 export const OFFLINE_QUEUE_EVENT = 'fleet-secure-offline-queue-changed';
 
-export interface OutTripPayload {
-  trip_type: TripType;
-  vehicle_id: number;
-  driver_id: number;
-  client_name?: string;
-  destination?: string;
-  reason?: string;
-  mileage_out: number;
-  fuel_out: FuelLevel;
-  opening_checklist_by: string;
-  notes?: string;
+export type OutTripPayload = CreateTripOutPayload & {
   device_time: string;
-}
+};
 
 export interface InTripPayload {
   trip_id: number;

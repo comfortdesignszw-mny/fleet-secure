@@ -58,10 +58,10 @@ export const OfflineIndicator: React.FC = () => {
   return (
     <div
       role="status"
-      className={`fixed bottom-20 left-4 right-4 md:bottom-5 md:left-auto md:right-5 z-40 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-medium shadow-sm ${
+      className={`fixed bottom-20 left-4 right-4 md:bottom-5 md:left-auto md:right-5 z-40 flex items-center justify-between gap-3 rounded-xl border px-4 py-3 text-sm font-medium shadow-md ${
         !isOnline
           ? 'border-amber-300 bg-amber-50 text-amber-900'
-          : 'border-slate-300 bg-white text-slate-900'
+          : 'border-cyan-300 bg-white text-blue-950 shadow-cyan-500/15'
       }`}
     >
       <div className="flex items-center gap-2.5">
@@ -69,7 +69,7 @@ export const OfflineIndicator: React.FC = () => {
           <WifiOff className="h-4 w-4 shrink-0 text-amber-700" aria-hidden="true" />
         ) : (
           <RefreshCw
-            className={`h-4 w-4 shrink-0 text-slate-700 ${syncing ? 'animate-spin' : ''}`}
+            className={`h-4 w-4 shrink-0 text-cyan-600 ${syncing ? 'animate-spin' : ''}`}
             aria-hidden="true"
           />
         )}
@@ -88,7 +88,7 @@ export const OfflineIndicator: React.FC = () => {
         <button
           type="button"
           onClick={handleManualSync}
-          className="rounded-lg bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white hover:bg-slate-800 whitespace-nowrap"
+          className="cyan-glow-btn rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
         >
           Sync Now
         </button>

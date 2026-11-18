@@ -24,13 +24,22 @@ async function startServer() {
     APP_URL: process.env.APP_URL,
     RESEND_API_KEY: process.env.RESEND_API_KEY,
     EMAIL_FROM: process.env.EMAIL_FROM,
+    ALLOW_PREVIEW_SIGNUP: process.env.ALLOW_PREVIEW_SIGNUP ?? 'true',
   };
 
   // Mount /api/* onto the shared Hono router using Web Standard Request/Response
   expressApp.use('/api', async (req, res) => {
     try {
-      const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-      const host = req.headers.host || `localhost:${PORT}`;
+      const rawProto = req.headers['x-forwarded-proto'];
+      const protocol =
+        (Array.isArray(rawProto) ? rawProto[0] : rawProto)?.split(',')[0]?.trim() ||
+        req.protocol ||
+        'http';
+      const rawForwardedHost = req.headers['x-forwarded-host'];
+      const forwardedHost = (Array.isArray(rawForwardedHost) ? rawForwardedHost[0] : rawForwardedHost)
+        ?.split(',')[0]
+        ?.trim();
+      const host = forwardedHost || req.headers.host || `localhost:${PORT}`;
       const url = `${protocol}://${host}${req.originalUrl}`;
 
       const headers = new Headers();

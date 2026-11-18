@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { KeyRound, LogOut } from 'lucide-react';
 import { en } from '../i18n/en';
 import { api, ApiError } from '../lib/api';
+import { AppFooter } from './AppFooter';
 import type { UserPublic } from '../shared/types';
 
 interface ChangePinViewProps {
@@ -59,113 +60,132 @@ export const ChangePinView: React.FC<ChangePinViewProps> = ({
     }
   };
 
-  return (
-    <div className={forced ? 'min-h-screen bg-slate-50 flex items-center justify-center px-4 py-8' : ''}>
-      <div className="mx-auto w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 sm:p-8">
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-amber-100 text-amber-800">
+  const card = (
+    <div className="mx-auto w-full max-w-md rounded-2xl border border-blue-200/80 bg-white p-6 sm:p-8 shadow-lg shadow-blue-900/5">
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-2.5">
+          <img
+            src="/pwa-192x192.png"
+            alt="Fleet Secure logo"
+            referrerPolicy="no-referrer"
+            className="h-10 w-10 rounded-xl shadow-sm object-cover ring-1 ring-blue-200/80"
+          />
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-blue-700 to-cyan-500 text-white shadow-sm">
             <KeyRound className="h-5 w-5" aria-hidden="true" />
           </div>
-          {forced && onLogout && (
+        </div>
+        {forced && onLogout && (
+          <button
+            type="button"
+            onClick={onLogout}
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-blue-200 bg-white px-3 py-2 text-sm font-medium text-blue-900"
+          >
+            <LogOut className="h-4 w-4 text-blue-600" aria-hidden="true" />
+            <span>{en.auth.signOut}</span>
+          </button>
+        )}
+      </div>
+
+      <h1 className="mt-4 font-display text-2xl font-bold text-blue-950">
+        {forced ? en.auth.mustChangeTitle : 'Change your PIN or Password'}
+      </h1>
+      <p className="mt-2 text-base text-slate-600">
+        {forced
+          ? `Signed in as ${user.full_name} (${user.username}). ${en.auth.mustChangeHint}`
+          : `Signed in as ${user.full_name} (${user.username}). Choose a private PIN only you know.`}
+      </p>
+
+      {error && (
+        <div
+          role="alert"
+          className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-800"
+        >
+          {error}
+        </div>
+      )}
+
+      {success && (
+        <div
+          role="status"
+          className="mt-5 rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-blue-950"
+        >
+          {success}
+        </div>
+      )}
+
+      <form onSubmit={handleSubmit} className="mt-6 space-y-4">
+        <div>
+          <label htmlFor="current-pin" className="block text-sm font-semibold text-blue-950">
+            {en.auth.currentPinLabel}
+          </label>
+          <input
+            id="current-pin"
+            type="password"
+            value={currentPin}
+            onChange={(e) => setCurrentPin(e.target.value)}
+            className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base text-slate-900"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="new-pin" className="block text-sm font-semibold text-blue-950">
+            {en.auth.newPinLabel}
+          </label>
+          <input
+            id="new-pin"
+            type="password"
+            value={newPin}
+            onChange={(e) => setNewPin(e.target.value)}
+            placeholder="At least 4 characters"
+            className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base text-slate-900"
+          />
+        </div>
+
+        <div>
+          <label htmlFor="confirm-pin" className="block text-sm font-semibold text-blue-950">
+            {en.auth.confirmPinLabel}
+          </label>
+          <input
+            id="confirm-pin"
+            type="password"
+            value={confirmPin}
+            onChange={(e) => setConfirmPin(e.target.value)}
+            className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base text-slate-900"
+          />
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3 pt-2">
+          <button
+            type="submit"
+            disabled={loading}
+            className="cyan-glow-btn flex-1 min-h-[48px] rounded-xl px-5 py-3 text-base font-semibold disabled:opacity-60"
+          >
+            {loading ? 'Saving...' : en.auth.saveNewPin}
+          </button>
+          {!forced && onCancel && (
             <button
               type="button"
-              onClick={onLogout}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+              onClick={onCancel}
+              className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-white px-5 py-3 text-base font-medium text-blue-900"
             >
-              <LogOut className="h-4 w-4" aria-hidden="true" />
-              <span>{en.auth.signOut}</span>
+              Cancel
             </button>
           )}
         </div>
-
-        <h1 className="mt-4 font-display text-2xl font-bold text-slate-900">
-          {forced ? en.auth.mustChangeTitle : 'Change your PIN or Password'}
-        </h1>
-        <p className="mt-2 text-base text-slate-600">
-          {forced
-            ? `Signed in as ${user.full_name} (${user.username}). ${en.auth.mustChangeHint}`
-            : `Signed in as ${user.full_name} (${user.username}). Choose a private PIN only you know.`}
-        </p>
-
-        {error && (
-          <div
-            role="alert"
-            className="mt-5 rounded-xl border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-800"
-          >
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div
-            role="status"
-            className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
-          >
-            {success}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-          <div>
-            <label htmlFor="current-pin" className="block text-sm font-semibold text-slate-800">
-              {en.auth.currentPinLabel}
-            </label>
-            <input
-              id="current-pin"
-              type="password"
-              value={currentPin}
-              onChange={(e) => setCurrentPin(e.target.value)}
-              className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-4 text-base text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="new-pin" className="block text-sm font-semibold text-slate-800">
-              {en.auth.newPinLabel}
-            </label>
-            <input
-              id="new-pin"
-              type="password"
-              value={newPin}
-              onChange={(e) => setNewPin(e.target.value)}
-              placeholder="At least 4 characters"
-              className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-4 text-base text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="confirm-pin" className="block text-sm font-semibold text-slate-800">
-              {en.auth.confirmPinLabel}
-            </label>
-            <input
-              id="confirm-pin"
-              type="password"
-              value={confirmPin}
-              onChange={(e) => setConfirmPin(e.target.value)}
-              className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-4 text-base text-slate-900 focus:border-slate-900 focus:outline-none focus:ring-2 focus:ring-slate-900/15"
-            />
-          </div>
-
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <button
-              type="submit"
-              disabled={loading}
-              className="flex-1 min-h-[48px] rounded-xl bg-slate-900 px-5 py-3 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
-            >
-              {loading ? 'Saving...' : en.auth.saveNewPin}
-            </button>
-            {!forced && onCancel && (
-              <button
-                type="button"
-                onClick={onCancel}
-                className="min-h-[48px] rounded-xl border border-slate-300 bg-white px-5 py-3 text-base font-medium text-slate-700 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </form>
-      </div>
+      </form>
     </div>
   );
+
+  if (forced) {
+    return (
+      <div className="min-h-screen bg-[#F4F9FF] flex flex-col justify-between px-4 py-8">
+        <div className="my-auto">{card}</div>
+        <div className="mx-auto mt-8 w-full max-w-2xl">
+          <AppFooter compact />
+        </div>
+      </div>
+    );
+  }
+
+  return card;
 };

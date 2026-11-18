@@ -98,7 +98,24 @@ test('Auth flow, forced PIN change, RBAC, and login lockout', async () => {
   const loginBody = (await loginRes.json()) as { user: { must_change_pin: boolean } };
   assert.equal(loginBody.user.must_change_pin, true);
 
-  // 2. Blocked from settings until initial PIN is changed
+  // 2. First-login user can view landing Dashboard and Ongoing Trips immediately
+  const firstDashRes = await app.fetch(
+    new Request('http://localhost/api/dashboard', {
+      headers: { Cookie: cookiePair },
+    }),
+    env
+  );
+  assert.equal(firstDashRes.status, 200);
+
+  const firstTripsRes = await app.fetch(
+    new Request('http://localhost/api/trips?status=OPEN&limit=50', {
+      headers: { Cookie: cookiePair },
+    }),
+    env
+  );
+  assert.equal(firstTripsRes.status, 200);
+
+  // 3. Blocked from admin settings until initial PIN is changed
   const blockedRes = await app.fetch(
     new Request('http://localhost/api/settings', {
       headers: { Cookie: cookiePair },
@@ -107,7 +124,7 @@ test('Auth flow, forced PIN change, RBAC, and login lockout', async () => {
   );
   assert.equal(blockedRes.status, 403);
 
-  // 3. Change PIN
+  // 4. Change PIN
   const changeRes = await app.fetch(
     new Request('http://localhost/api/auth/change-pin', {
       method: 'POST',

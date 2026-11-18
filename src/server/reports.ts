@@ -106,7 +106,7 @@ async function buildReportDataset(
 
     let sql = `
       SELECT
-        t.id, t.trip_type, t.status, t.client_name, t.destination, t.reason,
+        t.id, t.trip_type, t.status, t.client_name, t.destination, t.reason, t.days_hired, t.expected_return_date,
         v.reg_number, v.make_model, v.vehicle_class,
         d.full_name AS driver_name,
         tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -171,6 +171,8 @@ async function buildReportDataset(
           r.trip_type === 'HIRE'
             ? String(r.client_name ?? '')
             : `${r.destination ?? ''}${r.reason ? ` (${r.reason})` : ''}`,
+        days_hired: r.days_hired !== null && r.days_hired !== undefined ? Number(r.days_hired) : '-',
+        expected_return: r.expected_return_date ? String(r.expected_return_date) : '-',
         out_at: formatHarareTime(outAt),
         in_at: r.in_at ? formatHarareTime(String(r.in_at)) : 'Still Out',
         km_out: Number(r.mileage_out),
@@ -188,17 +190,19 @@ async function buildReportDataset(
 
     columnDefs = [
       { key: 'trip_id', label: 'ID', width: 5 },
-      { key: 'type', label: 'Type', width: 7 },
-      { key: 'status', label: 'Status', width: 10 },
-      { key: 'reg_number', label: 'Vehicle', width: 10 },
-      { key: 'driver', label: 'Driver', width: 13 },
-      { key: 'purpose', label: 'Client / Destination', width: 16 },
-      { key: 'out_at', label: 'Left (Harare)', width: 14 },
-      { key: 'in_at', label: 'Returned', width: 14 },
-      { key: 'distance_km', label: 'Km', width: 7 },
-      { key: 'fuel_out_in', label: 'Gauge', width: 11 },
-      { key: 'est_vs_gauge_l', label: 'Est/Gge L', width: 10 },
-      { key: 'flags', label: 'Flags', width: 13 },
+      { key: 'type', label: 'Type', width: 6 },
+      { key: 'status', label: 'Status', width: 9 },
+      { key: 'reg_number', label: 'Vehicle', width: 9 },
+      { key: 'driver', label: 'Driver', width: 12 },
+      { key: 'purpose', label: 'Client / Destination', width: 14 },
+      { key: 'days_hired', label: 'Days', width: 5 },
+      { key: 'expected_return', label: 'Exp. Return', width: 10 },
+      { key: 'out_at', label: 'Left (Harare)', width: 13 },
+      { key: 'in_at', label: 'Returned', width: 13 },
+      { key: 'distance_km', label: 'Km', width: 6 },
+      { key: 'fuel_out_in', label: 'Gauge', width: 10 },
+      { key: 'est_vs_gauge_l', label: 'Est/Gge L', width: 9 },
+      { key: 'flags', label: 'Flags', width: 12 },
     ];
 
     summary['Total Trips'] = rows.length;

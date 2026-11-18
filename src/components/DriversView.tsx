@@ -33,7 +33,7 @@ const CACHE_KEY = 'fleet_secure_cache_drivers';
 function DriverStatusText({ status }: { status: DerivedStatus }) {
   if (status === 'Available') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-cyan-700">
         <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span>Available</span>
       </span>
@@ -77,7 +77,7 @@ function LicenceExpiryIndicator({
     );
   }
   if (status === 'OK' && expiry) {
-    return <span className="text-sm font-mono tabular-nums text-slate-700">{expiry}</span>;
+    return <span className="text-sm font-mono tabular-nums text-blue-950">{expiry}</span>;
   }
   return <span className="text-sm text-slate-400">Not recorded</span>;
 }
@@ -121,6 +121,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
       destination: string | null;
       out_at: string | null;
       in_at: string | null;
+      days_hired: number | null;
+      expected_return_date: string | null;
       total_mileage: number | null;
     }>
   >([]);
@@ -276,9 +278,9 @@ export const DriversView: React.FC<DriversViewProps> = ({
               setSelectedId(null);
               setDetailDriver(null);
             }}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
           >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <ArrowLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Back to Drivers</span>
           </button>
 
@@ -286,7 +288,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
             <button
               type="button"
               onClick={() => openEditModal(detailDriver)}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+              className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
             >
               <Edit3 className="h-4 w-4" aria-hidden="true" />
               <span>Edit Driver</span>
@@ -297,7 +299,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
         {notice && (
           <div
             role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+            className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-cyan-900"
           >
             {notice}
           </div>
@@ -312,30 +314,30 @@ export const DriversView: React.FC<DriversViewProps> = ({
         )}
 
         {detailLoading || !detailDriver ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-base text-slate-600">
+          <div className="rounded-2xl border border-blue-200/80 bg-white p-6 text-base text-slate-600 shadow-xs">
             Loading driver record...
           </div>
         ) : (
           <>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="text-sm font-mono text-slate-500">
+                  <div className="text-sm font-mono text-cyan-700 font-medium">
                     Licence: {detailDriver.licence_number}
                     {!detailDriver.active && ' · Inactive'}
                   </div>
-                  <h1 className="mt-1 font-display text-2xl font-bold text-slate-900">
+                  <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
                     {detailDriver.full_name}
                   </h1>
                 </div>
                 <DriverStatusText status={detailDriver.derived_status} />
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-slate-200 pt-5 sm:grid-cols-3">
+              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-blue-100 pt-5 sm:grid-cols-3">
                 <div>
                   <div className="text-xs font-medium text-slate-500">Phone Number</div>
-                  <div className="mt-1 flex items-center gap-1.5 text-base font-medium text-slate-900">
-                    <Phone className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                  <div className="mt-1 flex items-center gap-1.5 text-base font-medium text-blue-950">
+                    <Phone className="h-4 w-4 text-cyan-600" aria-hidden="true" />
                     <span className="font-mono">{detailDriver.phone}</span>
                   </div>
                 </div>
@@ -360,33 +362,37 @@ export const DriversView: React.FC<DriversViewProps> = ({
               </div>
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <h2 className="text-lg font-semibold text-slate-900">Driver Trip History</h2>
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
+              <h2 className="text-lg font-semibold text-blue-950">Driver Trip History</h2>
               {detailTrips.length === 0 ? (
                 <p className="mt-2 text-base text-slate-600">
                   No trips recorded for this driver yet.
                 </p>
               ) : (
-                <div className="mt-4 divide-y divide-slate-200">
+                <div className="mt-4 divide-y divide-blue-100">
                   {detailTrips.map((t) => (
                     <div
                       key={t.id}
                       onClick={() => onOpenTrip?.(t.id)}
                       className={`py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between ${
-                        onOpenTrip ? 'cursor-pointer hover:bg-slate-50 rounded-lg px-2 -mx-2' : ''
+                        onOpenTrip ? 'cursor-pointer hover:bg-cyan-50/45 rounded-lg px-2 -mx-2 transition-colors' : ''
                       }`}
                     >
                       <div>
-                        <div className="text-sm font-semibold text-slate-900">
+                        <div className="text-sm font-semibold text-blue-950">
                           {t.trip_type} · {t.reg_number} ({t.make_model})
                           {t.client_name ? ` · Client: ${t.client_name}` : ''}
                           {t.destination ? ` · ${t.destination}` : ''}
                         </div>
                         <div className="text-xs font-mono tabular-nums text-slate-500">
                           Out: {formatHarareTime(t.out_at)} · In: {formatHarareTime(t.in_at)}
+                          {t.trip_type === 'HIRE' && t.days_hired !== null ? ` · ${t.days_hired}d` : ''}
+                          {t.trip_type === 'HIRE' && t.expected_return_date
+                            ? ` · Due ${t.expected_return_date}`
+                            : ''}
                         </div>
                       </div>
-                      <div className="text-sm font-mono tabular-nums text-slate-800">
+                      <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
                         {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
                       </div>
                     </div>
@@ -404,7 +410,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">Drivers Directory</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">Drivers Directory</h1>
           <p className="mt-1 text-base text-slate-600">
             Driver contact records, licence expiry checks, and live availability. Tap a driver for history.
           </p>
@@ -414,7 +420,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
           <button
             type="button"
             onClick={openCreateModal}
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+            className="cyan-glow-btn inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold whitespace-nowrap shrink-0"
           >
             <Plus className="h-5 w-5" aria-hidden="true" />
             <span>Add Driver</span>
@@ -459,7 +465,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
       {notice && (
         <div
           role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+          className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-cyan-900"
         >
           {notice}
         </div>
@@ -481,12 +487,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
           setPage(1);
           setQuery(searchInput.trim());
         }}
-        className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+        className="rounded-2xl border border-blue-200/80 bg-white p-4 space-y-3 shadow-xs"
       >
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <Search
-              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-cyan-600"
               aria-hidden="true"
             />
             <input
@@ -494,12 +500,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search name, licence number, or phone..."
-              className="block w-full min-h-[48px] rounded-xl border border-slate-300 pl-11 pr-4 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
+              className="cyan-glow-input block w-full min-h-[48px] rounded-xl border border-blue-200 pl-11 pr-4 text-base text-blue-950 placeholder:text-slate-400"
             />
           </div>
           <button
             type="submit"
-            className="min-h-[48px] rounded-xl border border-slate-300 bg-slate-100 px-5 text-sm font-semibold text-slate-900 hover:bg-slate-200 whitespace-nowrap shrink-0"
+            className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-blue-50/70 px-5 text-sm font-semibold text-blue-950 whitespace-nowrap shrink-0"
           >
             Search
           </button>
@@ -513,7 +519,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
           >
             <option value="">All availability</option>
             <option value="Available">Available</option>
@@ -521,7 +527,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
             <option value="Out on Errand">Out on Errand</option>
           </select>
 
-          <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-blue-950 cursor-pointer">
             <input
               type="checkbox"
               checked={expiringOnly}
@@ -529,13 +535,13 @@ export const DriversView: React.FC<DriversViewProps> = ({
                 setExpiringOnly(e.target.checked);
                 setPage(1);
               }}
-              className="h-5 w-5 rounded border-slate-300 text-slate-900"
+              className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600"
             />
             <span>Expiring / expired licence only</span>
           </label>
 
           {canManage && (
-            <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-blue-950 cursor-pointer">
               <input
                 type="checkbox"
                 checked={includeInactive}
@@ -543,7 +549,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   setIncludeInactive(e.target.checked);
                   setPage(1);
                 }}
-                className="h-5 w-5 rounded border-slate-300 text-slate-900"
+                className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600"
               />
               <span>Show disabled drivers</span>
             </label>
@@ -552,7 +558,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
       </form>
 
       {/* Drivers Table / Cards */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-blue-200/80 bg-white shadow-xs">
         {loading ? (
           <div className="p-6 text-base text-slate-500">Loading drivers...</div>
         ) : items.length === 0 ? (
@@ -562,7 +568,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
               <button
                 type="button"
                 onClick={openCreateModal}
-                className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white hover:bg-slate-800"
+                className="cyan-glow-btn inline-flex min-h-[48px] items-center gap-2 rounded-xl px-5 text-sm font-semibold"
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 <span>Add First Driver</span>
@@ -574,7 +580,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                  <tr className="border-b border-blue-100 bg-blue-50/60 text-xs font-semibold text-blue-900">
                     <th className="py-3 px-4">Full Name</th>
                     <th className="py-3 px-4">Licence No.</th>
                     <th className="py-3 px-4">Phone</th>
@@ -583,14 +589,14 @@ export const DriversView: React.FC<DriversViewProps> = ({
                     {canManage && <th className="py-3 px-4 text-right">Actions</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 text-sm">
+                <tbody className="divide-y divide-blue-100 text-sm">
                   {items.map((d) => (
                     <tr
                       key={d.id}
                       onClick={() => loadDriverDetail(d.id)}
-                      className="cursor-pointer hover:bg-slate-50 transition-colors"
+                      className="cursor-pointer hover:bg-cyan-50/45 transition-colors"
                     >
-                      <td className="py-3.5 px-4 font-semibold text-slate-900">
+                      <td className="py-3.5 px-4 font-semibold text-blue-950">
                         {d.full_name}
                         {!d.active && (
                           <span className="ml-2 text-xs font-normal text-red-700">(Disabled)</span>
@@ -616,9 +622,9 @@ export const DriversView: React.FC<DriversViewProps> = ({
                           <button
                             type="button"
                             onClick={() => openEditModal(d)}
-                            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                            className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
                           >
-                            <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
+                            <Edit3 className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
                             <span>Manage</span>
                           </button>
                         </td>
@@ -629,16 +635,16 @@ export const DriversView: React.FC<DriversViewProps> = ({
               </table>
             </div>
 
-            <div className="divide-y divide-slate-200 md:hidden">
+            <div className="divide-y divide-blue-100 md:hidden">
               {items.map((d) => (
                 <div
                   key={d.id}
                   onClick={() => loadDriverDetail(d.id)}
-                  className="p-4 space-y-2 cursor-pointer active:bg-slate-50"
+                  className="p-4 space-y-2 cursor-pointer hover:bg-cyan-50/40 active:bg-cyan-50/70 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="text-base font-bold text-slate-900">
+                      <div className="text-base font-bold text-blue-950">
                         {d.full_name}
                         {!d.active && (
                           <span className="ml-2 text-xs font-medium text-red-700">Disabled</span>
@@ -664,7 +670,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
                           e.stopPropagation();
                           openEditModal(d);
                         }}
-                        className="min-h-[44px] rounded-lg border border-slate-300 px-3.5 text-sm font-semibold text-slate-800"
+                        className="cyan-glow-outline min-h-[44px] rounded-lg border border-blue-200 bg-white px-3.5 text-sm font-semibold text-blue-900"
                       >
                         Manage
                       </button>
@@ -680,46 +686,46 @@ export const DriversView: React.FC<DriversViewProps> = ({
       {/* Pagination */}
       <div className="flex items-center justify-between gap-4">
         <div className="text-sm text-slate-600 tabular-nums">
-          Total: <span className="font-semibold text-slate-900">{total}</span> drivers
+          Total: <span className="font-semibold text-blue-950">{total}</span> drivers
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <ChevronLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Prev</span>
           </button>
-          <span className="px-2 text-sm font-mono tabular-nums text-slate-700">
+          <span className="px-2 text-sm font-mono tabular-nums text-blue-950">
             {page} / {totalPages}
           </span>
           <button
             type="button"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
             <span>Next</span>
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            <ChevronRight className="h-4 w-4 text-cyan-600" aria-hidden="true" />
           </button>
         </div>
       </div>
 
       {/* Add / Edit Driver Modal */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 overflow-y-auto">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl my-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-blue-200 bg-white p-6 shadow-xl my-8">
             <div className="flex items-center justify-between gap-4">
-              <h2 className="font-display text-xl font-bold text-slate-900">
+              <h2 className="font-display text-xl font-bold text-blue-950">
                 {editingDriver ? `Edit ${editingDriver.full_name}` : 'Add New Driver'}
               </h2>
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
                 aria-label="Close"
-                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                className="cyan-glow-outline flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-transparent text-slate-500"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -736,7 +742,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
 
             <form onSubmit={handleFormSubmit} className="mt-4 space-y-4">
               <div>
-                <label htmlFor="d-name" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="d-name" className="block text-sm font-semibold text-blue-950">
                   Full Name
                 </label>
                 <input
@@ -746,12 +752,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                   placeholder="e.g. Tatenda Ncube"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="d-licence" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="d-licence" className="block text-sm font-semibold text-blue-950">
                   Driving Licence Number
                 </label>
                 <input
@@ -761,12 +767,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   value={formLicence}
                   onChange={(e) => setFormLicence(e.target.value)}
                   placeholder="e.g. 940281ZW"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 font-mono uppercase text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono uppercase text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="d-phone" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="d-phone" className="block text-sm font-semibold text-blue-950">
                   Phone Number
                 </label>
                 <input
@@ -776,12 +782,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   value={formPhone}
                   onChange={(e) => setFormPhone(e.target.value)}
                   placeholder="e.g. +263 77 123 4567"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="d-address" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="d-address" className="block text-sm font-semibold text-blue-950">
                   Home Address (optional)
                 </label>
                 <input
@@ -790,12 +796,12 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   value={formAddress}
                   onChange={(e) => setFormAddress(e.target.value)}
                   placeholder="e.g. 14 Samora Machel Ave, Harare"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="d-expiry" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="d-expiry" className="block text-sm font-semibold text-blue-950">
                   Licence Expiry Date (optional)
                 </label>
                 <input
@@ -803,14 +809,14 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   type="date"
                   value={formExpiry}
                   onChange={(e) => setFormExpiry(e.target.value)}
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 font-mono text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono text-base text-blue-950"
                 />
               </div>
 
               {editingDriver && (
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 p-3.5">
+                <div className="flex items-center justify-between rounded-xl border border-blue-200 p-3.5 bg-blue-50/30">
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">Driver Active</div>
+                    <div className="text-sm font-semibold text-blue-950">Driver Active</div>
                     <div className="text-xs text-slate-500">
                       Uncheck to retire a driver while keeping past trip records
                     </div>
@@ -820,7 +826,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
                     checked={formActive}
                     onChange={(e) => setFormActive(e.target.checked)}
                     aria-label="Driver active"
-                    className="h-6 w-6 rounded border-slate-300 text-slate-900"
+                    className="h-6 w-6 rounded border-blue-300 text-cyan-600 accent-cyan-600"
                   />
                 </div>
               )}
@@ -829,14 +835,14 @@ export const DriversView: React.FC<DriversViewProps> = ({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 min-h-[48px] rounded-xl bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                  className="cyan-glow-btn flex-1 min-h-[48px] rounded-xl px-4 text-base font-semibold disabled:opacity-60"
                 >
                   {saving ? 'Saving...' : editingDriver ? 'Save Changes' : 'Add Driver'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowForm(false)}
-                  className="min-h-[48px] rounded-xl border border-slate-300 px-4 text-base font-medium text-slate-700 hover:bg-slate-50"
+                  className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base font-medium text-blue-900"
                 >
                   Cancel
                 </button>

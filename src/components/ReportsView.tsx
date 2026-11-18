@@ -186,7 +186,7 @@ export const ReportsView: React.FC = () => {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold text-slate-900">Reports & Exports</h1>
+        <h1 className="font-display text-2xl font-bold text-blue-950">Reports &amp; Exports</h1>
         <p className="mt-1 text-base text-slate-600">
           Download clean records for Excel, printable PDF reports with your company details, JSON, or Markdown.
         </p>
@@ -194,7 +194,7 @@ export const ReportsView: React.FC = () => {
 
       {/* Step 1: Choose Report Type */}
       <section className="space-y-3">
-        <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+        <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-700">
           1. Choose What to Export
         </h2>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -206,19 +206,19 @@ export const ReportsView: React.FC = () => {
                 key={opt.type}
                 type="button"
                 onClick={() => setReportType(opt.type)}
-                className={`flex flex-col items-start text-left rounded-2xl border p-4 transition-colors min-h-[96px] ${
+                className={`flex flex-col items-start text-left rounded-2xl border p-4 transition-all min-h-[96px] ${
                   active
-                    ? 'border-slate-900 bg-slate-900 text-white'
-                    : 'border-slate-200 bg-white text-slate-900 hover:border-slate-400'
+                    ? 'cyan-glow-active'
+                    : 'cyan-glow-card border-blue-200/80 bg-white text-blue-950'
                 }`}
               >
                 <div className="flex items-center gap-2 font-semibold text-base">
-                  <Icon className="h-5 w-5 shrink-0" aria-hidden="true" />
+                  <Icon className={`h-5 w-5 shrink-0 ${active ? 'text-cyan-200' : 'text-blue-600'}`} aria-hidden="true" />
                   <span>{opt.label}</span>
                 </div>
                 <p
                   className={`mt-1.5 text-xs leading-relaxed ${
-                    active ? 'text-slate-200' : 'text-slate-600'
+                    active ? 'text-cyan-50' : 'text-slate-600'
                   }`}
                 >
                   {opt.description}
@@ -230,10 +230,10 @@ export const ReportsView: React.FC = () => {
       </section>
 
       {/* Step 2: Date Range Filter */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+      <section className="rounded-2xl border border-blue-200/80 bg-white p-5 space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-700">
               2. Date Range (Africa/Harare)
             </h2>
             {!selectedMeta.usesDateRange && (
@@ -248,28 +248,28 @@ export const ReportsView: React.FC = () => {
               <button
                 type="button"
                 onClick={() => applyPreset('today')}
-                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                className="cyan-glow-outline min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
               >
                 Today
               </button>
               <button
                 type="button"
                 onClick={() => applyPreset('7d')}
-                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                className="cyan-glow-outline min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
               >
                 Last 7 Days
               </button>
               <button
                 type="button"
                 onClick={() => applyPreset('month')}
-                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                className="cyan-glow-outline min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
               >
                 This Month
               </button>
               <button
                 type="button"
                 onClick={() => applyPreset('all')}
-                className="min-h-[40px] rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                className="cyan-glow-outline min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
               >
                 All Dates
               </button>
@@ -280,7 +280,7 @@ export const ReportsView: React.FC = () => {
         {selectedMeta.usesDateRange && (
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 max-w-lg">
             <div>
-              <label htmlFor="rep-from" className="block text-sm font-semibold text-slate-800">
+              <label htmlFor="rep-from" className="block text-sm font-semibold text-blue-950">
                 From Date
               </label>
               <input
@@ -288,11 +288,11 @@ export const ReportsView: React.FC = () => {
                 type="date"
                 value={fromDate}
                 onChange={(e) => setFromDate(e.target.value)}
-                className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base font-mono text-slate-900 focus:border-slate-900 focus:outline-none"
+                className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base font-mono text-slate-900"
               />
             </div>
             <div>
-              <label htmlFor="rep-to" className="block text-sm font-semibold text-slate-800">
+              <label htmlFor="rep-to" className="block text-sm font-semibold text-blue-950">
                 To Date
               </label>
               <input
@@ -300,7 +300,7 @@ export const ReportsView: React.FC = () => {
                 type="date"
                 value={toDate}
                 onChange={(e) => setToDate(e.target.value)}
-                className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base font-mono text-slate-900 focus:border-slate-900 focus:outline-none"
+                className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base font-mono text-slate-900"
               />
             </div>
           </div>
@@ -308,16 +308,16 @@ export const ReportsView: React.FC = () => {
       </section>
 
       {/* Step 3: Download Buttons */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-4">
+      <section className="rounded-2xl border border-blue-200/80 bg-white p-5 space-y-4">
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-500">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-cyan-700">
               3. Download Format
             </h2>
             {preview && (
               <p className="mt-1 text-sm text-slate-600">
-                Ready: <span className="font-semibold text-slate-900">{preview.title}</span> ·{' '}
-                <span className="font-mono tabular-nums font-semibold text-slate-900">
+                Ready: <span className="font-semibold text-blue-950">{preview.title}</span> ·{' '}
+                <span className="font-mono tabular-nums font-semibold text-blue-950">
                   {preview.total_rows}
                 </span>{' '}
                 {preview.total_rows === 1 ? 'record' : 'records'}
@@ -343,7 +343,7 @@ export const ReportsView: React.FC = () => {
         {notice && (
           <div
             role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+            className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-blue-950"
           >
             {notice}
           </div>
@@ -354,7 +354,7 @@ export const ReportsView: React.FC = () => {
             type="button"
             disabled={downloading !== null || loading}
             onClick={() => handleDownload('csv')}
-            className="flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+            className="cyan-glow-btn flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl px-4 text-base font-semibold disabled:opacity-60"
           >
             <FileSpreadsheet className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span>{downloading === 'csv' ? 'Preparing CSV...' : 'Download CSV (Excel)'}</span>
@@ -364,7 +364,7 @@ export const ReportsView: React.FC = () => {
             type="button"
             disabled={downloading !== null || loading}
             onClick={() => handleDownload('pdf')}
-            className="flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl bg-emerald-700 px-4 text-base font-semibold text-white hover:bg-emerald-800 disabled:opacity-60"
+            className="cyan-glow-btn flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl px-4 text-base font-semibold disabled:opacity-60"
           >
             <Printer className="h-5 w-5 shrink-0" aria-hidden="true" />
             <span>{downloading === 'pdf' ? 'Building PDF...' : 'Download PDF'}</span>
@@ -374,9 +374,9 @@ export const ReportsView: React.FC = () => {
             type="button"
             disabled={downloading !== null || loading}
             onClick={() => handleDownload('json')}
-            className="flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white px-4 text-base font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+            className="cyan-glow-outline flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl border border-blue-200 bg-white px-4 text-base font-semibold text-blue-900 disabled:opacity-60"
           >
-            <FileCode2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <FileCode2 className="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
             <span>{downloading === 'json' ? 'Preparing JSON...' : 'Download JSON'}</span>
           </button>
 
@@ -384,26 +384,26 @@ export const ReportsView: React.FC = () => {
             type="button"
             disabled={downloading !== null || loading}
             onClick={() => handleDownload('md')}
-            className="flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl border border-slate-300 bg-white px-4 text-base font-semibold text-slate-800 hover:bg-slate-50 disabled:opacity-60"
+            className="cyan-glow-outline flex min-h-[56px] items-center justify-center gap-2.5 rounded-xl border border-blue-200 bg-white px-4 text-base font-semibold text-blue-900 disabled:opacity-60"
           >
-            <FileText className="h-5 w-5 shrink-0" aria-hidden="true" />
+            <FileText className="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
             <span>{downloading === 'md' ? 'Preparing Markdown...' : 'Download Markdown'}</span>
           </button>
         </div>
       </section>
 
       {/* Live Summary & Preview Table */}
-      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        <div className="border-b border-slate-200 p-4 sm:px-5 flex flex-wrap items-center justify-between gap-3">
+      <section className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden shadow-xs">
+        <div className="border-b border-blue-100 p-4 sm:px-5 flex flex-wrap items-center justify-between gap-3 bg-blue-50/30">
           <div className="flex items-center gap-2">
-            <Download className="h-4 w-4 text-slate-500" aria-hidden="true" />
-            <h2 className="text-base font-semibold text-slate-900">Report Preview</h2>
+            <Download className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+            <h2 className="text-base font-semibold text-blue-950">Report Preview</h2>
           </div>
           {preview && (
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-slate-600">
               {Object.entries(preview.summary).map(([k, v]) => (
                 <span key={k}>
-                  {k}: <strong className="font-mono tabular-nums text-slate-900">{v}</strong>
+                  {k}: <strong className="font-mono tabular-nums text-blue-950">{v}</strong>
                 </span>
               ))}
             </div>
@@ -418,8 +418,8 @@ export const ReportsView: React.FC = () => {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-slate-200 text-left text-sm">
-              <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wider text-slate-600">
+            <table className="min-w-full divide-y divide-blue-100 text-left text-sm">
+              <thead className="bg-blue-50/60 text-xs font-semibold uppercase tracking-wider text-blue-900">
                 <tr>
                   {preview.columns.map((col) => (
                     <th key={col} className="px-4 py-3 whitespace-nowrap">
@@ -428,9 +428,9 @@ export const ReportsView: React.FC = () => {
                   ))}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-200 bg-white">
+              <tbody className="divide-y divide-blue-100 bg-white">
                 {preview.rows.slice(0, 25).map((row, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50">
+                  <tr key={idx} className="hover:bg-cyan-50/40 transition-colors">
                     {preview.columns.map((col) => (
                       <td key={col} className="px-4 py-3 whitespace-nowrap font-mono text-xs text-slate-800">
                         {row[col] === null || row[col] === undefined || row[col] === ''
@@ -443,7 +443,7 @@ export const ReportsView: React.FC = () => {
               </tbody>
             </table>
             {preview.rows.length > 25 && (
-              <div className="border-t border-slate-200 bg-slate-50 px-4 py-2.5 text-xs text-slate-600">
+              <div className="border-t border-blue-100 bg-blue-50/40 px-4 py-2.5 text-xs text-slate-600">
                 Showing first 25 of {preview.rows.length} rows. All {preview.rows.length} rows are included in the downloaded file.
               </div>
             )}

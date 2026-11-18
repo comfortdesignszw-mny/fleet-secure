@@ -83,14 +83,14 @@ export const AuditLogView: React.FC = () => {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">{en.audit.title}</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">{en.audit.title}</h1>
           <p className="mt-1 text-base text-slate-600 max-w-2xl">{en.audit.subtitle}</p>
         </div>
         <button
           type="button"
           onClick={handleVerifyChain}
           disabled={verifying}
-          className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 disabled:opacity-60 whitespace-nowrap shrink-0"
+          className="cyan-glow-btn inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:opacity-60 whitespace-nowrap shrink-0"
         >
           <ShieldCheck className="h-5 w-5" aria-hidden="true" />
           <span>{verifying ? en.audit.verifying : en.audit.verifyButton}</span>
@@ -138,11 +138,11 @@ export const AuditLogView: React.FC = () => {
       {/* Search & Filter bar */}
       <form
         onSubmit={handleSearchSubmit}
-        className="flex flex-col gap-3 rounded-2xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center"
+        className="flex flex-col gap-3 rounded-2xl border border-blue-200/80 bg-white p-4 sm:flex-row sm:items-center"
       >
         <div className="relative flex-1">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+            className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-blue-500"
             aria-hidden="true"
           />
           <input
@@ -150,7 +150,7 @@ export const AuditLogView: React.FC = () => {
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
             placeholder="Search by username, action, or details..."
-            className="block w-full min-h-[48px] rounded-xl border border-slate-300 pl-11 pr-4 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
+            className="cyan-glow-input block w-full min-h-[48px] rounded-xl border border-blue-200 pl-11 pr-4 text-base text-slate-900 placeholder:text-slate-400"
           />
         </div>
 
@@ -161,7 +161,7 @@ export const AuditLogView: React.FC = () => {
             setEntityFilter(e.target.value);
             setPage(1);
           }}
-          className="min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-800 focus:border-slate-900 focus:outline-none"
+          className="cyan-glow-input min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
         >
           <option value="">All record types</option>
           <option value="trips">Trips (Out / In)</option>
@@ -176,31 +176,31 @@ export const AuditLogView: React.FC = () => {
 
         <button
           type="submit"
-          className="min-h-[48px] rounded-xl border border-slate-300 bg-slate-100 px-5 text-sm font-semibold text-slate-900 hover:bg-slate-200 whitespace-nowrap shrink-0"
+          className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-blue-50/70 px-5 text-sm font-semibold text-blue-900 whitespace-nowrap shrink-0"
         >
           Search
         </button>
       </form>
 
       {/* Audit Entries */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-blue-200/80 bg-white">
         {loading ? (
-          <div className="divide-y divide-slate-100">
+          <div className="divide-y divide-blue-100">
             {[1, 2, 3, 4].map((i) => (
               <div key={i} className="p-4 animate-pulse space-y-2">
-                <div className="h-4 w-48 rounded bg-slate-200" />
-                <div className="h-3 w-72 rounded bg-slate-100" />
+                <div className="h-4 w-48 rounded bg-blue-100" />
+                <div className="h-3 w-72 rounded bg-blue-50" />
               </div>
             ))}
           </div>
         ) : items.length === 0 ? (
           <div className="p-8 text-center text-base text-slate-600">{en.audit.empty}</div>
         ) : (
-          <div className="divide-y divide-slate-200">
+          <div className="divide-y divide-blue-100">
             {items.map((row) => {
               const isExpanded = expandedId === row.id;
               return (
-                <div key={row.id} className="p-4 sm:px-5">
+                <div key={row.id} className="p-4 sm:px-5 transition-colors hover:bg-cyan-50/30">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1 min-w-0">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -234,7 +234,7 @@ export const AuditLogView: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => setExpandedId(isExpanded ? null : row.id)}
-                      className="inline-flex min-h-[44px] items-center gap-1.5 self-start sm:self-center rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50 whitespace-nowrap shrink-0"
+                      className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1.5 self-start sm:self-center rounded-lg border border-blue-200 bg-white px-3 py-1.5 text-xs font-semibold text-blue-900 whitespace-nowrap shrink-0"
                     >
                       <span>{isExpanded ? 'Hide Details' : 'View Hash & Data'}</span>
                       {isExpanded ? (
@@ -246,7 +246,7 @@ export const AuditLogView: React.FC = () => {
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs space-y-3">
+                    <div className="mt-3 rounded-xl border border-blue-200 bg-blue-50/40 p-4 text-xs space-y-3">
                       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                         <div>
                           <div className="font-semibold text-slate-700">Previous Hash</div>
@@ -289,26 +289,26 @@ export const AuditLogView: React.FC = () => {
       {/* Pagination */}
       <div className="flex items-center justify-between gap-4">
         <div className="text-sm text-slate-600 tabular-nums">
-          Total: <span className="font-semibold text-slate-900">{total}</span> entries
+          Total: <span className="font-semibold text-blue-950">{total}</span> entries
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
             <ChevronLeft className="h-4 w-4" aria-hidden="true" />
             <span>Prev</span>
           </button>
-          <span className="px-2 text-sm font-mono tabular-nums text-slate-700">
+          <span className="px-2 text-sm font-mono tabular-nums text-blue-900">
             {page} / {totalPages}
           </span>
           <button
             type="button"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
             <span>Next</span>
             <ChevronRight className="h-4 w-4" aria-hidden="true" />

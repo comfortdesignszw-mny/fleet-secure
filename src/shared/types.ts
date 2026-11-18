@@ -226,6 +226,9 @@ export interface TripSummary {
   client_name: string | null;
   destination: string | null;
   reason: string | null;
+  days_hired: number | null;
+  expected_return_date: string | null;
+  is_return_due?: boolean;
   created_at: string;
   reg_number: string;
   make_model: string;
@@ -245,6 +248,42 @@ export interface TripSummary {
   flags: TripFlag[];
   correction_count: number;
   is_overdue: boolean;
+}
+
+export interface NewDriverInput {
+  full_name: string;
+  licence_number: string;
+  phone: string;
+  address?: string;
+  licence_expiry?: string | null;
+  save_to_directory: boolean;
+}
+
+export interface NewVehicleInput {
+  reg_number: string;
+  vehicle_type: string;
+  make_model: string;
+  condition?: VehicleCondition;
+  last_known_mileage: number;
+  save_to_directory: boolean;
+}
+
+export interface CreateTripOutPayload {
+  trip_type: TripType;
+  vehicle_id?: number;
+  driver_id?: number;
+  new_vehicle?: NewVehicleInput;
+  new_driver?: NewDriverInput;
+  client_name?: string;
+  destination?: string;
+  reason?: string;
+  days_hired?: number | null;
+  expected_return_date?: string | null;
+  mileage_out: number;
+  fuel_out: FuelLevel;
+  opening_checklist_by: string;
+  notes?: string;
+  device_time?: string;
 }
 
 export interface TripDetail {

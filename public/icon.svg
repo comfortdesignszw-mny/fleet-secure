@@ -1,5 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none">
-  <rect width="512" height="512" rx="112" fill="#0F172A"/>
-  <path d="M132 164C132 146.327 146.327 132 164 132H348C365.673 132 380 146.327 380 164V262C380 330.483 326.821 387.771 256 404C185.179 387.771 132 330.483 132 262V164Z" fill="#1E293B" stroke="#38BDF8" stroke-width="18"/>
-  <path d="M188 264L236 312L332 216" stroke="#10B981" stroke-width="28" stroke-linecap="round" stroke-linejoin="round"/>
+  <defs>
+    <linearGradient id="fsBg" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#072D96"/>
+      <stop offset="55%" stop-color="#0B5ED7"/>
+      <stop offset="100%" stop-color="#06D6F2"/>
+    </linearGradient>
+    <linearGradient id="fsShield" x1="126" y1="148" x2="386" y2="416" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#DCE8F8"/>
+    </linearGradient>
+    <linearGradient id="fsPin" x1="256" y1="92" x2="256" y2="254" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4DF3FF"/>
+      <stop offset="100%" stop-color="#0891B2"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#fsBg)"/>
+  <!-- Shield -->
+  <path d="M134 176C134 160.536 146.536 148 162 148H350C365.464 148 378 160.536 378 176V266C378 338 326.5 398 256 416C185.5 398 134 338 134 266V176Z" fill="url(#fsShield)" stroke="#94A3B8" stroke-width="14"/>
+  <!-- Map drop anchor pin -->
+  <path d="M256 90C215.131 90 182 123.131 182 164C182 214.5 243.8 263.4 252.4 270C254.5 271.6 257.5 271.6 259.6 270C268.2 263.4 330 214.5 330 164C330 123.131 296.869 90 256 90Z" fill="url(#fsPin)" stroke="#0E7490" stroke-width="6"/>
+  <circle cx="256" cy="160" r="28" fill="#0B4F9E"/>
+  <!-- Vehicle silhouette -->
+  <path d="M128 286L154 242C160 232 170 226 182 226H298C312 226 324 233 334 244L374 264C386 270 392 280 392 294V316C392 324 385 330 377 330H358C354 313 339 300 321 300C303 300 288 313 284 330H208C204 313 189 300 171 300C153 300 138 313 134 330H126C118 330 112 324 112 316V300C112 293 118 288 128 286Z" fill="#FFFFFF" stroke="#1E3A8A" stroke-width="8" stroke-linejoin="round"/>
+  <path d="M168 242H232V272H150L168 242Z" fill="#0EA5E9" opacity="0.75"/>
+  <path d="M244 242H296L320 272H244V242Z" fill="#0EA5E9" opacity="0.75"/>
+  <circle cx="171" cy="332" r="24" fill="#0F172A" stroke="#CBD5E1" stroke-width="7"/>
+  <circle cx="321" cy="332" r="24" fill="#0F172A" stroke="#CBD5E1" stroke-width="7"/>
 </svg>

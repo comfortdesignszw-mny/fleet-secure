@@ -2,6 +2,7 @@ import type {
   AppSettings,
   AuditLogEntry,
   AuditVerifyResult,
+  CreateTripOutPayload,
   DashboardData,
   Driver,
   FuelLevel,
@@ -29,10 +30,15 @@ export class ApiError extends Error {
   }
 }
 
+let inMemorySessionToken: string | null = null;
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
+  }
+  if (inMemorySessionToken && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${inMemorySessionToken}`);
   }
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -46,11 +52,19 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     try {
       data = JSON.parse(text) as Record<string, unknown>;
     } catch {
-      data = { error: text };
+      const isHtml = /^\s*</.test(text);
+      data = {
+        error: isHtml
+          ? `Server returned an unexpected ${res.status} error. Please reload the page and try again.`
+          : text,
+      };
     }
   }
 
   if (!res.ok) {
+    if (res.status === 401) {
+      inMemorySessionToken = null;
+    }
     const msg =
       typeof data.error === 'string' && data.error.trim()
         ? data.error
@@ -64,22 +78,65 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   me: () => request<{ user: UserPublic }>('/auth/me'),
 
-  login: (username: string, pin: string) =>
-    request<{ user: UserPublic }>('/auth/login', {
+  getPreviewStatus: () =>
+    request<{
+      previewSignupEnabled: boolean;
+      vehicleCount: number;
+      driverCount: number;
+      tripCount: number;
+    }>('/auth/preview-status'),
+
+  signupAdmin: async (payload: {
+    full_name: string;
+    username: string;
+    pin: string;
+    load_demo_data: boolean;
+  }) => {
+    const res = await request<{
+      user: UserPublic;
+      demoSeeded: { vehiclesAdded: number; driversAdded: number; tripsAdded: number } | null;
+      sessionToken?: string;
+    }>('/auth/signup-admin', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    return res;
+  },
+
+  seedDemoData: () =>
+    request<{ ok: boolean; vehiclesAdded: number; driversAdded: number; tripsAdded: number }>(
+      '/demo/seed',
+      { method: 'POST' }
+    ),
+
+  login: async (username: string, pin: string) => {
+    const res = await request<{ user: UserPublic; sessionToken?: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ username, pin }),
-    }),
+    });
+    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    return res;
+  },
 
-  logout: () =>
-    request<{ ok: boolean }>('/auth/logout', {
-      method: 'POST',
-    }),
+  logout: async () => {
+    try {
+      return await request<{ ok: boolean }>('/auth/logout', {
+        method: 'POST',
+      });
+    } finally {
+      inMemorySessionToken = null;
+    }
+  },
 
-  changePin: (currentPin: string, newPin: string) =>
-    request<{ user: UserPublic }>('/auth/change-pin', {
+  changePin: async (currentPin: string, newPin: string) => {
+    const res = await request<{ user: UserPublic; sessionToken?: string }>('/auth/change-pin', {
       method: 'POST',
       body: JSON.stringify({ currentPin, newPin }),
-    }),
+    });
+    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    return res;
+  },
 
   getSettings: () => request<{ settings: AppSettings }>('/settings'),
 
@@ -169,6 +226,8 @@ export const api = {
         destination: string | null;
         out_at: string | null;
         in_at: string | null;
+        days_hired: number | null;
+        expected_return_date: string | null;
         mileage_out: number | null;
         mileage_in: number | null;
         total_mileage: number | null;
@@ -243,6 +302,8 @@ export const api = {
         destination: string | null;
         out_at: string | null;
         in_at: string | null;
+        days_hired: number | null;
+        expected_return_date: string | null;
         total_mileage: number | null;
       }>;
     }>(`/drivers/${id}`),
@@ -307,19 +368,7 @@ export const api = {
 
   getTrip: (id: number) => request<TripDetail>(`/trips/${id}`),
 
-  createTripOut: (payload: {
-    trip_type: TripType;
-    vehicle_id: number;
-    driver_id: number;
-    client_name?: string;
-    destination?: string;
-    reason?: string;
-    mileage_out: number;
-    fuel_out: FuelLevel;
-    opening_checklist_by: string;
-    notes?: string;
-    device_time?: string;
-  }) =>
+  createTripOut: (payload: CreateTripOutPayload) =>
     request<{ trip: TripSummary; flags: TripSummary['flags'] }>('/trips/out', {
       method: 'POST',
       body: JSON.stringify(payload),

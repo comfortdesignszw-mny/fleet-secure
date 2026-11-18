@@ -95,7 +95,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">Help & Staff Guide</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">Help &amp; Staff Guide</h1>
           <p className="mt-1 text-base text-slate-600">
             Plain-English instructions for your role ({ROLE_LABELS[userRole]}).
           </p>
@@ -104,7 +104,7 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
         <button
           type="button"
           onClick={onReplayWalkthrough}
-          className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+          className="cyan-glow-btn inline-flex min-h-[48px] items-center gap-2 rounded-xl px-5 text-sm font-semibold whitespace-nowrap shrink-0"
         >
           <PlayCircle className="h-5 w-5" aria-hidden="true" />
           <span>Replay Welcome Guide</span>
@@ -113,9 +113,9 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
 
       {/* Golden Rules */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2">
-          <div className="flex items-center gap-2 font-semibold text-slate-900">
-            <Lock className="h-5 w-5 text-slate-700" aria-hidden="true" />
+        <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-5 space-y-2">
+          <div className="flex items-center gap-2 font-semibold text-blue-950">
+            <Lock className="h-5 w-5 text-blue-600" aria-hidden="true" />
             <span>Permanent Record Book</span>
           </div>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -123,9 +123,9 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2">
-          <div className="flex items-center gap-2 font-semibold text-slate-900">
-            <WifiOff className="h-5 w-5 text-amber-700" aria-hidden="true" />
+        <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-5 space-y-2">
+          <div className="flex items-center gap-2 font-semibold text-blue-950">
+            <WifiOff className="h-5 w-5 text-cyan-600" aria-hidden="true" />
             <span>Offline Queue Ready</span>
           </div>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -133,9 +133,9 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
           </p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200 bg-white p-5 space-y-2">
-          <div className="flex items-center gap-2 font-semibold text-slate-900">
-            <ShieldCheck className="h-5 w-5 text-emerald-700" aria-hidden="true" />
+        <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-5 space-y-2">
+          <div className="flex items-center gap-2 font-semibold text-blue-950">
+            <ShieldCheck className="h-5 w-5 text-blue-700" aria-hidden="true" />
             <span>Automatic Loss Checks</span>
           </div>
           <p className="text-sm text-slate-600 leading-relaxed">
@@ -147,17 +147,17 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
       {/* Step-by-Step Guides */}
       <section className="space-y-3">
         <div className="flex items-center gap-2">
-          <BookOpen className="h-5 w-5 text-slate-700" aria-hidden="true" />
-          <h2 className="text-lg font-bold text-slate-900">Step-by-Step Yard Guides</h2>
+          <BookOpen className="h-5 w-5 text-cyan-600" aria-hidden="true" />
+          <h2 className="text-lg font-bold text-blue-950">Step-by-Step Yard Guides</h2>
         </div>
 
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {STEP_BY_STEP_GUIDES.map((guide) => (
             <div
               key={guide.id}
-              className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3"
+              className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-5 space-y-3"
             >
-              <h3 className="text-base font-bold text-slate-900">{guide.title}</h3>
+              <h3 className="text-base font-bold text-blue-950">{guide.title}</h3>
               <ol className="list-decimal pl-5 space-y-2 text-sm text-slate-700 leading-relaxed">
                 {guide.steps.map((s, idx) => (
                   <li key={idx}>{s}</li>
@@ -169,10 +169,10 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
       </section>
 
       {/* Flag Quick Reference */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 space-y-3">
+      <section className="rounded-2xl border border-blue-200/80 bg-white p-5 space-y-3">
         <div className="flex items-center gap-2">
           <AlertTriangle className="h-5 w-5 text-red-700" aria-hidden="true" />
-          <h2 className="text-lg font-bold text-slate-900">Understanding Alert Flags</h2>
+          <h2 className="text-lg font-bold text-blue-950">Understanding Alert Flags</h2>
         </div>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div className="rounded-xl border border-red-200 bg-red-50/70 p-3.5 text-sm">
@@ -203,12 +203,12 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
       </section>
 
       {/* FAQ Accordion */}
-      <section className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-        <div className="border-b border-slate-200 px-5 py-4 flex items-center gap-2">
-          <HelpCircle className="h-5 w-5 text-slate-700" aria-hidden="true" />
-          <h2 className="text-lg font-bold text-slate-900">Frequently Asked Questions</h2>
+      <section className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden">
+        <div className="border-b border-blue-100 bg-blue-50/40 px-5 py-4 flex items-center gap-2">
+          <HelpCircle className="h-5 w-5 text-cyan-600" aria-hidden="true" />
+          <h2 className="text-lg font-bold text-blue-950">Frequently Asked Questions</h2>
         </div>
-        <div className="divide-y divide-slate-200">
+        <div className="divide-y divide-blue-100">
           {FAQS.map((faq, idx) => {
             const open = openFaq === idx;
             return (
@@ -216,13 +216,13 @@ export const HelpView: React.FC<HelpViewProps> = ({ userRole, onReplayWalkthroug
                 <button
                   type="button"
                   onClick={() => setOpenFaq(open ? null : idx)}
-                  className="flex w-full min-h-[56px] items-center justify-between gap-4 px-5 py-3 text-left hover:bg-slate-50"
+                  className="flex w-full min-h-[56px] items-center justify-between gap-4 px-5 py-3 text-left transition-colors hover:bg-cyan-50/50"
                 >
-                  <span className="text-base font-semibold text-slate-900">{faq.q}</span>
+                  <span className="text-base font-semibold text-blue-950">{faq.q}</span>
                   {open ? (
-                    <ChevronUp className="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+                    <ChevronUp className="h-5 w-5 shrink-0 text-cyan-600" aria-hidden="true" />
                   ) : (
-                    <ChevronDown className="h-5 w-5 shrink-0 text-slate-500" aria-hidden="true" />
+                    <ChevronDown className="h-5 w-5 shrink-0 text-blue-500" aria-hidden="true" />
                   )}
                 </button>
                 {open && (

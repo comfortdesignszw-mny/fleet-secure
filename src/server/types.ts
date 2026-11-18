@@ -30,4 +30,5 @@ export interface AppEnv {
   RESEND_API_KEY?: string;
   EMAIL_FROM?: string;
   CRON_SECRET?: string;
+  ALLOW_PREVIEW_SIGNUP?: string;
 }

@@ -27,22 +27,22 @@ export const FuelGaugePicker: React.FC<FuelGaugePickerProps> = ({
       </div>
 
       {/* Visual gauge bar */}
-      <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-        <div className="flex items-center justify-between text-xs font-semibold text-slate-500 mb-1.5">
+      <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3">
+        <div className="flex items-center justify-between text-xs font-semibold text-blue-800 mb-1.5">
           <span>E (Empty)</span>
           <span>1/2</span>
           <span>F (Full)</span>
         </div>
-        <div className="h-3 w-full overflow-hidden rounded-full bg-slate-200">
+        <div className="h-3 w-full overflow-hidden rounded-full bg-blue-100">
           <div
             className={`h-full transition-all duration-150 ${
               pct === null
-                ? 'w-0 bg-slate-400'
+                ? 'w-0 bg-blue-300'
                 : pct <= 20
                 ? 'bg-red-600'
                 : pct <= 45
                 ? 'bg-amber-500'
-                : 'bg-emerald-600'
+                : 'bg-gradient-to-r from-blue-600 to-cyan-500'
             }`}
             style={{ width: `${pct ?? 0}%` }}
           />
@@ -60,16 +60,16 @@ export const FuelGaugePicker: React.FC<FuelGaugePickerProps> = ({
               type="button"
               onClick={() => onChange(lvl)}
               aria-pressed={selected}
-              className={`min-h-[52px] rounded-xl border px-2 py-2 flex flex-col items-center justify-center transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-900 ${
+              className={`min-h-[52px] rounded-xl border px-2 py-2 flex flex-col items-center justify-center transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-cyan-500 ${
                 selected
-                  ? 'border-slate-900 bg-slate-900 text-white'
-                  : 'border-slate-300 bg-white text-slate-900 hover:bg-slate-50'
+                  ? 'cyan-glow-active'
+                  : 'border-blue-200 bg-white text-blue-950 cyan-glow-outline'
               }`}
             >
               <span className="text-sm font-bold leading-tight">{lvl}</span>
               <span
                 className={`text-[11px] font-mono tabular-nums ${
-                  selected ? 'text-slate-300' : 'text-slate-500'
+                  selected ? 'text-cyan-100' : 'text-blue-600'
                 }`}
               >
                 {levelPct}%

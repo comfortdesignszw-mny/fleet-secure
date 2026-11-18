@@ -37,7 +37,7 @@ const CACHE_KEY = 'fleet_secure_cache_vehicles';
 function StatusIndicator({ status }: { status: DerivedStatus }) {
   if (status === 'Available') {
     return (
-      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-emerald-700">
+      <span className="inline-flex items-center gap-1.5 text-sm font-medium text-cyan-700">
         <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span>Available</span>
       </span>
@@ -68,7 +68,7 @@ function ConditionText({ condition }: { condition: VehicleCondition }) {
       </span>
     );
   }
-  return <span className="text-sm font-medium text-slate-700">{condition}</span>;
+  return <span className="text-sm font-medium text-blue-900">{condition}</span>;
 }
 
 export const VehiclesView: React.FC<VehiclesViewProps> = ({
@@ -109,6 +109,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       destination: string | null;
       out_at: string | null;
       in_at: string | null;
+      days_hired: number | null;
+      expected_return_date: string | null;
       mileage_out: number | null;
       mileage_in: number | null;
       total_mileage: number | null;
@@ -292,9 +294,9 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               setSelectedId(null);
               setDetailVehicle(null);
             }}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
           >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <ArrowLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Back to Vehicles</span>
           </button>
 
@@ -302,7 +304,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
             <button
               type="button"
               onClick={() => openEditModal(detailVehicle)}
-              className="inline-flex min-h-[44px] items-center gap-2 rounded-xl bg-slate-900 px-4 text-sm font-semibold text-white hover:bg-slate-800"
+              className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
             >
               <Edit3 className="h-4 w-4" aria-hidden="true" />
               <span>Edit Vehicle</span>
@@ -313,7 +315,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
         {notice && (
           <div
             role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+            className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-cyan-900"
           >
             {notice}
           </div>
@@ -328,19 +330,19 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
         )}
 
         {detailLoading || !detailVehicle ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-base text-slate-600">
+          <div className="rounded-2xl border border-blue-200/80 bg-white p-6 text-base text-slate-600 shadow-xs">
             Loading vehicle record...
           </div>
         ) : (
           <>
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
               <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="text-sm text-slate-500">
+                  <div className="text-sm font-medium text-cyan-700">
                     {detailVehicle.vehicle_type} · {detailVehicle.vehicle_class}
                     {!detailVehicle.active && ' · Inactive'}
                   </div>
-                  <h1 className="mt-1 font-display text-2xl font-bold text-slate-900">
+                  <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
                     {detailVehicle.reg_number} — {detailVehicle.make_model}
                   </h1>
                 </div>
@@ -352,7 +354,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-slate-200 pt-5 sm:grid-cols-3">
+              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-blue-100 pt-5 sm:grid-cols-3">
                 <div>
                   <div className="text-xs font-medium text-slate-500">Current Condition</div>
                   <div className="mt-1">
@@ -361,23 +363,23 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500">Recorded Trips</div>
-                  <div className="mt-1 text-base font-semibold font-mono tabular-nums text-slate-900">
+                  <div className="mt-1 text-base font-semibold font-mono tabular-nums text-blue-950">
                     {detailVehicle.trip_count ?? 0}
                   </div>
                 </div>
                 <div>
                   <div className="text-xs font-medium text-slate-500">Tracked Trip Distance</div>
-                  <div className="mt-1 text-base font-semibold font-mono tabular-nums text-slate-900">
+                  <div className="mt-1 text-base font-semibold font-mono tabular-nums text-cyan-700">
                     {(detailVehicle.total_trip_mileage ?? 0).toLocaleString()} km
                   </div>
                 </div>
               </div>
 
               {canManage && (
-                <div className="mt-6 border-t border-slate-200 pt-5">
+                <div className="mt-6 border-t border-blue-100 pt-5">
                   <label
                     htmlFor="detail-condition-select"
-                    className="block text-sm font-semibold text-slate-800"
+                    className="block text-sm font-semibold text-blue-950"
                   >
                     Update Vehicle Condition (Logged Automatically)
                   </label>
@@ -390,10 +392,10 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                         key={cond}
                         type="button"
                         onClick={() => handleQuickCondition(detailVehicle, cond)}
-                        className={`min-h-[44px] rounded-xl border px-3.5 text-sm font-medium transition-colors ${
+                        className={`min-h-[44px] rounded-xl border px-3.5 text-sm font-medium transition-all ${
                           detailVehicle.condition === cond
-                            ? 'border-slate-900 bg-slate-900 text-white'
-                            : 'border-slate-300 bg-white text-slate-800 hover:bg-slate-50'
+                            ? 'cyan-glow-active'
+                            : 'cyan-glow-outline border-blue-200 bg-white text-blue-900'
                         }`}
                       >
                         {cond}
@@ -404,33 +406,37 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <h2 className="text-lg font-semibold text-slate-900">Vehicle Trip History</h2>
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
+              <h2 className="text-lg font-semibold text-blue-950">Vehicle Trip History</h2>
               {detailTrips.length === 0 ? (
                 <p className="mt-2 text-base text-slate-600">
                   No trips recorded for this vehicle yet.
                 </p>
               ) : (
-                <div className="mt-4 divide-y divide-slate-200">
+                <div className="mt-4 divide-y divide-blue-100">
                   {detailTrips.map((t) => (
                     <div
                       key={t.id}
                       onClick={() => onOpenTrip?.(t.id)}
                       className={`py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between ${
-                        onOpenTrip ? 'cursor-pointer hover:bg-slate-50 rounded-lg px-2 -mx-2' : ''
+                        onOpenTrip ? 'cursor-pointer hover:bg-cyan-50/45 rounded-lg px-2 -mx-2 transition-colors' : ''
                       }`}
                     >
                       <div>
-                        <div className="text-sm font-semibold text-slate-900">
+                        <div className="text-sm font-semibold text-blue-950">
                           {t.trip_type} · {t.driver_name}
                           {t.client_name ? ` · Client: ${t.client_name}` : ''}
                           {t.destination ? ` · ${t.destination}` : ''}
                         </div>
                         <div className="text-xs font-mono tabular-nums text-slate-500">
                           Out: {formatHarareTime(t.out_at)} · In: {formatHarareTime(t.in_at)}
+                          {t.trip_type === 'HIRE' && t.days_hired !== null ? ` · ${t.days_hired}d` : ''}
+                          {t.trip_type === 'HIRE' && t.expected_return_date
+                            ? ` · Due ${t.expected_return_date}`
+                            : ''}
                         </div>
                       </div>
-                      <div className="text-sm font-mono tabular-nums text-slate-800">
+                      <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
                         {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
                       </div>
                     </div>
@@ -439,15 +445,15 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               )}
             </div>
 
-            <div className="rounded-2xl border border-slate-200 bg-white p-6">
-              <h2 className="text-lg font-semibold text-slate-900">Directory & Condition Changes</h2>
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
+              <h2 className="text-lg font-semibold text-blue-950">Directory & Condition Changes</h2>
               {conditionHistory.length === 0 ? (
                 <p className="mt-2 text-base text-slate-600">No changes logged yet.</p>
               ) : (
-                <div className="mt-4 divide-y divide-slate-200">
+                <div className="mt-4 divide-y divide-blue-100">
                   {conditionHistory.map((h) => (
                     <div key={h.id} className="py-3 text-sm">
-                      <div className="font-semibold text-slate-900">
+                      <div className="font-semibold text-blue-950">
                         {h.action} · {h.username} ({h.user_role})
                       </div>
                       <div className="text-xs font-mono tabular-nums text-slate-500">
@@ -468,7 +474,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">Vehicles (Fleet Directory)</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">Vehicles (Fleet Directory)</h1>
           <p className="mt-1 text-base text-slate-600">
             View fleet availability, condition, and odometer readings. Tap any vehicle for full history.
           </p>
@@ -478,7 +484,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           <button
             type="button"
             onClick={openCreateModal}
-            className="inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-slate-800 whitespace-nowrap shrink-0"
+            className="cyan-glow-btn inline-flex min-h-[48px] items-center justify-center gap-2 rounded-xl px-5 py-2.5 text-sm font-semibold whitespace-nowrap shrink-0"
           >
             <Plus className="h-5 w-5" aria-hidden="true" />
             <span>Add Vehicle</span>
@@ -498,7 +504,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       {notice && (
         <div
           role="status"
-          className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+          className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-cyan-900"
         >
           {notice}
         </div>
@@ -520,12 +526,12 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           setPage(1);
           setQuery(searchInput.trim());
         }}
-        className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+        className="rounded-2xl border border-blue-200/80 bg-white p-4 space-y-3 shadow-xs"
       >
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <Search
-              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-cyan-600"
               aria-hidden="true"
             />
             <input
@@ -533,12 +539,12 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search registration, make, or model..."
-              className="block w-full min-h-[48px] rounded-xl border border-slate-300 pl-11 pr-4 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
+              className="cyan-glow-input block w-full min-h-[48px] rounded-xl border border-blue-200 pl-11 pr-4 text-base text-blue-950 placeholder:text-slate-400"
             />
           </div>
           <button
             type="submit"
-            className="min-h-[48px] rounded-xl border border-slate-300 bg-slate-100 px-5 text-sm font-semibold text-slate-900 hover:bg-slate-200 whitespace-nowrap shrink-0"
+            className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-blue-50/70 px-5 text-sm font-semibold text-blue-950 whitespace-nowrap shrink-0"
           >
             Search
           </button>
@@ -552,7 +558,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               setStatusFilter(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
           >
             <option value="">All availability</option>
             <option value="Available">Available</option>
@@ -567,7 +573,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               setConditionFilter(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
           >
             <option value="">All conditions</option>
             {VEHICLE_CONDITIONS.map((cond) => (
@@ -584,7 +590,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               setClassFilter(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
           >
             <option value="">All classes</option>
             <option value="ECONOMY">Economy (60L · 10 km/L)</option>
@@ -592,7 +598,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           </select>
 
           {canManage && (
-            <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-slate-700 cursor-pointer">
+            <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-blue-950 cursor-pointer">
               <input
                 type="checkbox"
                 checked={includeInactive}
@@ -600,7 +606,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   setIncludeInactive(e.target.checked);
                   setPage(1);
                 }}
-                className="h-5 w-5 rounded border-slate-300 text-slate-900"
+                className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600"
               />
               <span>Show disabled vehicles</span>
             </label>
@@ -609,7 +615,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       </form>
 
       {/* Vehicles List / Table */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-blue-200/80 bg-white shadow-xs">
         {loading ? (
           <div className="p-6 text-base text-slate-500">Loading vehicles...</div>
         ) : items.length === 0 ? (
@@ -619,7 +625,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               <button
                 type="button"
                 onClick={openCreateModal}
-                className="inline-flex min-h-[48px] items-center gap-2 rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white hover:bg-slate-800"
+                className="cyan-glow-btn inline-flex min-h-[48px] items-center gap-2 rounded-xl px-5 text-sm font-semibold"
               >
                 <Plus className="h-4 w-4" aria-hidden="true" />
                 <span>Add First Vehicle</span>
@@ -632,7 +638,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-200 bg-slate-50 text-xs font-semibold text-slate-600">
+                  <tr className="border-b border-blue-100 bg-blue-50/60 text-xs font-semibold text-blue-900">
                     <th className="py-3 px-4">Registration</th>
                     <th className="py-3 px-4">Make & Model</th>
                     <th className="py-3 px-4">Type & Class</th>
@@ -642,20 +648,20 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                     {canManage && <th className="py-3 px-4 text-right">Actions</th>}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200 text-sm">
+                <tbody className="divide-y divide-blue-100 text-sm">
                   {items.map((v) => (
                     <tr
                       key={v.id}
                       onClick={() => loadVehicleDetail(v.id)}
-                      className="cursor-pointer hover:bg-slate-50 transition-colors"
+                      className="cursor-pointer hover:bg-cyan-50/45 transition-colors"
                     >
-                      <td className="py-3.5 px-4 font-mono font-semibold text-slate-900">
+                      <td className="py-3.5 px-4 font-mono font-semibold text-blue-950">
                         {v.reg_number}
                         {!v.active && (
                           <span className="ml-2 text-xs font-sans text-red-700">(Disabled)</span>
                         )}
                       </td>
-                      <td className="py-3.5 px-4 font-medium text-slate-900">{v.make_model}</td>
+                      <td className="py-3.5 px-4 font-medium text-blue-950">{v.make_model}</td>
                       <td className="py-3.5 px-4 text-slate-600">
                         {v.vehicle_type} · {v.vehicle_class}
                       </td>
@@ -665,7 +671,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                       <td className="py-3.5 px-4">
                         <StatusIndicator status={v.derived_status} />
                       </td>
-                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-slate-800">
+                      <td className="py-3.5 px-4 text-right font-mono tabular-nums text-blue-950">
                         {v.last_known_mileage.toLocaleString()} km
                       </td>
                       {canManage && (
@@ -676,9 +682,9 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                           <button
                             type="button"
                             onClick={() => openEditModal(v)}
-                            className="inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-800 hover:bg-slate-50"
+                            className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
                           >
-                            <Wrench className="h-3.5 w-3.5" aria-hidden="true" />
+                            <Wrench className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
                             <span>Manage</span>
                           </button>
                         </td>
@@ -690,16 +696,16 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
             </div>
 
             {/* Mobile Cards */}
-            <div className="divide-y divide-slate-200 md:hidden">
+            <div className="divide-y divide-blue-100 md:hidden">
               {items.map((v) => (
                 <div
                   key={v.id}
                   onClick={() => loadVehicleDetail(v.id)}
-                  className="p-4 space-y-2 cursor-pointer active:bg-slate-50"
+                  className="p-4 space-y-2 cursor-pointer hover:bg-cyan-50/40 active:bg-cyan-50/70 transition-colors"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div>
-                      <div className="font-mono text-base font-bold text-slate-900">
+                      <div className="font-mono text-base font-bold text-blue-950">
                         {v.reg_number}
                         {!v.active && (
                           <span className="ml-2 font-sans text-xs font-medium text-red-700">
@@ -707,7 +713,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                           </span>
                         )}
                       </div>
-                      <div className="text-base font-medium text-slate-800">{v.make_model}</div>
+                      <div className="text-base font-medium text-blue-900">{v.make_model}</div>
                     </div>
                     <StatusIndicator status={v.derived_status} />
                   </div>
@@ -717,7 +723,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                       {v.vehicle_type} · {v.vehicle_class}
                     </span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">
+                    <span className="font-mono tabular-nums text-cyan-800 font-medium">
                       {v.last_known_mileage.toLocaleString()} km
                     </span>
                   </div>
@@ -731,7 +737,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                           e.stopPropagation();
                           openEditModal(v);
                         }}
-                        className="min-h-[44px] rounded-lg border border-slate-300 px-3.5 text-sm font-semibold text-slate-800"
+                        className="cyan-glow-outline min-h-[44px] rounded-lg border border-blue-200 bg-white px-3.5 text-sm font-semibold text-blue-900"
                       >
                         Manage
                       </button>
@@ -747,46 +753,46 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       {/* Pagination */}
       <div className="flex items-center justify-between gap-4">
         <div className="text-sm text-slate-600 tabular-nums">
-          Total: <span className="font-semibold text-slate-900">{total}</span> vehicles
+          Total: <span className="font-semibold text-blue-950">{total}</span> vehicles
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <ChevronLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Prev</span>
           </button>
-          <span className="px-2 text-sm font-mono tabular-nums text-slate-700">
+          <span className="px-2 text-sm font-mono tabular-nums text-blue-950">
             {page} / {totalPages}
           </span>
           <button
             type="button"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
             <span>Next</span>
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            <ChevronRight className="h-4 w-4 text-cyan-600" aria-hidden="true" />
           </button>
         </div>
       </div>
 
       {/* Add / Edit Vehicle Modal */}
       {showForm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4 overflow-y-auto">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl my-8">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="w-full max-w-md rounded-2xl border border-blue-200 bg-white p-6 shadow-xl my-8">
             <div className="flex items-center justify-between gap-4">
-              <h2 className="font-display text-xl font-bold text-slate-900">
+              <h2 className="font-display text-xl font-bold text-blue-950">
                 {editingVehicle ? `Edit ${editingVehicle.reg_number}` : 'Add New Vehicle'}
               </h2>
               <button
                 type="button"
                 onClick={() => setShowForm(false)}
                 aria-label="Close"
-                className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                className="cyan-glow-outline flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-transparent text-slate-500"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -803,7 +809,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
 
             <form onSubmit={handleFormSubmit} className="mt-4 space-y-4">
               <div>
-                <label htmlFor="v-reg" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="v-reg" className="block text-sm font-semibold text-blue-950">
                   Registration Number
                 </label>
                 <input
@@ -813,19 +819,19 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   value={formReg}
                   onChange={(e) => setFormReg(e.target.value)}
                   placeholder="e.g. AFX 4821"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 font-mono uppercase text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono uppercase text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="v-type" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="v-type" className="block text-sm font-semibold text-blue-950">
                   Vehicle Type
                 </label>
                 <select
                   id="v-type"
                   value={formType}
                   onChange={(e) => setFormType(e.target.value)}
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                 >
                   {VEHICLE_TYPES.map((vt) => (
                     <option key={vt} value={vt}>
@@ -835,14 +841,14 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 </select>
                 <p className="mt-1 text-xs text-slate-500">
                   Fuel class assigned automatically:{' '}
-                  <span className="font-semibold text-slate-700">
+                  <span className="font-semibold text-cyan-700">
                     {VEHICLE_TYPE_TO_CLASS[formType] ?? 'ECONOMY'}
                   </span>
                 </p>
               </div>
 
               <div>
-                <label htmlFor="v-make" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="v-make" className="block text-sm font-semibold text-blue-950">
                   Make & Model
                 </label>
                 <input
@@ -852,19 +858,19 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   value={formMakeModel}
                   onChange={(e) => setFormMakeModel(e.target.value)}
                   placeholder="e.g. Toyota Hilux GD-6"
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                 />
               </div>
 
               <div>
-                <label htmlFor="v-cond" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="v-cond" className="block text-sm font-semibold text-blue-950">
                   Vehicle Condition
                 </label>
                 <select
                   id="v-cond"
                   value={formCondition}
                   onChange={(e) => setFormCondition(e.target.value as VehicleCondition)}
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                 >
                   {VEHICLE_CONDITIONS.map((cond) => (
                     <option key={cond} value={cond}>
@@ -875,7 +881,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               </div>
 
               <div>
-                <label htmlFor="v-mileage" className="block text-sm font-semibold text-slate-800">
+                <label htmlFor="v-mileage" className="block text-sm font-semibold text-blue-950">
                   Current Odometer (km)
                 </label>
                 <input
@@ -886,14 +892,14 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   required
                   value={formMileage}
                   onChange={(e) => setFormMileage(e.target.value)}
-                  className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 font-mono tabular-nums text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                  className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono tabular-nums text-base text-blue-950"
                 />
               </div>
 
               {editingVehicle && (
-                <div className="flex items-center justify-between rounded-xl border border-slate-200 p-3.5">
+                <div className="flex items-center justify-between rounded-xl border border-blue-200 p-3.5 bg-blue-50/30">
                   <div>
-                    <div className="text-sm font-semibold text-slate-900">Vehicle Active</div>
+                    <div className="text-sm font-semibold text-blue-950">Vehicle Active</div>
                     <div className="text-xs text-slate-500">
                       Uncheck to retire a vehicle without deleting its history
                     </div>
@@ -903,7 +909,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                     checked={formActive}
                     onChange={(e) => setFormActive(e.target.checked)}
                     aria-label="Vehicle active"
-                    className="h-6 w-6 rounded border-slate-300 text-slate-900"
+                    className="h-6 w-6 rounded border-blue-300 text-cyan-600 accent-cyan-600"
                   />
                 </div>
               )}
@@ -912,14 +918,14 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 <button
                   type="submit"
                   disabled={saving}
-                  className="flex-1 min-h-[48px] rounded-xl bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                  className="cyan-glow-btn flex-1 min-h-[48px] rounded-xl px-4 text-base font-semibold disabled:opacity-60"
                 >
                   {saving ? 'Saving...' : editingVehicle ? 'Save Changes' : 'Add Vehicle'}
                 </button>
                 <button
                   type="button"
                   onClick={() => setShowForm(false)}
-                  className="min-h-[48px] rounded-xl border border-slate-300 px-4 text-base font-medium text-slate-700 hover:bg-slate-50"
+                  className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base font-medium text-blue-900"
                 >
                   Cancel
                 </button>

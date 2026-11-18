@@ -13,7 +13,7 @@ import { recordAudit, verifyAuditChain } from './audit';
 import { hashPin, signSession, verifyPin, verifySession } from './crypto';
 import { registerDashboardRoutes } from './dashboard';
 import { registerDirectoryRoutes } from './directories';
-import { ensureInitialSeed } from './seed';
+import { ensureInitialSeed, seedPreviewDemoData, type DemoSeedCounts } from './seed';
 import { notifyManagersInApp, registerNotificationRoutes } from './notifications';
 import { registerReportRoutes } from './reports';
 import { registerTripRoutes } from './trips';
@@ -46,13 +46,53 @@ function getUserAgent(c: AppContext): string {
 }
 
 function isHttpsRequest(c: AppContext): boolean {
-  const proto = c.req.header('x-forwarded-proto') || '';
+  const proto = (c.req.header('x-forwarded-proto') || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
   if (proto === 'https') return true;
+
+  const cfVisitor = c.req.header('cf-visitor') || '';
+  if (cfVisitor.includes('"https"')) return true;
+
+  const origin = (c.req.header('origin') || '').trim().toLowerCase();
+  if (origin.startsWith('https://')) return true;
+
+  const referer = (c.req.header('referer') || '').trim().toLowerCase();
+  if (referer.startsWith('https://')) return true;
+
+  const effectiveHost = (c.req.header('x-forwarded-host') || c.req.header('host') || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (effectiveHost.endsWith('.run.app') || effectiveHost.endsWith('.pages.dev')) {
+    return true;
+  }
+
   try {
     return new URL(c.req.url).protocol === 'https:';
   } catch {
     return false;
   }
+}
+
+function getRequestSessionToken(c: AppContext): string | undefined {
+  const cookieToken = getCookie(c, SESSION_COOKIE);
+  if (cookieToken) return cookieToken;
+  const authHeader = c.req.header('authorization') || '';
+  const match = authHeader.match(/^Bearer\s+(.+)$/i);
+  return match ? match[1].trim() : undefined;
+}
+
+function getSessionCookieOptions(c: AppContext) {
+  const https = isHttpsRequest(c);
+  return {
+    httpOnly: true,
+    secure: https,
+    sameSite: (https ? 'None' : 'Lax') as 'None' | 'Lax',
+    ...(https ? { partitioned: true as const } : {}),
+    path: '/',
+  };
 }
 
 function mapUserRow(row: Record<string, unknown>): UserPublic {
@@ -99,15 +139,40 @@ export function createApp() {
     const method = c.req.method.toUpperCase();
     if (method === 'POST' || method === 'PUT' || method === 'PATCH' || method === 'DELETE') {
       const origin = c.req.header('origin');
-      const host = c.req.header('host');
-      if (origin && host) {
+      if (origin) {
+        const allowedHosts = new Set<string>();
+        const host = c.req.header('host')?.trim().toLowerCase();
+        if (host) allowedHosts.add(host);
+        const forwardedHost = c.req
+          .header('x-forwarded-host')
+          ?.split(',')[0]
+          ?.trim()
+          .toLowerCase();
+        if (forwardedHost) allowedHosts.add(forwardedHost);
         try {
-          const originHost = new URL(origin).host;
-          if (originHost !== host) {
-            return c.json({ error: 'Request origin mismatch. Please reload the page and try again.' }, 403);
-          }
+          allowedHosts.add(new URL(c.req.url).host.toLowerCase());
         } catch {
-          return c.json({ error: 'Invalid request origin.' }, 403);
+          // ignore invalid request URL
+        }
+        if (c.env.APP_URL) {
+          try {
+            allowedHosts.add(new URL(c.env.APP_URL).host.toLowerCase());
+          } catch {
+            // ignore invalid APP_URL
+          }
+        }
+        if (allowedHosts.size > 0) {
+          try {
+            const originHost = new URL(origin).host.toLowerCase();
+            if (!allowedHosts.has(originHost)) {
+              return c.json(
+                { error: 'Request origin mismatch. Please reload the page and try again.' },
+                403
+              );
+            }
+          } catch {
+            return c.json({ error: 'Invalid request origin.' }, 403);
+          }
         }
       }
     }
@@ -116,7 +181,7 @@ export function createApp() {
 
   // Auth middleware helpers
   async function requireAuth(c: AppContext, next: Next) {
-    const token = getCookie(c, SESSION_COOKIE);
+    const token = getRequestSessionToken(c);
     const payload = await verifySession(token, getSessionSecret(c.env));
     if (!payload) {
       return c.json({ error: 'Your session has expired. Please sign in again.' }, 401);
@@ -128,7 +193,7 @@ export function createApp() {
       .first<Record<string, unknown>>();
 
     if (!row || Number(row.active) !== 1) {
-      deleteCookie(c, SESSION_COOKIE, { path: '/' });
+      deleteCookie(c, SESSION_COOKIE, getSessionCookieOptions(c));
       return c.json({ error: 'Your account is inactive. Contact an Administrator.' }, 401);
     }
 
@@ -165,6 +230,174 @@ export function createApp() {
   // Health endpoint
   app.get('/health', (c) => {
     return c.json({ ok: true, service: 'fleet-secure', time: new Date().toISOString() });
+  });
+
+  // ---------------- PREVIEW SANDBOX & ADMIN SIGNUP ----------------
+  app.get('/auth/preview-status', async (c) => {
+    const previewSignupEnabled = c.env.ALLOW_PREVIEW_SIGNUP === 'true';
+    const [vRow, dRow, tRow] = await Promise.all([
+      c.env.DB.prepare('SELECT COUNT(*) as cnt FROM vehicles').first<{ cnt: number }>(),
+      c.env.DB.prepare('SELECT COUNT(*) as cnt FROM drivers').first<{ cnt: number }>(),
+      c.env.DB.prepare('SELECT COUNT(*) as cnt FROM trips').first<{ cnt: number }>(),
+    ]);
+    return c.json({
+      previewSignupEnabled,
+      vehicleCount: vRow?.cnt ?? 0,
+      driverCount: dRow?.cnt ?? 0,
+      tripCount: tRow?.cnt ?? 0,
+    });
+  });
+
+  app.post('/auth/signup-admin', async (c) => {
+    if (c.env.ALLOW_PREVIEW_SIGNUP !== 'true') {
+      return c.json(
+        { error: 'Preview Admin sign-up is disabled in this environment.' },
+        403
+      );
+    }
+
+    let body: {
+      full_name?: string;
+      username?: string;
+      pin?: string;
+      load_demo_data?: boolean;
+    };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid request format.' }, 400);
+    }
+
+    const fullName = (body.full_name ?? '').trim();
+    const username = (body.username ?? '').trim().toLowerCase();
+    const pin = String(body.pin ?? '').trim();
+    const loadDemoData = body.load_demo_data !== false;
+
+    if (!fullName || fullName.length < 2) {
+      return c.json({ error: 'Enter your full name (at least 2 characters).' }, 400);
+    }
+    if (!username || !/^[a-z0-9._-]{3,32}$/.test(username)) {
+      return c.json(
+        {
+          error:
+            'Username must be 3–32 characters using only letters, numbers, dots, underscores, or hyphens.',
+        },
+        400
+      );
+    }
+    if (!pin || pin.length < 4 || pin.length > 64) {
+      return c.json(
+        { error: 'Choose a PIN or password between 4 and 64 characters.' },
+        400
+      );
+    }
+
+    const existing = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?')
+      .bind(username)
+      .first<{ id: number }>();
+    if (existing) {
+      return c.json(
+        { error: `Username "${username}" is already taken. Pick another username or sign in.` },
+        409
+      );
+    }
+
+    const pinHash = await hashPin(pin);
+    const res = await c.env.DB.prepare(
+      `INSERT INTO users (username, full_name, role, pin_hash, active, must_change_pin)
+       VALUES (?, ?, 'ADMIN', ?, 1, 0)`
+    )
+      .bind(username, fullName, pinHash)
+      .run();
+
+    const newId = res.meta.last_row_id;
+
+    await c.env.DB.prepare(
+      `INSERT INTO notification_recipients (user_id, channel, destination, active)
+       VALUES (?, 'IN_APP', '', 1)`
+    )
+      .bind(newId)
+      .run();
+
+    const createdRow = await c.env.DB.prepare(
+      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+    )
+      .bind(newId)
+      .first<Record<string, unknown>>();
+    const user = mapUserRow(createdRow!);
+
+    const ip = getClientIp(c);
+    const ua = getUserAgent(c);
+
+    await recordAudit(c.env.DB, {
+      userId: user.id,
+      username: user.username,
+      userRole: user.role,
+      action: 'AUTH_PREVIEW_ADMIN_SIGNUP',
+      entity: 'users',
+      entityId: user.id,
+      newValue: { username: user.username, full_name: user.full_name, role: 'ADMIN' },
+      ip,
+      userAgent: ua,
+    });
+
+    let demoSeeded: DemoSeedCounts | null = null;
+    if (loadDemoData) {
+      demoSeeded = await seedPreviewDemoData(c.env.DB, user.id);
+      if (
+        demoSeeded.vehiclesAdded > 0 ||
+        demoSeeded.driversAdded > 0 ||
+        demoSeeded.tripsAdded > 0
+      ) {
+        await recordAudit(c.env.DB, {
+          userId: user.id,
+          username: user.username,
+          userRole: user.role,
+          action: 'PREVIEW_DEMO_SEEDED',
+          entity: 'system',
+          entityId: 'demo',
+          newValue: demoSeeded,
+          ip,
+          userAgent: ua,
+        });
+      }
+    }
+
+    const token = await signSession(
+      { id: user.id, username: user.username, role: user.role },
+      getSessionSecret(c.env)
+    );
+
+    setCookie(c, SESSION_COOKIE, token, {
+      ...getSessionCookieOptions(c),
+      maxAge: 60 * 60 * 12,
+    });
+
+    return c.json({ user, demoSeeded, sessionToken: token }, 201);
+  });
+
+  app.post('/demo/seed', requireAuth, requirePinChanged(), requireRole(['ADMIN']), async (c) => {
+    if (c.env.ALLOW_PREVIEW_SIGNUP !== 'true') {
+      return c.json({ error: 'Preview demo seeding is disabled in this environment.' }, 403);
+    }
+    const actor = c.get('user')!;
+    const counts = await seedPreviewDemoData(c.env.DB, actor.id);
+
+    if (counts.vehiclesAdded > 0 || counts.driversAdded > 0 || counts.tripsAdded > 0) {
+      await recordAudit(c.env.DB, {
+        userId: actor.id,
+        username: actor.username,
+        userRole: actor.role,
+        action: 'PREVIEW_DEMO_SEEDED',
+        entity: 'system',
+        entityId: 'demo',
+        newValue: counts,
+        ip: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+    }
+
+    return c.json({ ok: true, ...counts });
   });
 
   // ---------------- AUTH ----------------
@@ -292,10 +525,7 @@ export function createApp() {
     );
 
     setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: isHttpsRequest(c),
-      sameSite: 'Lax',
-      path: '/',
+      ...getSessionCookieOptions(c),
       maxAge: 60 * 60 * 12,
     });
 
@@ -310,13 +540,13 @@ export function createApp() {
       userAgent: ua,
     });
 
-    return c.json({ user });
+    return c.json({ user, sessionToken: token });
   });
 
   app.post('/auth/logout', async (c) => {
-    const token = getCookie(c, SESSION_COOKIE);
+    const token = getRequestSessionToken(c);
     const payload = await verifySession(token, getSessionSecret(c.env));
-    deleteCookie(c, SESSION_COOKIE, { path: '/' });
+    deleteCookie(c, SESSION_COOKIE, getSessionCookieOptions(c));
 
     if (payload) {
       await recordAudit(c.env.DB, {
@@ -392,7 +622,17 @@ export function createApp() {
       .bind(user.id)
       .first<Record<string, unknown>>();
 
-    return c.json({ user: mapUserRow(updatedRow!) });
+    const updatedUser = mapUserRow(updatedRow!);
+    const refreshedToken = await signSession(
+      { id: updatedUser.id, username: updatedUser.username, role: updatedUser.role },
+      getSessionSecret(c.env)
+    );
+    setCookie(c, SESSION_COOKIE, refreshedToken, {
+      ...getSessionCookieOptions(c),
+      maxAge: 60 * 60 * 12,
+    });
+
+    return c.json({ user: updatedUser, sessionToken: refreshedToken });
   });
 
   // ---------------- SETTINGS ----------------

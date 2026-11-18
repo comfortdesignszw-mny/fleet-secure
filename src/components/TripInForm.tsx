@@ -289,7 +289,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
   if (confirming && selectedTrip && fuelIn && liveCalc) {
     return (
       <div className="mx-auto max-w-2xl space-y-6">
-        <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-5">
+        <div className="rounded-2xl border border-blue-200/80 bg-white p-6 space-y-5 shadow-xs">
           <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <Lock className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
             <div>
@@ -300,46 +300,46 @@ export const TripInForm: React.FC<TripInFormProps> = ({
             </div>
           </div>
 
-          <h1 className="font-display text-2xl font-bold text-slate-900">Confirm {title}</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">Confirm {title}</h1>
 
-          <dl className="divide-y divide-slate-200 text-base">
+          <dl className="divide-y divide-blue-100 text-base">
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Vehicle</dt>
-              <dd className="font-semibold text-slate-900 text-right">
+              <dd className="font-semibold text-blue-950 text-right">
                 {selectedTrip.reg_number} · {selectedTrip.make_model}
               </dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Driver</dt>
-              <dd className="font-semibold text-slate-900 text-right">{selectedTrip.driver_name}</dd>
+              <dd className="font-semibold text-blue-950 text-right">{selectedTrip.driver_name}</dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Mileage when leaving / returning</dt>
-              <dd className="font-mono tabular-nums font-semibold text-slate-900">
+              <dd className="font-mono tabular-nums font-semibold text-blue-950">
                 {selectedTrip.mileage_out.toLocaleString()} → {Number(mileageIn).toLocaleString()} km
               </dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Total Mileage (auto)</dt>
-              <dd className="font-mono tabular-nums font-bold text-slate-900">
+              <dd className="font-mono tabular-nums font-bold text-blue-950">
                 {liveCalc.totalMileage?.toLocaleString()} km
               </dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Fuel when leaving / returning</dt>
-              <dd className="font-mono font-semibold text-slate-900">
+              <dd className="font-mono font-semibold text-cyan-700">
                 {selectedTrip.fuel_out} → {fuelIn}
               </dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Est. Fuel Consumed (auto)</dt>
-              <dd className="font-mono tabular-nums font-bold text-slate-900">
+              <dd className="font-mono tabular-nums font-bold text-blue-950">
                 {liveCalc.estFuelLitres} L (Gauge: {liveCalc.gaugeFuelLitres} L)
               </dd>
             </div>
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Closing checklist by</dt>
-              <dd className="font-semibold text-slate-900 text-right">{checklistBy.trim()}</dd>
+              <dd className="font-semibold text-blue-950 text-right">{checklistBy.trim()}</dd>
             </div>
           </dl>
 
@@ -354,7 +354,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
               type="button"
               disabled={submitting}
               onClick={handleFinalSave}
-              className="flex-1 min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl bg-slate-900 px-5 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+              className="cyan-glow-btn flex-1 min-h-[52px] inline-flex items-center justify-center gap-2 rounded-xl px-5 text-base font-semibold disabled:opacity-60"
             >
               <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
               <span>{submitting ? 'Saving permanently...' : 'Confirm & Save Return'}</span>
@@ -363,7 +363,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
               type="button"
               disabled={submitting}
               onClick={() => setConfirming(false)}
-              className="min-h-[52px] rounded-xl border border-slate-300 bg-white px-5 text-base font-medium text-slate-800 hover:bg-slate-50"
+              className="cyan-glow-outline min-h-[52px] rounded-xl border border-blue-200 bg-white px-5 text-base font-medium text-blue-900"
             >
               Go Back & Edit
             </button>
@@ -379,32 +379,32 @@ export const TripInForm: React.FC<TripInFormProps> = ({
         <button
           type="button"
           onClick={onCancel}
-          className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+          className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
         >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          <ArrowLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
           <span>Back</span>
         </button>
       </div>
 
       {/* Collapsible How to fill this in */}
-      <div className="rounded-2xl border border-slate-200 bg-white">
+      <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white">
         <button
           type="button"
           onClick={() => setShowGuide((v) => !v)}
           className="flex w-full min-h-[52px] items-center justify-between gap-3 px-5 py-3 text-left"
         >
-          <span className="inline-flex items-center gap-2 text-sm font-semibold text-slate-900">
-            <HelpCircle className="h-4 w-4 text-slate-500" aria-hidden="true" />
+          <span className="inline-flex items-center gap-2 text-sm font-semibold text-blue-950">
+            <HelpCircle className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>How to fill this in</span>
           </span>
           {showGuide ? (
-            <ChevronUp className="h-5 w-5 text-slate-500" aria-hidden="true" />
+            <ChevronUp className="h-5 w-5 text-cyan-600" aria-hidden="true" />
           ) : (
-            <ChevronDown className="h-5 w-5 text-slate-500" aria-hidden="true" />
+            <ChevronDown className="h-5 w-5 text-cyan-600" aria-hidden="true" />
           )}
         </button>
         {showGuide && (
-          <ol className="border-t border-slate-200 px-5 py-4 text-sm text-slate-700 space-y-1.5 list-decimal pl-9">
+          <ol className="border-t border-blue-100 px-5 py-4 text-sm text-slate-700 space-y-1.5 list-decimal pl-9">
             <li>Pick the vehicle returning from the ongoing list below.</li>
             <li>Read the exact odometer on the dashboard and enter <strong>Mileage when returning</strong>.</li>
             <li>Tap the matching level on the <strong>Fuel when returning</strong> gauge.</li>
@@ -416,12 +416,12 @@ export const TripInForm: React.FC<TripInFormProps> = ({
 
       <form
         onSubmit={validateAndConfirm}
-        className="rounded-2xl border border-slate-200 bg-white p-6 space-y-6"
+        className="rounded-2xl border border-blue-200/80 bg-white p-6 space-y-6 shadow-xs"
       >
         <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900">{title}</h1>
+          <h1 className="font-display text-2xl font-bold text-blue-950">{title}</h1>
           <div className="mt-2 inline-flex items-center gap-2 text-sm text-slate-600">
-            <Clock className="h-4 w-4 text-slate-400" aria-hidden="true" />
+            <Clock className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Return date & time: Locked and recorded automatically by server on save</span>
           </div>
         </div>
@@ -438,14 +438,14 @@ export const TripInForm: React.FC<TripInFormProps> = ({
         {loading ? (
           <div className="py-6 text-base text-slate-500">Loading ongoing trips...</div>
         ) : openTrips.length === 0 ? (
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-6 text-center space-y-3">
+          <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-6 text-center space-y-3">
             <p className="text-base text-slate-700">
               There are no ongoing {tripType === 'HIRE' ? 'hires' : 'errands'} to return right now.
             </p>
             <button
               type="button"
               onClick={onCancel}
-              className="min-h-[48px] rounded-xl bg-slate-900 px-5 text-sm font-semibold text-white"
+              className="cyan-glow-btn min-h-[48px] rounded-xl px-5 text-sm font-semibold"
             >
               Back to Home
             </button>
@@ -453,7 +453,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
         ) : (
           <>
             <div>
-              <label htmlFor="in-trip" className="block text-sm font-semibold text-slate-800">
+              <label htmlFor="in-trip" className="block text-sm font-semibold text-blue-950">
                 Select Ongoing {tripType === 'HIRE' ? 'Hire' : 'Errand'}
               </label>
               <select
@@ -461,7 +461,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                 value={selectedTripId}
                 onChange={(e) => setSelectedTripId(e.target.value)}
                 required
-                className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
               >
                 <option value="">Choose vehicle returning...</option>
                 {openTrips.map((t) => (
@@ -476,8 +476,8 @@ export const TripInForm: React.FC<TripInFormProps> = ({
             {selectedTrip && (
               <>
                 {/* What went out summary */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-2 text-sm">
-                  <div className="font-semibold text-slate-900">
+                <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 space-y-2 text-sm">
+                  <div className="font-semibold text-blue-950">
                     What went out · {selectedTrip.reg_number} ({selectedTrip.make_model})
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-slate-700">
@@ -490,7 +490,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     <div className="font-mono tabular-nums">
                       Left at: {formatHarareTime(selectedTrip.out_at)}
                     </div>
-                    <div className="font-mono tabular-nums">
+                    <div className="font-mono tabular-nums text-cyan-800 font-medium">
                       Out: {selectedTrip.mileage_out.toLocaleString()} km · Fuel: {selectedTrip.fuel_out}
                     </div>
                   </div>
@@ -498,7 +498,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
 
                 {/* Mileage when returning */}
                 <div>
-                  <label htmlFor="in-mileage" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="in-mileage" className="block text-sm font-semibold text-blue-950">
                     Mileage when returning (km)
                   </label>
                   <input
@@ -511,7 +511,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     value={mileageIn}
                     onChange={(e) => setMileageIn(e.target.value)}
                     placeholder={`Must be ${selectedTrip.mileage_out.toLocaleString()} or higher`}
-                    className="mt-1.5 block w-full min-h-[52px] rounded-xl border border-slate-300 px-4 font-mono tabular-nums text-lg font-semibold text-slate-900 focus:border-slate-900 focus:outline-none"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[52px] rounded-xl border border-blue-200 px-4 font-mono tabular-nums text-lg font-semibold text-blue-950"
                   />
                 </div>
 
@@ -523,15 +523,15 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                 />
 
                 {/* Locked live calculation box */}
-                <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 space-y-3">
-                  <div className="flex items-center gap-2 text-xs font-semibold text-slate-600">
-                    <Lock className="h-3.5 w-3.5" aria-hidden="true" />
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50/40 p-4 space-y-3">
+                  <div className="flex items-center gap-2 text-xs font-semibold text-blue-900">
+                    <Lock className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
                     <span>Automatic Totals (Locked)</span>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                     <div>
                       <div className="text-xs text-slate-500">Total Mileage</div>
-                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-slate-900">
+                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-blue-950">
                         {liveCalc?.totalMileage !== null && liveCalc?.totalMileage !== undefined
                           ? `${liveCalc.totalMileage.toLocaleString()} km`
                           : '—'}
@@ -539,7 +539,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     </div>
                     <div>
                       <div className="text-xs text-slate-500">Est. Fuel Consumed</div>
-                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-slate-900">
+                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-cyan-700">
                         {liveCalc?.estFuelLitres !== null && liveCalc?.estFuelLitres !== undefined
                           ? `${liveCalc.estFuelLitres} L`
                           : '—'}
@@ -547,7 +547,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     </div>
                     <div>
                       <div className="text-xs text-slate-500">Gauge Fuel Used</div>
-                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-slate-900">
+                      <div className="mt-0.5 text-xl font-bold font-mono tabular-nums text-blue-950">
                         {liveCalc?.gaugeFuelLitres !== null && liveCalc?.gaugeFuelLitres !== undefined
                           ? `${liveCalc.gaugeFuelLitres} L`
                           : '—'}
@@ -567,7 +567,7 @@ export const TripInForm: React.FC<TripInFormProps> = ({
 
                 {/* Closing checklist by */}
                 <div>
-                  <label htmlFor="in-checklist" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="in-checklist" className="block text-sm font-semibold text-blue-950">
                     Closing checklist done by
                   </label>
                   <input
@@ -576,13 +576,13 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     required
                     value={checklistBy}
                     onChange={(e) => setChecklistBy(e.target.value)}
-                    className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                   />
                 </div>
 
                 {/* Notes */}
                 <div>
-                  <label htmlFor="in-notes" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="in-notes" className="block text-sm font-semibold text-blue-950">
                     Return notes (optional)
                   </label>
                   <textarea
@@ -591,13 +591,13 @@ export const TripInForm: React.FC<TripInFormProps> = ({
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     placeholder="Any new damage, receipts, or refuel notes..."
-                    className="mt-1.5 block w-full rounded-xl border border-slate-300 p-3.5 text-base text-slate-900 focus:border-slate-900 focus:outline-none"
+                    className="cyan-glow-input mt-1.5 block w-full rounded-xl border border-blue-200 p-3.5 text-base text-blue-950"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full min-h-[52px] rounded-xl bg-slate-900 px-5 text-base font-semibold text-white hover:bg-slate-800"
+                  className="cyan-glow-btn w-full min-h-[52px] rounded-xl px-5 text-base font-semibold"
                 >
                   Review & Save Return
                 </button>

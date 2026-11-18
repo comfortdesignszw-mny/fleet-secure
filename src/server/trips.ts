@@ -3,18 +3,23 @@ import {
   DEFAULT_SETTINGS,
   FUEL_FRACTIONS,
   FUEL_LEVELS,
+  VEHICLE_CONDITIONS,
+  VEHICLE_TYPE_TO_CLASS,
   type AppSettings,
   type FuelLevel,
+  type NewDriverInput,
+  type NewVehicleInput,
   type TripCorrection,
   type TripFlag,
   type TripSummary,
   type TripType,
   type UserPublic,
   type VehicleClass,
+  type VehicleCondition,
 } from '../shared/types';
 import { recordAudit } from './audit';
 import { computeLicenceExpiryStatus, type RouteAuthDeps } from './directories';
-import { notifyManagersInApp } from './notifications';
+import { checkAndNotifyOverdueHires, notifyManagersInApp } from './notifications';
 import type { AppEnv, D1DatabaseLike } from './types';
 
 export interface FuelCalcResult {
@@ -85,10 +90,20 @@ function parseFlags(raw: unknown): TripFlag[] {
   }
 }
 
+function toHarareDateStr(date: Date): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(date);
+}
+
 function mapTripSummaryRow(
   row: Record<string, unknown>,
   overdueHours: number,
-  nowMs: number
+  nowMs: number,
+  todayHarare = toHarareDateStr(new Date(nowMs))
 ): TripSummary {
   const outFlags = parseFlags(row.out_flags);
   const inFlags = parseFlags(row.in_flags);
@@ -97,6 +112,14 @@ function mapTripSummaryRow(
   const outAt = String(row.out_at);
   const status = row.status as 'OPEN' | 'CLOSED';
   const tripType = row.trip_type as TripType;
+  const daysHired =
+    row.days_hired !== null && row.days_hired !== undefined ? Number(row.days_hired) : null;
+  const expectedReturnDate = row.expected_return_date ? String(row.expected_return_date) : null;
+  const isReturnDue =
+    status === 'OPEN' &&
+    tripType === 'HIRE' &&
+    Boolean(expectedReturnDate) &&
+    expectedReturnDate! <= todayHarare;
 
   const elapsedHours = (nowMs - new Date(outAt).getTime()) / 3_600_000;
   const isOverdue = status === 'OPEN' && tripType === 'HIRE' && elapsedHours > overdueHours;
@@ -118,6 +141,9 @@ function mapTripSummaryRow(
     client_name: row.client_name ? String(row.client_name) : null,
     destination: row.destination ? String(row.destination) : null,
     reason: row.reason ? String(row.reason) : null,
+    days_hired: daysHired,
+    expected_return_date: expectedReturnDate,
+    is_return_due: isReturnDue,
     created_at: String(row.created_at),
     reg_number: String(row.reg_number),
     make_model: String(row.make_model),
@@ -149,7 +175,8 @@ function mapTripSummaryRow(
 
 const TRIP_SUMMARY_SELECT = `
   SELECT
-    t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason, t.created_at,
+    t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason,
+    t.days_hired, t.expected_return_date, t.created_at,
     v.reg_number, v.make_model, v.vehicle_type, v.vehicle_class,
     d.full_name AS driver_name, d.phone AS driver_phone,
     tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -174,7 +201,7 @@ export function registerTripRoutes(
   const { requireAuth, requirePinChanged, requireRole, getClientIp, getUserAgent } = deps;
 
   // ---------------- LIST TRIPS ----------------
-  app.get('/trips', requireAuth, requirePinChanged(), async (c) => {
+  app.get('/trips', requireAuth, async (c) => {
     const status = (c.req.query('status') || '').trim();
     const tripType = (c.req.query('trip_type') || '').trim();
     const vehicleId = Number(c.req.query('vehicle_id') || 0);
@@ -355,9 +382,13 @@ export function registerTripRoutes(
       trip_type?: TripType;
       vehicle_id?: number;
       driver_id?: number;
+      new_vehicle?: Partial<NewVehicleInput>;
+      new_driver?: Partial<NewDriverInput>;
       client_name?: string;
       destination?: string;
       reason?: string;
+      days_hired?: number | string | null;
+      expected_return_date?: string | null;
       mileage_out?: number;
       fuel_out?: FuelLevel;
       opening_checklist_by?: string;
@@ -371,8 +402,8 @@ export function registerTripRoutes(
     }
 
     const tripType = body.trip_type;
-    const vehicleId = Number(body.vehicle_id);
-    const driverId = Number(body.driver_id);
+    const requestedVehicleId = body.vehicle_id !== undefined ? Number(body.vehicle_id) : 0;
+    const requestedDriverId = body.driver_id !== undefined ? Number(body.driver_id) : 0;
     const clientName = (body.client_name || '').trim();
     const destination = (body.destination || '').trim();
     const reason = (body.reason || '').trim();
@@ -382,17 +413,38 @@ export function registerTripRoutes(
     const notes = (body.notes || '').trim();
     const deviceTime = body.device_time ? String(body.device_time).trim() : null;
 
+    let daysHired: number | null = null;
+    let expectedReturnDate: string | null = null;
+
     if (tripType !== 'HIRE' && tripType !== 'ERRAND') {
       return c.json({ error: 'Choose either Hire or Errand.' }, 400);
     }
-    if (!Number.isInteger(vehicleId) || vehicleId <= 0) {
-      return c.json({ error: 'Select a vehicle.' }, 400);
-    }
-    if (!Number.isInteger(driverId) || driverId <= 0) {
-      return c.json({ error: 'Select a driver.' }, 400);
-    }
-    if (tripType === 'HIRE' && !clientName) {
-      return c.json({ error: 'Enter the client name for this hire.' }, 400);
+    if (tripType === 'HIRE') {
+      if (!clientName) {
+        return c.json({ error: 'Enter the client name for this hire.' }, 400);
+      }
+      if (
+        body.days_hired !== undefined &&
+        body.days_hired !== null &&
+        String(body.days_hired).trim() !== ''
+      ) {
+        const parsedDays = Number(body.days_hired);
+        if (!Number.isInteger(parsedDays) || parsedDays < 1) {
+          return c.json({ error: 'Number of days hired must be a whole number of at least 1.' }, 400);
+        }
+        daysHired = parsedDays;
+      }
+      if (
+        body.expected_return_date !== undefined &&
+        body.expected_return_date !== null &&
+        String(body.expected_return_date).trim() !== ''
+      ) {
+        const parsedDate = String(body.expected_return_date).trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(parsedDate)) {
+          return c.json({ error: 'Expected return date must be in YYYY-MM-DD format.' }, 400);
+        }
+        expectedReturnDate = parsedDate;
+      }
     }
     if (tripType === 'ERRAND' && (!destination || !reason)) {
       return c.json({ error: 'Enter both the destination and the reason for this errand.' }, 400);
@@ -407,60 +459,318 @@ export function registerTripRoutes(
       return c.json({ error: 'Enter the name of the person who did the opening checklist.' }, 400);
     }
 
-    // Check vehicle availability & condition
-    const vehicle = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?')
-      .bind(vehicleId)
-      .first<Record<string, unknown>>();
-    if (!vehicle || Number(vehicle.active) !== 1) {
-      return c.json({ error: 'The selected vehicle is inactive or does not exist.' }, 400);
+    // Validate vehicle (either existing directory selection or new inline creation)
+    let vehicle: Record<string, unknown> | null = null;
+    let newVehicleSpec: {
+      regNumber: string;
+      vehicleType: string;
+      vehicleClass: VehicleClass;
+      makeModel: string;
+      condition: VehicleCondition;
+      mileage: number;
+      saveToDirectory: boolean;
+    } | null = null;
+
+    if (body.new_vehicle) {
+      const regNumber = (body.new_vehicle.reg_number || '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, ' ');
+      const vehicleType = (body.new_vehicle.vehicle_type || '').trim();
+      const makeModel = (body.new_vehicle.make_model || '').trim();
+      const condition = (body.new_vehicle.condition || 'Good') as VehicleCondition;
+      const mileage =
+        body.new_vehicle.last_known_mileage !== undefined
+          ? Number(body.new_vehicle.last_known_mileage)
+          : mileageOut;
+      const saveToDirectory = Boolean(body.new_vehicle.save_to_directory);
+
+      if (!regNumber || regNumber.length < 3) {
+        return c.json({ error: 'Enter the new vehicle registration number (at least 3 characters).' }, 400);
+      }
+      const vehicleClass = VEHICLE_TYPE_TO_CLASS[vehicleType];
+      if (!vehicleClass) {
+        return c.json({ error: 'Choose a valid vehicle type for the new vehicle.' }, 400);
+      }
+      if (!makeModel || makeModel.length < 2) {
+        return c.json({ error: 'Enter the new vehicle make and model (e.g. Toyota Hilux).' }, 400);
+      }
+      if (!VEHICLE_CONDITIONS.includes(condition)) {
+        return c.json({ error: 'Choose a valid vehicle condition.' }, 400);
+      }
+      if (condition === 'Accident' || condition === 'Grounded') {
+        return c.json(
+          { error: `A new vehicle marked "${condition}" cannot be booked out on a trip.` },
+          400
+        );
+      }
+      if (!Number.isInteger(mileage) || mileage < 0) {
+        return c.json({ error: 'Starting mileage must be a whole number 0 or greater.' }, 400);
+      }
+
+      const existingVehicle = await c.env.DB.prepare(
+        'SELECT id, active FROM vehicles WHERE reg_number = ?'
+      )
+        .bind(regNumber)
+        .first<{ id: number; active: number }>();
+      if (existingVehicle) {
+        return c.json(
+          {
+            error:
+              existingVehicle.active === 1
+                ? `Vehicle "${regNumber}" is already in the Vehicles Directory. Select it from the vehicle list instead.`
+                : `Vehicle "${regNumber}" already exists in past records. Use a different registration or ask a Supervisor to re-enable it.`,
+          },
+          409
+        );
+      }
+
+      newVehicleSpec = {
+        regNumber,
+        vehicleType,
+        vehicleClass,
+        makeModel,
+        condition,
+        mileage,
+        saveToDirectory,
+      };
+    } else {
+      if (!Number.isInteger(requestedVehicleId) || requestedVehicleId <= 0) {
+        return c.json({ error: 'Select a vehicle or add a new vehicle.' }, 400);
+      }
+      vehicle = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?')
+        .bind(requestedVehicleId)
+        .first<Record<string, unknown>>();
+      if (!vehicle || Number(vehicle.active) !== 1) {
+        return c.json({ error: 'The selected vehicle is inactive or does not exist.' }, 400);
+      }
+      if (vehicle.condition === 'Accident' || vehicle.condition === 'Grounded') {
+        return c.json(
+          {
+            error: `${vehicle.reg_number} is marked "${vehicle.condition}" and cannot leave the yard. Ask a Supervisor to inspect and update its condition first.`,
+          },
+          400
+        );
+      }
+      const openVehicleTrip = await c.env.DB.prepare(
+        "SELECT id, trip_type FROM trips WHERE vehicle_id = ? AND status = 'OPEN'"
+      )
+        .bind(requestedVehicleId)
+        .first<{ id: number; trip_type: string }>();
+      if (openVehicleTrip) {
+        return c.json(
+          {
+            error: `${vehicle.reg_number} is already out on a ${openVehicleTrip.trip_type.toLowerCase()}. Record its return before booking it out again.`,
+          },
+          409
+        );
+      }
     }
-    if (vehicle.condition === 'Accident' || vehicle.condition === 'Grounded') {
-      return c.json(
-        {
-          error: `${vehicle.reg_number} is marked "${vehicle.condition}" and cannot leave the yard. Ask a Supervisor to inspect and update its condition first.`,
-        },
-        400
-      );
+
+    // Validate driver (either existing directory selection or new inline creation)
+    let driver: Record<string, unknown> | null = null;
+    let newDriverSpec: {
+      fullName: string;
+      licenceNumber: string;
+      phone: string;
+      address: string;
+      licenceExpiry: string | null;
+      saveToDirectory: boolean;
+    } | null = null;
+
+    if (body.new_driver) {
+      const fullName = (body.new_driver.full_name || '').trim();
+      const licenceNumber = (body.new_driver.licence_number || '').trim().toUpperCase();
+      const phone = (body.new_driver.phone || '').trim();
+      const address = (body.new_driver.address || '').trim();
+      const licenceExpiry = body.new_driver.licence_expiry
+        ? String(body.new_driver.licence_expiry).trim()
+        : null;
+      const saveToDirectory = Boolean(body.new_driver.save_to_directory);
+
+      if (!fullName || fullName.length < 2) {
+        return c.json({ error: 'Enter the new driver’s full name (at least 2 characters).' }, 400);
+      }
+      if (!licenceNumber || licenceNumber.length < 3) {
+        return c.json({ error: 'Enter the new driver’s licence number.' }, 400);
+      }
+      if (!phone || phone.length < 5) {
+        return c.json({ error: 'Enter a contact phone number for the new driver.' }, 400);
+      }
+      if (licenceExpiry && !/^\d{4}-\d{2}-\d{2}$/.test(licenceExpiry)) {
+        return c.json({ error: 'Licence expiry date must be in YYYY-MM-DD format.' }, 400);
+      }
+
+      const existingDriver = await c.env.DB.prepare(
+        'SELECT id, active FROM drivers WHERE UPPER(licence_number) = ?'
+      )
+        .bind(licenceNumber)
+        .first<{ id: number; active: number }>();
+      if (existingDriver) {
+        return c.json(
+          {
+            error:
+              existingDriver.active === 1
+                ? `A driver with licence "${licenceNumber}" is already in the Drivers Directory. Select them from the driver list instead.`
+                : `A driver with licence "${licenceNumber}" already exists in past records. Use a different licence number or ask a Supervisor to re-enable them.`,
+          },
+          409
+        );
+      }
+
+      newDriverSpec = {
+        fullName,
+        licenceNumber,
+        phone,
+        address,
+        licenceExpiry,
+        saveToDirectory,
+      };
+    } else {
+      if (!Number.isInteger(requestedDriverId) || requestedDriverId <= 0) {
+        return c.json({ error: 'Select a driver or add a new driver.' }, 400);
+      }
+      driver = await c.env.DB.prepare('SELECT * FROM drivers WHERE id = ?')
+        .bind(requestedDriverId)
+        .first<Record<string, unknown>>();
+      if (!driver || Number(driver.active) !== 1) {
+        return c.json({ error: 'The selected driver is inactive or does not exist.' }, 400);
+      }
+      const openDriverTrip = await c.env.DB.prepare(
+        "SELECT id, trip_type FROM trips WHERE driver_id = ? AND status = 'OPEN'"
+      )
+        .bind(requestedDriverId)
+        .first<{ id: number; trip_type: string }>();
+      if (openDriverTrip) {
+        return c.json(
+          {
+            error: `${driver.full_name} is already out on another trip (#${openDriverTrip.id}).`,
+          },
+          409
+        );
+      }
     }
-    const openVehicleTrip = await c.env.DB.prepare(
-      "SELECT id, trip_type FROM trips WHERE vehicle_id = ? AND status = 'OPEN'"
-    )
-      .bind(vehicleId)
-      .first<{ id: number; trip_type: string }>();
-    if (openVehicleTrip) {
-      return c.json(
-        {
-          error: `${vehicle.reg_number} is already out on a ${openVehicleTrip.trip_type.toLowerCase()}. Record its return before booking it out again.`,
+
+    // All validation passed; insert inline vehicle / driver records if requested
+    let vehicleId = requestedVehicleId;
+    if (newVehicleSpec) {
+      const vInsert = await c.env.DB.prepare(
+        `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, condition, last_known_mileage, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          newVehicleSpec.regNumber,
+          newVehicleSpec.vehicleType,
+          newVehicleSpec.vehicleClass,
+          newVehicleSpec.makeModel,
+          newVehicleSpec.condition,
+          newVehicleSpec.mileage,
+          newVehicleSpec.saveToDirectory ? 1 : 0
+        )
+        .run();
+      vehicleId = Number(vInsert.meta.last_row_id);
+      vehicle = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?')
+        .bind(vehicleId)
+        .first<Record<string, unknown>>();
+
+      const vAction = newVehicleSpec.saveToDirectory ? 'VEHICLE_CREATED' : 'VEHICLE_ONE_TIME_TRIP';
+      await recordAudit(c.env.DB, {
+        userId: actor.id,
+        username: actor.username,
+        userRole: actor.role,
+        action: vAction,
+        entity: 'vehicles',
+        entityId: vehicleId,
+        newValue: {
+          reg_number: newVehicleSpec.regNumber,
+          vehicle_type: newVehicleSpec.vehicleType,
+          vehicle_class: newVehicleSpec.vehicleClass,
+          make_model: newVehicleSpec.makeModel,
+          condition: newVehicleSpec.condition,
+          last_known_mileage: newVehicleSpec.mileage,
+          saved_to_directory: newVehicleSpec.saveToDirectory,
         },
-        409
+        ip: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+
+      await notifyManagersInApp(
+        c.env.DB,
+        {
+          eventType: vAction,
+          priority: 'NORMAL',
+          title: newVehicleSpec.saveToDirectory
+            ? `Vehicle added during trip: ${newVehicleSpec.regNumber}`
+            : `One-time vehicle used: ${newVehicleSpec.regNumber}`,
+          body: `${actor.full_name} added ${newVehicleSpec.makeModel} (${newVehicleSpec.regNumber}) while booking a trip (${
+            newVehicleSpec.saveToDirectory ? 'saved to directory' : 'one-time trip only'
+          }).`,
+        },
+        { env: c.env }
       );
     }
 
-    // Check driver availability
-    const driver = await c.env.DB.prepare('SELECT * FROM drivers WHERE id = ?')
-      .bind(driverId)
-      .first<Record<string, unknown>>();
-    if (!driver || Number(driver.active) !== 1) {
-      return c.json({ error: 'The selected driver is inactive or does not exist.' }, 400);
-    }
-    const openDriverTrip = await c.env.DB.prepare(
-      "SELECT id, trip_type FROM trips WHERE driver_id = ? AND status = 'OPEN'"
-    )
-      .bind(driverId)
-      .first<{ id: number; trip_type: string }>();
-    if (openDriverTrip) {
-      return c.json(
-        {
-          error: `${driver.full_name} is already out on another trip (#${openDriverTrip.id}).`,
+    let driverId = requestedDriverId;
+    if (newDriverSpec) {
+      const dInsert = await c.env.DB.prepare(
+        `INSERT INTO drivers (full_name, licence_number, phone, address, licence_expiry, active, created_by)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+        .bind(
+          newDriverSpec.fullName,
+          newDriverSpec.licenceNumber,
+          newDriverSpec.phone,
+          newDriverSpec.address,
+          newDriverSpec.licenceExpiry,
+          newDriverSpec.saveToDirectory ? 1 : 0,
+          actor.id
+        )
+        .run();
+      driverId = Number(dInsert.meta.last_row_id);
+      driver = await c.env.DB.prepare('SELECT * FROM drivers WHERE id = ?')
+        .bind(driverId)
+        .first<Record<string, unknown>>();
+
+      const dAction = newDriverSpec.saveToDirectory ? 'DRIVER_CREATED' : 'DRIVER_ONE_TIME_TRIP';
+      await recordAudit(c.env.DB, {
+        userId: actor.id,
+        username: actor.username,
+        userRole: actor.role,
+        action: dAction,
+        entity: 'drivers',
+        entityId: driverId,
+        newValue: {
+          full_name: newDriverSpec.fullName,
+          licence_number: newDriverSpec.licenceNumber,
+          phone: newDriverSpec.phone,
+          address: newDriverSpec.address,
+          licence_expiry: newDriverSpec.licenceExpiry,
+          saved_to_directory: newDriverSpec.saveToDirectory,
         },
-        409
+        ip: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+
+      await notifyManagersInApp(
+        c.env.DB,
+        {
+          eventType: dAction,
+          priority: 'NORMAL',
+          title: newDriverSpec.saveToDirectory
+            ? `Driver added during trip: ${newDriverSpec.fullName}`
+            : `One-time driver used: ${newDriverSpec.fullName}`,
+          body: `${actor.full_name} added driver ${newDriverSpec.fullName} (${newDriverSpec.licenceNumber}) while booking a trip (${
+            newDriverSpec.saveToDirectory ? 'saved to directory' : 'one-time trip only'
+          }).`,
+        },
+        { env: c.env }
       );
     }
 
     // Server-side timestamps (cannot be back-dated by user)
     const nowIso = new Date().toISOString();
     const outFlags: TripFlag[] = [];
-    const lastKnownMileage = Number(vehicle.last_known_mileage ?? 0);
+    const lastKnownMileage = Number(vehicle!.last_known_mileage ?? 0);
 
     if (mileageOut !== lastKnownMileage) {
       const diff = mileageOut - lastKnownMileage;
@@ -490,7 +800,7 @@ export function registerTripRoutes(
     }
 
     const licCheck = computeLicenceExpiryStatus(
-      driver.licence_expiry ? String(driver.licence_expiry) : null
+      driver!.licence_expiry ? String(driver!.licence_expiry) : null
     );
     if (licCheck.licence_status === 'EXPIRED' || licCheck.licence_status === 'EXPIRING_SOON') {
       outFlags.push({
@@ -498,14 +808,14 @@ export function registerTripRoutes(
         severity: licCheck.licence_status === 'EXPIRED' ? 'HIGH' : 'WARN',
         message:
           licCheck.licence_status === 'EXPIRED'
-            ? `Driver licence expired on ${driver.licence_expiry}.`
-            : `Driver licence expires in ${licCheck.days_to_expiry} day(s) on ${driver.licence_expiry}.`,
+            ? `Driver licence expired on ${driver!.licence_expiry}.`
+            : `Driver licence expires in ${licCheck.days_to_expiry} day(s) on ${driver!.licence_expiry}.`,
       });
     }
 
     const tripRes = await c.env.DB.prepare(
-      `INSERT INTO trips (trip_type, vehicle_id, driver_id, status, client_name, destination, reason)
-       VALUES (?, ?, ?, 'OPEN', ?, ?, ?)`
+      `INSERT INTO trips (trip_type, vehicle_id, driver_id, status, client_name, destination, reason, days_hired, expected_return_date)
+       VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`
     )
       .bind(
         tripType,
@@ -513,7 +823,9 @@ export function registerTripRoutes(
         driverId,
         tripType === 'HIRE' ? clientName : null,
         tripType === 'ERRAND' ? destination : null,
-        tripType === 'ERRAND' ? reason : null
+        tripType === 'ERRAND' ? reason : null,
+        tripType === 'HIRE' ? daysHired : null,
+        tripType === 'HIRE' ? expectedReturnDate : null
       )
       .run();
 
@@ -561,6 +873,8 @@ export function registerTripRoutes(
         client_name: summary.client_name,
         destination: summary.destination,
         reason: summary.reason,
+        days_hired: summary.days_hired,
+        expected_return_date: summary.expected_return_date,
         mileage_out: mileageOut,
         fuel_out: fuelOut,
         flags: outFlags,
@@ -568,6 +882,16 @@ export function registerTripRoutes(
       ip: getClientIp(c),
       userAgent: getUserAgent(c),
     });
+
+    const hireDurationNote =
+      tripType === 'HIRE' && (daysHired || expectedReturnDate)
+        ? ` (${[
+            daysHired ? `${daysHired} day${daysHired === 1 ? '' : 's'}` : null,
+            expectedReturnDate ? `return due ${expectedReturnDate}` : null,
+          ]
+            .filter(Boolean)
+            .join(', ')})`
+        : '';
 
     const hasHighFlag = outFlags.some((f) => f.severity === 'HIGH');
     await notifyManagersInApp(
@@ -578,13 +902,21 @@ export function registerTripRoutes(
         title: `${tripType === 'HIRE' ? 'Hire Out' : 'Errand Out'}: ${summary.reg_number}${
           outFlags.length > 0 ? ' (FLAGGED)' : ''
         }`,
-        body: `${summary.driver_name} took ${summary.reg_number} (${summary.make_model}) at ${mileageOut.toLocaleString()} km, fuel ${fuelOut}.${
+        body: `${summary.driver_name} took ${summary.reg_number} (${summary.make_model}) at ${mileageOut.toLocaleString()} km, fuel ${fuelOut}${hireDurationNote}.${
           outFlags.length > 0 ? ` Flags: ${outFlags.map((f) => f.code).join(', ')}.` : ''
         }`,
         tripId,
       },
       { env: c.env }
     );
+
+    if (
+      tripType === 'HIRE' &&
+      expectedReturnDate &&
+      expectedReturnDate <= toHarareDateStr(new Date())
+    ) {
+      await checkAndNotifyOverdueHires(c.env.DB, { env: c.env });
+    }
 
     return c.json({ trip: summary, flags: outFlags }, 201);
   });

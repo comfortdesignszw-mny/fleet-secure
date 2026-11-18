@@ -329,3 +329,170 @@ test('Trip Out/In validation, UNRECORDED_GAP, FUEL_MISMATCH, immutability, and c
   assert.equal(detail.corrections.length, 1);
   assert.equal(detail.trip.correction_count, 1);
 });
+
+test('Trip creation supports inline new driver & vehicle (Save to Directory vs Use Once)', async () => {
+  const { env } = createTestEnv();
+  const app = createApp();
+  const adminCookie = await loginAndChangePin(app, env, 'admin', '1234', '9999');
+
+  // 1. Save new driver & vehicle TO DIRECTORY during Hire Out
+  const saveDirOut = await app.fetch(
+    new Request('http://localhost/api/trips/out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        trip_type: 'HIRE',
+        new_driver: {
+          full_name: 'Rudo Chigumba',
+          licence_number: 'ZW-SAVE-101',
+          phone: '+263772000101',
+          address: 'Avondale',
+          licence_expiry: '2029-05-01',
+          save_to_directory: true,
+        },
+        new_vehicle: {
+          reg_number: 'AFZ 7001',
+          vehicle_type: 'SUV',
+          make_model: 'Toyota Fortuner',
+          condition: 'Very Good',
+          last_known_mileage: 42000,
+          save_to_directory: true,
+        },
+        client_name: 'Corporate Hire Ltd',
+        mileage_out: 42000,
+        fuel_out: 'Full',
+        opening_checklist_by: 'Test Admin',
+      }),
+    }),
+    env
+  );
+  assert.equal(saveDirOut.status, 201);
+  const savedTripBody = (await saveDirOut.json()) as { trip: TripSummary };
+  assert.equal(savedTripBody.trip.driver_name, 'Rudo Chigumba');
+  assert.equal(savedTripBody.trip.reg_number, 'AFZ 7001');
+
+  // Verify both appear in active directories
+  const dirDriversRes = await app.fetch(
+    new Request('http://localhost/api/drivers?limit=500', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  const dirDrivers = (await dirDriversRes.json()) as { items: Array<{ licence_number: string }> };
+  assert.ok(dirDrivers.items.some((d) => d.licence_number === 'ZW-SAVE-101'));
+
+  const dirVehiclesRes = await app.fetch(
+    new Request('http://localhost/api/vehicles?limit=500', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  const dirVehicles = (await dirVehiclesRes.json()) as { items: Array<{ reg_number: string }> };
+  assert.ok(dirVehicles.items.some((v) => v.reg_number === 'AFZ 7001'));
+
+  // 2. Duplicate registration returns 409 without creating an orphan driver
+  const dupVehicleOut = await app.fetch(
+    new Request('http://localhost/api/trips/out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        trip_type: 'ERRAND',
+        new_driver: {
+          full_name: 'Should Not Insert',
+          licence_number: 'ZW-ORPHAN-999',
+          phone: '+263779999999',
+          save_to_directory: true,
+        },
+        new_vehicle: {
+          reg_number: 'AFZ 7001',
+          vehicle_type: 'SUV',
+          make_model: 'Duplicate Car',
+          condition: 'Good',
+          last_known_mileage: 100,
+          save_to_directory: true,
+        },
+        destination: 'Depot',
+        reason: 'Parts',
+        mileage_out: 100,
+        fuel_out: 'Full',
+        opening_checklist_by: 'Test Admin',
+      }),
+    }),
+    env
+  );
+  assert.equal(dupVehicleOut.status, 409);
+
+  const dirDriversAfterDupRes = await app.fetch(
+    new Request('http://localhost/api/drivers?limit=500', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  const dirDriversAfterDup = (await dirDriversAfterDupRes.json()) as {
+    items: Array<{ licence_number: string }>;
+  };
+  assert.ok(!dirDriversAfterDup.items.some((d) => d.licence_number === 'ZW-ORPHAN-999'));
+
+  // 3. Use new driver & vehicle FOR THIS TRIP ONLY (save_to_directory: false)
+  const oneTimeOut = await app.fetch(
+    new Request('http://localhost/api/trips/out', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        trip_type: 'ERRAND',
+        new_driver: {
+          full_name: 'Temp Relief Driver',
+          licence_number: 'ZW-ONCE-202',
+          phone: '+263773000202',
+          save_to_directory: false,
+        },
+        new_vehicle: {
+          reg_number: 'AFZ 9002',
+          vehicle_type: 'Sedan',
+          make_model: 'Honda Fit',
+          condition: 'Good',
+          last_known_mileage: 15000,
+          save_to_directory: false,
+        },
+        destination: 'Airport',
+        reason: 'Guest pickup',
+        mileage_out: 15000,
+        fuel_out: '3/4',
+        opening_checklist_by: 'Test Admin',
+      }),
+    }),
+    env
+  );
+  assert.equal(oneTimeOut.status, 201);
+  const oneTimeBody = (await oneTimeOut.json()) as { trip: TripSummary };
+  assert.equal(oneTimeBody.trip.driver_name, 'Temp Relief Driver');
+  assert.equal(oneTimeBody.trip.reg_number, 'AFZ 9002');
+
+  // Verify one-time driver and vehicle do NOT appear in active directories
+  const activeDriversRes = await app.fetch(
+    new Request('http://localhost/api/drivers?limit=500', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  const activeDrivers = (await activeDriversRes.json()) as { items: Array<{ licence_number: string }> };
+  assert.ok(!activeDrivers.items.some((d) => d.licence_number === 'ZW-ONCE-202'));
+
+  const activeVehiclesRes = await app.fetch(
+    new Request('http://localhost/api/vehicles?limit=500', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  const activeVehicles = (await activeVehiclesRes.json()) as { items: Array<{ reg_number: string }> };
+  assert.ok(!activeVehicles.items.some((v) => v.reg_number === 'AFZ 9002'));
+
+  // Verify one-time trip can still be viewed and closed normally
+  const closeOneTimeRes = await app.fetch(
+    new Request(`http://localhost/api/trips/${oneTimeBody.trip.id}/in`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        mileage_in: 15045,
+        fuel_in: '3/4-',
+        closing_checklist_by: 'Test Admin',
+      }),
+    }),
+    env
+  );
+  assert.equal(closeOneTimeRes.status, 200);
+  const closedOneTime = (await closeOneTimeRes.json()) as { trip: TripSummary };
+  assert.equal(closedOneTime.trip.status, 'CLOSED');
+  assert.equal(closedOneTime.trip.total_mileage, 45);
+});
+

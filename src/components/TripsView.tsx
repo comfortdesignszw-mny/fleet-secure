@@ -159,7 +159,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
     setSavingCorr(true);
     try {
       const parsedVal =
-        corrField === 'mileage_out' || corrField === 'mileage_in'
+        corrField === 'mileage_out' || corrField === 'mileage_in' || corrField === 'days_hired'
           ? Number(corrValue.trim())
           : corrValue.trim();
 
@@ -193,9 +193,9 @@ export const TripsView: React.FC<TripsViewProps> = ({
               setDetail(null);
               setCorrNotice(null);
             }}
-            className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
           >
-            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <ArrowLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Back to Trips</span>
           </button>
 
@@ -204,7 +204,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
               <button
                 type="button"
                 onClick={() => onRecordReturn(detail.trip)}
-                className="min-h-[44px] rounded-xl bg-emerald-700 px-4 text-sm font-semibold text-white hover:bg-emerald-800"
+                className="cyan-glow-btn min-h-[44px] rounded-xl px-4 text-sm font-semibold"
               >
                 Record Return
               </button>
@@ -213,9 +213,9 @@ export const TripsView: React.FC<TripsViewProps> = ({
               <button
                 type="button"
                 onClick={openCorrectionModal}
-                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-800 hover:bg-slate-50"
+                className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
               >
-                <Edit3 className="h-4 w-4" aria-hidden="true" />
+                <Edit3 className="h-4 w-4 text-cyan-600" aria-hidden="true" />
                 <span>Add Correction Entry</span>
               </button>
             )}
@@ -225,7 +225,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
         {corrNotice && (
           <div
             role="status"
-            className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm font-medium text-emerald-800"
+            className="rounded-xl border border-cyan-300 bg-cyan-50 p-4 text-sm font-medium text-cyan-900"
           >
             {corrNotice}
           </div>
@@ -240,24 +240,24 @@ export const TripsView: React.FC<TripsViewProps> = ({
         )}
 
         {detailLoading || !detail ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-6 text-base text-slate-600">
+          <div className="rounded-2xl border border-blue-200/80 bg-white p-6 text-base text-slate-600 shadow-xs">
             Loading trip record...
           </div>
         ) : (
           <>
             {/* Trip Summary Header */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 space-y-4 shadow-xs">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <div className="text-sm font-mono text-slate-500">
+                  <div className="text-sm font-mono text-cyan-700 font-semibold">
                     Trip #{detail.trip.id} · {detail.trip.trip_type} · {detail.trip.status}
                     {detail.corrections.length > 0 && ' · Corrected'}
                   </div>
-                  <h1 className="mt-1 font-display text-2xl font-bold text-slate-900">
+                  <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
                     {detail.trip.reg_number} — {detail.trip.make_model}
                   </h1>
                   <div className="mt-1 text-base text-slate-700">
-                    Driver: <span className="font-semibold">{detail.trip.driver_name}</span>
+                    Driver: <span className="font-semibold text-blue-950">{detail.trip.driver_name}</span>
                     {detail.trip.client_name ? ` · Client: ${detail.trip.client_name}` : ''}
                     {detail.trip.destination ? ` · To: ${detail.trip.destination}` : ''}
                   </div>
@@ -266,8 +266,8 @@ export const TripsView: React.FC<TripsViewProps> = ({
                   )}
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-slate-500">
-                  <Lock className="h-4 w-4 text-slate-400" aria-hidden="true" />
+                <div className="flex items-center gap-2 text-xs text-cyan-700 font-medium">
+                  <Lock className="h-4 w-4 text-cyan-600" aria-hidden="true" />
                   <span>Immutable Record</span>
                 </div>
               </div>
@@ -296,32 +296,58 @@ export const TripsView: React.FC<TripsViewProps> = ({
 
             {/* Out & In Side-by-Side */}
             <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-3">
-                <h2 className="text-lg font-semibold text-slate-900">Departure (OUT)</h2>
-                <dl className="divide-y divide-slate-100 text-sm">
+              <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-6 space-y-3">
+                <h2 className="text-lg font-semibold text-blue-950">Departure (OUT)</h2>
+                <dl className="divide-y divide-blue-100 text-sm">
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Time Out (CAT)</dt>
-                    <dd className="font-mono tabular-nums text-slate-900">
+                    <dd className="font-mono tabular-nums text-blue-950">
                       {formatHarareTime(detail.out.out_at)}
                     </dd>
                   </div>
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Mileage Out</dt>
-                    <dd className="font-mono tabular-nums font-semibold text-slate-900">
+                    <dd className="font-mono tabular-nums font-semibold text-blue-950">
                       {detail.out.mileage_out.toLocaleString()} km
                     </dd>
                   </div>
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Fuel Out</dt>
-                    <dd className="font-mono font-semibold text-slate-900">{detail.out.fuel_out}</dd>
+                    <dd className="font-mono font-semibold text-cyan-700">{detail.out.fuel_out}</dd>
                   </div>
+                  {detail.trip.trip_type === 'HIRE' &&
+                    (detail.trip.days_hired !== null || detail.trip.expected_return_date !== null) && (
+                      <>
+                        {detail.trip.days_hired !== null && (
+                          <div className="py-2 flex justify-between gap-3">
+                            <dt className="text-slate-500">Days Hired</dt>
+                            <dd className="font-mono tabular-nums font-semibold text-blue-950">
+                              {detail.trip.days_hired} day{detail.trip.days_hired === 1 ? '' : 's'}
+                            </dd>
+                          </div>
+                        )}
+                        {detail.trip.expected_return_date && (
+                          <div className="py-2 flex justify-between gap-3">
+                            <dt className="text-slate-500">Expected Return Date</dt>
+                            <dd
+                              className={`font-mono tabular-nums font-semibold ${
+                                detail.trip.is_return_due ? 'text-red-700' : 'text-blue-950'
+                              }`}
+                            >
+                              {detail.trip.expected_return_date}
+                              {detail.trip.is_return_due ? ' (Return Due)' : ''}
+                            </dd>
+                          </div>
+                        )}
+                      </>
+                    )}
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Checklist By</dt>
-                    <dd className="text-slate-900">{detail.out.opening_checklist_by}</dd>
+                    <dd className="text-blue-950">{detail.out.opening_checklist_by}</dd>
                   </div>
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Recorded By</dt>
-                    <dd className="text-slate-900">{detail.out.recorded_by_name}</dd>
+                    <dd className="text-blue-950">{detail.out.recorded_by_name}</dd>
                   </div>
                   {detail.out.notes && (
                     <div className="py-2">
@@ -332,47 +358,47 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 </dl>
               </div>
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-3">
-                <h2 className="text-lg font-semibold text-slate-900">Return (IN)</h2>
+              <div className="cyan-glow-card rounded-2xl border border-blue-200/80 bg-white p-6 space-y-3">
+                <h2 className="text-lg font-semibold text-blue-950">Return (IN)</h2>
                 {detail.inRecord ? (
-                  <dl className="divide-y divide-slate-100 text-sm">
+                  <dl className="divide-y divide-blue-100 text-sm">
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Time In (CAT)</dt>
-                      <dd className="font-mono tabular-nums text-slate-900">
+                      <dd className="font-mono tabular-nums text-blue-950">
                         {formatHarareTime(detail.inRecord.in_at)}
                       </dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Mileage In</dt>
-                      <dd className="font-mono tabular-nums font-semibold text-slate-900">
+                      <dd className="font-mono tabular-nums font-semibold text-blue-950">
                         {detail.inRecord.mileage_in.toLocaleString()} km
                       </dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Total Mileage</dt>
-                      <dd className="font-mono tabular-nums font-bold text-slate-900">
+                      <dd className="font-mono tabular-nums font-bold text-blue-950">
                         {detail.inRecord.total_mileage.toLocaleString()} km
                       </dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Fuel In</dt>
-                      <dd className="font-mono font-semibold text-slate-900">
+                      <dd className="font-mono font-semibold text-cyan-700">
                         {detail.inRecord.fuel_in}
                       </dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Est. vs Gauge Fuel</dt>
-                      <dd className="font-mono tabular-nums font-semibold text-slate-900">
+                      <dd className="font-mono tabular-nums font-semibold text-blue-950">
                         {detail.inRecord.est_fuel_litres} L est · {detail.inRecord.gauge_fuel_litres} L gauge
                       </dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Checklist By</dt>
-                      <dd className="text-slate-900">{detail.inRecord.closing_checklist_by}</dd>
+                      <dd className="text-blue-950">{detail.inRecord.closing_checklist_by}</dd>
                     </div>
                     <div className="py-2 flex justify-between gap-3">
                       <dt className="text-slate-500">Recorded By</dt>
-                      <dd className="text-slate-900">{detail.inRecord.recorded_by_name}</dd>
+                      <dd className="text-blue-950">{detail.inRecord.recorded_by_name}</dd>
                     </div>
                     {detail.inRecord.notes && (
                       <div className="py-2">
@@ -390,9 +416,9 @@ export const TripsView: React.FC<TripsViewProps> = ({
             </div>
 
             {/* Supervisor Corrections */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 space-y-4">
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 space-y-4 shadow-xs">
               <div className="flex items-center justify-between gap-4">
-                <h2 className="text-lg font-semibold text-slate-900">
+                <h2 className="text-lg font-semibold text-blue-950">
                   Supervisor Correction Entries ({detail.corrections.length})
                 </h2>
               </div>
@@ -401,14 +427,14 @@ export const TripsView: React.FC<TripsViewProps> = ({
                   No corrections have been added to this trip.
                 </p>
               ) : (
-                <div className="divide-y divide-slate-200">
+                <div className="divide-y divide-blue-100">
                   {detail.corrections.map((c) => (
                     <div key={c.id} className="py-3 space-y-1 text-sm">
-                      <div className="font-semibold text-slate-900">
+                      <div className="font-semibold text-blue-950">
                         Corrected ({c.target_table}) · by {c.corrected_by_name}
                       </div>
                       <div className="text-slate-700">Reason: {c.reason}</div>
-                      <div className="font-mono text-xs text-slate-600">
+                      <div className="font-mono text-xs text-cyan-800">
                         Corrected values: {JSON.stringify(c.field_changes)}
                       </div>
                       <div className="text-xs font-mono tabular-nums text-slate-500">
@@ -424,17 +450,17 @@ export const TripsView: React.FC<TripsViewProps> = ({
 
         {/* Correction Modal */}
         {showCorrectModal && detail && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 p-4">
-            <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl">
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4">
+            <div className="w-full max-w-md rounded-2xl border border-blue-200 bg-white p-6 shadow-xl">
               <div className="flex items-center justify-between gap-4">
-                <h2 className="font-display text-xl font-bold text-slate-900">
+                <h2 className="font-display text-xl font-bold text-blue-950">
                   Add Correction Entry
                 </h2>
                 <button
                   type="button"
                   onClick={() => setShowCorrectModal(false)}
                   aria-label="Close"
-                  className="flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg text-slate-500 hover:bg-slate-100"
+                  className="cyan-glow-outline flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-transparent text-slate-500"
                 >
                   <X className="h-5 w-5" />
                 </button>
@@ -454,7 +480,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
 
               <form onSubmit={handleSaveCorrection} className="mt-4 space-y-4">
                 <div>
-                  <label htmlFor="corr-target" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="corr-target" className="block text-sm font-semibold text-blue-950">
                     Section to Correct
                   </label>
                   <select
@@ -468,7 +494,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                       else setCorrField('client_name');
                       setCorrValue('');
                     }}
-                    className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                   >
                     <option value="trip_out">Departure (OUT)</option>
                     {detail.inRecord && <option value="trip_in">Return (IN)</option>}
@@ -477,7 +503,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 </div>
 
                 <div>
-                  <label htmlFor="corr-field" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="corr-field" className="block text-sm font-semibold text-blue-950">
                     Field
                   </label>
                   <select
@@ -487,7 +513,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                       setCorrField(e.target.value);
                       setCorrValue('');
                     }}
-                    className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                   >
                     {corrTarget === 'trip_out' && (
                       <>
@@ -506,6 +532,8 @@ export const TripsView: React.FC<TripsViewProps> = ({
                     {corrTarget === 'trips' && (
                       <>
                         <option value="client_name">Client Name</option>
+                        <option value="days_hired">Number of Days Hired</option>
+                        <option value="expected_return_date">Expected Return Date</option>
                         <option value="destination">Destination</option>
                         <option value="reason">Reason</option>
                       </>
@@ -514,7 +542,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 </div>
 
                 <div>
-                  <label htmlFor="corr-val" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="corr-val" className="block text-sm font-semibold text-blue-950">
                     Corrected Value
                   </label>
                   {corrField === 'fuel_out' || corrField === 'fuel_in' ? (
@@ -523,7 +551,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                       value={corrValue}
                       onChange={(e) => setCorrValue(e.target.value as FuelLevel)}
                       required
-                      className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 bg-white px-3.5 text-base text-slate-900"
+                      className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                     >
                       <option value="">Choose fuel level...</option>
                       {FUEL_LEVELS.map((f) => (
@@ -535,18 +563,24 @@ export const TripsView: React.FC<TripsViewProps> = ({
                   ) : (
                     <input
                       id="corr-val"
-                      type={corrField.includes('mileage') ? 'number' : 'text'}
+                      type={
+                        corrField === 'expected_return_date'
+                          ? 'date'
+                          : corrField.includes('mileage') || corrField === 'days_hired'
+                            ? 'number'
+                            : 'text'
+                      }
                       required
                       value={corrValue}
                       onChange={(e) => setCorrValue(e.target.value)}
                       placeholder="Enter the correct value"
-                      className="mt-1.5 block w-full min-h-[48px] rounded-xl border border-slate-300 px-3.5 text-base text-slate-900"
+                      className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                     />
                   )}
                 </div>
 
                 <div>
-                  <label htmlFor="corr-reason" className="block text-sm font-semibold text-slate-800">
+                  <label htmlFor="corr-reason" className="block text-sm font-semibold text-blue-950">
                     Reason for Correction (required)
                   </label>
                   <textarea
@@ -556,7 +590,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                     value={corrReason}
                     onChange={(e) => setCorrReason(e.target.value)}
                     placeholder="Explain why the original figure was wrong..."
-                    className="mt-1.5 block w-full rounded-xl border border-slate-300 p-3.5 text-base text-slate-900"
+                    className="cyan-glow-input mt-1.5 block w-full rounded-xl border border-blue-200 p-3.5 text-base text-blue-950"
                   />
                 </div>
 
@@ -564,14 +598,14 @@ export const TripsView: React.FC<TripsViewProps> = ({
                   <button
                     type="submit"
                     disabled={savingCorr}
-                    className="flex-1 min-h-[48px] rounded-xl bg-slate-900 px-4 text-base font-semibold text-white hover:bg-slate-800 disabled:opacity-60"
+                    className="cyan-glow-btn flex-1 min-h-[48px] rounded-xl px-4 text-base font-semibold disabled:opacity-60"
                   >
                     {savingCorr ? 'Saving...' : 'Save Correction'}
                   </button>
                   <button
                     type="button"
                     onClick={() => setShowCorrectModal(false)}
-                    className="min-h-[48px] rounded-xl border border-slate-300 px-4 text-base font-medium text-slate-700"
+                    className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-white px-4 text-base font-medium text-blue-900"
                   >
                     Cancel
                   </button>
@@ -587,7 +621,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="font-display text-2xl font-bold text-slate-900">Trips & Record Book</h1>
+        <h1 className="font-display text-2xl font-bold text-blue-950">Trips & Record Book</h1>
         <p className="mt-1 text-base text-slate-600">
           Every hire and errand recorded permanently. Tap any trip to view flags, fuel totals, or corrections.
         </p>
@@ -612,7 +646,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
       )}
 
       {/* Tabs: Ongoing | Finished | All */}
-      <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100 p-1">
+      <div className="inline-flex rounded-xl border border-blue-200/80 bg-blue-50/70 p-1">
         {(['OPEN', 'CLOSED', 'ALL'] as const).map((t) => {
           const label = t === 'OPEN' ? 'Ongoing' : t === 'CLOSED' ? 'Finished' : 'All Trips';
           return (
@@ -623,10 +657,10 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 setTab(t);
                 setPage(1);
               }}
-              className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold transition-colors whitespace-nowrap ${
+              className={`min-h-[44px] rounded-lg px-4 text-sm font-semibold transition-all whitespace-nowrap ${
                 tab === t
-                  ? 'bg-white text-slate-900 shadow-xs'
-                  : 'text-slate-600 hover:text-slate-900'
+                  ? 'cyan-glow-active'
+                  : 'text-blue-900/70 hover:text-blue-950 hover:bg-white/60'
               }`}
             >
               {label}
@@ -642,12 +676,12 @@ export const TripsView: React.FC<TripsViewProps> = ({
           setPage(1);
           setQuery(searchInput.trim());
         }}
-        className="rounded-2xl border border-slate-200 bg-white p-4 space-y-3"
+        className="rounded-2xl border border-blue-200/80 bg-white p-4 space-y-3 shadow-xs"
       >
         <div className="flex flex-col gap-3 sm:flex-row">
           <div className="relative flex-1">
             <Search
-              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400"
+              className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-5 -translate-y-1/2 text-cyan-600"
               aria-hidden="true"
             />
             <input
@@ -655,12 +689,12 @@ export const TripsView: React.FC<TripsViewProps> = ({
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
               placeholder="Search reg number, driver, client, or destination..."
-              className="block w-full min-h-[48px] rounded-xl border border-slate-300 pl-11 pr-4 text-base text-slate-900 placeholder:text-slate-400 focus:border-slate-900 focus:outline-none"
+              className="cyan-glow-input block w-full min-h-[48px] rounded-xl border border-blue-200 pl-11 pr-4 text-base text-blue-950 placeholder:text-slate-400"
             />
           </div>
           <button
             type="submit"
-            className="min-h-[48px] rounded-xl border border-slate-300 bg-slate-100 px-5 text-sm font-semibold text-slate-900 hover:bg-slate-200 whitespace-nowrap shrink-0"
+            className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 bg-blue-50/70 px-5 text-sm font-semibold text-blue-950 whitespace-nowrap shrink-0"
           >
             Search
           </button>
@@ -674,7 +708,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
               setTripType(e.target.value as TripType | '');
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
           >
             <option value="">All types (Hire & Errand)</option>
             <option value="HIRE">Hires only</option>
@@ -689,7 +723,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
               setFromDate(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 px-3 font-mono text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 px-3 font-mono text-sm text-blue-950"
           />
 
           <input
@@ -700,10 +734,10 @@ export const TripsView: React.FC<TripsViewProps> = ({
               setToDate(e.target.value);
               setPage(1);
             }}
-            className="min-h-[44px] rounded-xl border border-slate-300 px-3 font-mono text-sm text-slate-800"
+            className="cyan-glow-input min-h-[44px] rounded-xl border border-blue-200 px-3 font-mono text-sm text-blue-950"
           />
 
-          <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-slate-700 cursor-pointer">
+          <label className="inline-flex min-h-[44px] items-center gap-2 text-sm text-blue-950 cursor-pointer">
             <input
               type="checkbox"
               checked={flaggedOnly}
@@ -711,7 +745,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 setFlaggedOnly(e.target.checked);
                 setPage(1);
               }}
-              className="h-5 w-5 rounded border-slate-300 text-slate-900"
+              className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600"
             />
             <span>Flagged trips only</span>
           </label>
@@ -719,7 +753,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
       </form>
 
       {/* Trips list */}
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+      <div className="overflow-hidden rounded-2xl border border-blue-200/80 bg-white shadow-xs">
         {loading ? (
           <div className="p-6 text-base text-slate-500">Loading trips...</div>
         ) : items.length === 0 ? (
@@ -727,19 +761,19 @@ export const TripsView: React.FC<TripsViewProps> = ({
             No trips match your filters yet.
           </div>
         ) : (
-          <div className="divide-y divide-slate-200">
+          <div className="divide-y divide-blue-100">
             {items.map((t) => (
               <div
                 key={t.id}
                 onClick={() => loadDetail(t.id)}
-                className="p-4 sm:px-5 cursor-pointer hover:bg-slate-50 transition-colors flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                className="p-4 sm:px-5 cursor-pointer hover:bg-cyan-50/45 transition-colors flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
               >
                 <div className="space-y-1 min-w-0">
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-semibold text-slate-900">
-                    <span className="font-mono">{t.reg_number}</span>
-                    <span aria-hidden="true" className="text-slate-400">·</span>
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-base font-semibold text-blue-950">
+                    <span className="font-mono text-blue-900">{t.reg_number}</span>
+                    <span aria-hidden="true" className="text-blue-300">·</span>
                     <span>{t.driver_name}</span>
-                    <span aria-hidden="true" className="text-slate-400">·</span>
+                    <span aria-hidden="true" className="text-blue-300">·</span>
                     <span className="text-sm font-medium text-slate-600">
                       {t.trip_type === 'HIRE' ? `Hire (${t.client_name})` : `Errand (${t.destination})`}
                     </span>
@@ -749,15 +783,36 @@ export const TripsView: React.FC<TripsViewProps> = ({
                       Out: {formatHarareTime(t.out_at)}
                     </span>
                     <span aria-hidden="true">·</span>
-                    <span className="font-mono tabular-nums">
+                    <span className="font-mono tabular-nums text-cyan-800 font-medium">
                       {t.total_mileage !== null
                         ? `${t.total_mileage.toLocaleString()} km · Est. ${t.est_fuel_litres} L`
                         : `Left at ${t.mileage_out.toLocaleString()} km`}
                     </span>
+                    {t.trip_type === 'HIRE' && t.days_hired !== null && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span className="font-mono tabular-nums text-blue-800">
+                          {t.days_hired}d hire
+                        </span>
+                      </>
+                    )}
+                    {t.trip_type === 'HIRE' && t.expected_return_date && (
+                      <>
+                        <span aria-hidden="true">·</span>
+                        <span
+                          className={`font-mono tabular-nums font-medium ${
+                            t.is_return_due ? 'text-red-700 font-semibold' : 'text-slate-600'
+                          }`}
+                        >
+                          Due {t.expected_return_date}
+                          {t.is_return_due ? ' (Return Due)' : ''}
+                        </span>
+                      </>
+                    )}
                     {t.correction_count > 0 && (
                       <>
                         <span aria-hidden="true">·</span>
-                        <span className="font-semibold text-sky-800">
+                        <span className="font-semibold text-cyan-700">
                           Corrected ({t.correction_count})
                         </span>
                       </>
@@ -779,7 +834,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
                       <span>{t.is_overdue ? 'Overdue' : 'Ongoing'}</span>
                     </span>
                   ) : (
-                    <span className="inline-flex items-center gap-1 text-sm font-medium text-emerald-700">
+                    <span className="inline-flex items-center gap-1 text-sm font-medium text-cyan-700">
                       <CheckCircle2 className="h-4 w-4" aria-hidden="true" />
                       <span>Closed</span>
                     </span>
@@ -794,29 +849,29 @@ export const TripsView: React.FC<TripsViewProps> = ({
       {/* Pagination */}
       <div className="flex items-center justify-between gap-4">
         <div className="text-sm text-slate-600 tabular-nums">
-          Total: <span className="font-semibold text-slate-900">{total}</span> trips
+          Total: <span className="font-semibold text-blue-950">{total}</span> trips
         </div>
         <div className="flex items-center gap-2">
           <button
             type="button"
             disabled={page <= 1}
             onClick={() => setPage((p) => Math.max(1, p - 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
-            <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+            <ChevronLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
             <span>Prev</span>
           </button>
-          <span className="px-2 text-sm font-mono tabular-nums text-slate-700">
+          <span className="px-2 text-sm font-mono tabular-nums text-blue-950">
             {page} / {totalPages}
           </span>
           <button
             type="button"
             disabled={page >= totalPages}
             onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-            className="inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-slate-300 bg-white px-3.5 text-sm font-medium text-slate-800 hover:bg-slate-50 disabled:opacity-40"
+            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-medium text-blue-900 disabled:opacity-40"
           >
             <span>Next</span>
-            <ChevronRight className="h-4 w-4" aria-hidden="true" />
+            <ChevronRight className="h-4 w-4 text-cyan-600" aria-hidden="true" />
           </button>
         </div>
       </div>
