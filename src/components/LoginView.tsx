@@ -135,7 +135,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
               {en.appName}
             </span>
             <span className="text-[11px] font-semibold uppercase tracking-wider text-cyan-700">
-              Trips & Fleet Record and Tracking System
+              Fleet Trips, Records and Tracking System
             </span>
           </div>
         </div>
