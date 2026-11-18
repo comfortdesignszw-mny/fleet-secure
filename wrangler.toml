@@ -14,6 +14,9 @@ APP_TIMEZONE = "Africa/Harare"
 INITIAL_ADMIN_USERNAME = "admin"
 INITIAL_ADMIN_NAME = "System Administrator"
 ALLOW_PREVIEW_SIGNUP = "false"
+
+[assets]
+directory = "./dist"
 # Set secrets via Cloudflare Pages dashboard or `wrangler pages secret put`:
 # SESSION_SECRET
 # INITIAL_ADMIN_PIN
