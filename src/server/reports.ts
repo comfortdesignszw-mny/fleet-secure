@@ -2,6 +2,7 @@ import type { Hono } from 'hono';
 import {
   DEFAULT_SETTINGS,
   formatHarareTime,
+  normalizeDriverLicenceNumber,
   type AppSettings,
   type ExportFormat,
   type ReportPreviewData,
@@ -303,7 +304,7 @@ async function buildReportDataset(
 
       rows.push({
         full_name: String(d.full_name),
-        licence_number: d.licence_number ? String(d.licence_number) : 'Not recorded',
+        licence_number: normalizeDriverLicenceNumber(d.licence_number) ?? 'Not recorded',
         phone: String(d.phone),
         address: String(d.address ?? ''),
         licence_expiry: d.licence_expiry ? String(d.licence_expiry) : 'Not set',

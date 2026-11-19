@@ -421,6 +421,17 @@ export function formatHarareTime(isoString: string | null | undefined): string {
   }).format(date);
 }
 
+export const UNRECORDED_LICENCE_PREFIX = '__UNRECORDED__:';
+
+export function normalizeDriverLicenceNumber(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed || trimmed.startsWith(UNRECORDED_LICENCE_PREFIX)) {
+    return null;
+  }
+  return trimmed;
+}
+
 export function getDriverMissingDocuments(driver: {
   licence_number?: string | null;
   licence_document?: string | null;
@@ -437,7 +448,8 @@ export function getDriverMissingDocuments(driver: {
 }): string[] {
   const missing: string[] = [];
 
-  const hasLicenceNum = Boolean(driver.licence_number && driver.licence_number.trim());
+  const normalizedLicence = normalizeDriverLicenceNumber(driver.licence_number);
+  const hasLicenceNum = Boolean(normalizedLicence);
   const hasLicenceDoc = Boolean(driver.has_licence_document || driver.licence_document);
   if (!hasLicenceNum && !hasLicenceDoc) {
     missing.push("Driver's Licence (Number & Copy)");

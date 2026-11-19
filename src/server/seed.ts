@@ -187,7 +187,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     // Ignore if table is freshly created from schema.sql
   }
 
-  // Ensure drivers table supports optional licence_number and certificate/document columns
+  // Ensure drivers table has all certificate/document columns and supports optional licence_number
   try {
     const driverCols = await db
       .prepare('PRAGMA table_info(drivers)')
@@ -195,57 +195,101 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     const licenceCol = driverCols.results.find((c) => c.name === 'licence_number');
     const driverColNames = new Set(driverCols.results.map((c) => c.name));
 
-    if (licenceCol && Number(licenceCol.notnull) === 1) {
-      await db.exec(`
-        PRAGMA foreign_keys = OFF;
-        CREATE TABLE IF NOT EXISTS drivers_migrated (
-          id INTEGER PRIMARY KEY AUTOINCREMENT,
-          full_name TEXT NOT NULL,
-          licence_number TEXT,
-          phone TEXT NOT NULL,
-          address TEXT NOT NULL DEFAULT '',
-          licence_expiry TEXT,
-          licence_document TEXT,
-          ddc_number TEXT,
-          ddc_document TEXT,
-          retest_cert_number TEXT,
-          retest_document TEXT,
-          medical_cert_number TEXT,
-          medical_document TEXT,
-          active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-          created_by INTEGER REFERENCES users(id)
-        );
-        INSERT INTO drivers_migrated (id, full_name, licence_number, phone, address, licence_expiry, active, created_at, created_by)
-        SELECT id, full_name, NULLIF(TRIM(licence_number), ''), phone, address, licence_expiry, active, created_at, created_by FROM drivers;
-        DROP TABLE drivers;
-        ALTER TABLE drivers_migrated RENAME TO drivers;
-        CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active);
-        CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry);
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != '';
-        PRAGMA foreign_keys = ON;
-      `);
-    } else {
-      const extraCols: Array<[string, string]> = [
-        ['licence_document', 'TEXT'],
-        ['ddc_number', 'TEXT'],
-        ['ddc_document', 'TEXT'],
-        ['retest_cert_number', 'TEXT'],
-        ['retest_document', 'TEXT'],
-        ['medical_cert_number', 'TEXT'],
-        ['medical_document', 'TEXT'],
-      ];
-      for (const [col, colType] of extraCols) {
-        if (!driverColNames.has(col)) {
-          await db.exec(`ALTER TABLE drivers ADD COLUMN ${col} ${colType}`);
+    // Step 1: Always add missing nullable columns individually first.
+    // On Cloudflare D1, ALTER TABLE ADD COLUMN succeeds even when trips holds FK references to drivers.
+    const extraCols: Array<[string, string]> = [
+      ['licence_document', 'TEXT'],
+      ['ddc_number', 'TEXT'],
+      ['ddc_document', 'TEXT'],
+      ['retest_cert_number', 'TEXT'],
+      ['retest_document', 'TEXT'],
+      ['medical_cert_number', 'TEXT'],
+      ['medical_document', 'TEXT'],
+    ];
+    for (const [col, colType] of extraCols) {
+      if (!driverColNames.has(col)) {
+        try {
+          await db.prepare(`ALTER TABLE drivers ADD COLUMN ${col} ${colType}`).run();
+        } catch {
+          // Ignore if column was added concurrently
         }
       }
-      await db.exec(
-        `CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != ''`
-      );
     }
-  } catch {
-    // Ignore if already migrated
+
+    // Step 2: If legacy schema still has licence_number NOT NULL, attempt table rebuild.
+    // If Cloudflare D1 blocks DROP TABLE drivers due to trips FK, catch cleanly and fall back
+    // to sentinel handling in routes while keeping all newly added columns intact.
+    if (licenceCol && Number(licenceCol.notnull) === 1) {
+      try {
+        await db.prepare('DROP TABLE IF EXISTS drivers_migrated').run();
+        await db.exec(`
+          PRAGMA foreign_keys = OFF;
+          CREATE TABLE drivers_migrated (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name TEXT NOT NULL,
+            licence_number TEXT,
+            phone TEXT NOT NULL,
+            address TEXT NOT NULL DEFAULT '',
+            licence_expiry TEXT,
+            licence_document TEXT,
+            ddc_number TEXT,
+            ddc_document TEXT,
+            retest_cert_number TEXT,
+            retest_document TEXT,
+            medical_cert_number TEXT,
+            medical_document TEXT,
+            active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            created_by INTEGER REFERENCES users(id)
+          );
+          INSERT INTO drivers_migrated (
+            id, full_name, licence_number, phone, address, licence_expiry,
+            licence_document, ddc_number, ddc_document,
+            retest_cert_number, retest_document,
+            medical_cert_number, medical_document,
+            active, created_at, created_by
+          )
+          SELECT
+            id, full_name, NULLIF(TRIM(licence_number), ''), phone, address, licence_expiry,
+            licence_document, ddc_number, ddc_document,
+            retest_cert_number, retest_document,
+            medical_cert_number, medical_document,
+            active, created_at, created_by
+          FROM drivers;
+          DROP TABLE drivers;
+          ALTER TABLE drivers_migrated RENAME TO drivers;
+          PRAGMA foreign_keys = ON;
+        `);
+      } catch (err) {
+        try {
+          await db.prepare('DROP TABLE IF EXISTS drivers_migrated').run();
+        } catch {
+          // ignore cleanup failure
+        }
+        try {
+          await db.prepare('PRAGMA foreign_keys = ON').run();
+        } catch {
+          // ignore pragma failure
+        }
+        console.warn('Skipping drivers NOT NULL rebuild; using sentinel fallback:', err);
+      }
+    }
+
+    // Step 3: Ensure indexes exist independently of rebuild outcome
+    const driverIndexes = [
+      'CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active)',
+      'CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry)',
+      "CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != ''",
+    ];
+    for (const idxSql of driverIndexes) {
+      try {
+        await db.prepare(idxSql).run();
+      } catch {
+        // Ignore if index already exists or cannot be altered
+      }
+    }
+  } catch (err) {
+    console.warn('Driver schema migration check warning:', err);
   }
 
   // Ensure all default settings keys exist

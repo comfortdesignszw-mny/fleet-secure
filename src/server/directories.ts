@@ -1,8 +1,10 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import {
+  UNRECORDED_LICENCE_PREFIX,
   VEHICLE_CONDITIONS,
   VEHICLE_TYPE_TO_CLASS,
   getDriverMissingDocuments,
+  normalizeDriverLicenceNumber,
   type AuditLogEntry,
   type DerivedStatus,
   type Driver,
@@ -75,7 +77,20 @@ function mapVehicleRow(row: Record<string, unknown>): Vehicle {
   };
 }
 
-const MAX_DOC_DATA_URL_CHARS = 2_800_000;
+const MAX_DOC_DATA_URL_CHARS = 1_000_000;
+
+export function isNotNullLicenceError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  return /NOT NULL constraint failed:\s*drivers\.licence_number/i.test(msg);
+}
+
+export function makeUnrecordedLicenceSentinel(): string {
+  const rand =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  return `${UNRECORDED_LICENCE_PREFIX}${rand}`;
+}
 
 export function validateDocumentDataUrl(
   raw: unknown,
@@ -92,8 +107,9 @@ export function validateDocumentDataUrl(
     return { ok: true, value: null };
   }
   const validPrefix =
-    /^data:image\/(?:jpeg|jpg|png|webp|gif|heic|heif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed) ||
-    /^data:application\/pdf(?:;[^;,]+)*;base64,[A-Za-z0-9+/=]+$/i.test(trimmed);
+    /^data:image\/(?:jpeg|jpg|png|webp|gif|heic|heif)(?:;[^;,]+)*;base64,[A-Za-z0-9+/=]+$/i.test(
+      trimmed
+    ) || /^data:application\/pdf(?:;[^;,]+)*;base64,[A-Za-z0-9+/=]+$/i.test(trimmed);
   if (!validPrefix) {
     return {
       ok: false,
@@ -103,7 +119,7 @@ export function validateDocumentDataUrl(
   if (trimmed.length > MAX_DOC_DATA_URL_CHARS) {
     return {
       ok: false,
-      error: `${label} is too large. Please upload a PDF or image smaller than 2 MB.`,
+      error: `${label} is too large. Please upload a smaller PDF (under 700 KB) or image.`,
     };
   }
   return { ok: true, value: trimmed };
@@ -115,7 +131,7 @@ function mapDriverRow(
 ): Driver {
   const licenceExpiry = row.licence_expiry ? String(row.licence_expiry) : null;
   const { licence_status, days_to_expiry } = computeLicenceExpiryStatus(licenceExpiry);
-  const licenceNumber = row.licence_number ? String(row.licence_number) : null;
+  const licenceNumber = normalizeDriverLicenceNumber(row.licence_number);
   const ddcNumber = row.ddc_number ? String(row.ddc_number) : null;
   const retestCertNumber = row.retest_cert_number ? String(row.retest_cert_number) : null;
   const medicalCertNumber = row.medical_cert_number ? String(row.medical_cert_number) : null;
@@ -736,8 +752,8 @@ export function registerDirectoryRoutes(
       }
 
       const fullName = (body.full_name || '').trim();
-      const rawLicence = body.licence_number ? String(body.licence_number).trim().toUpperCase() : '';
-      const licenceNumber = rawLicence || null;
+      const rawLicence = normalizeDriverLicenceNumber(body.licence_number);
+      const licenceNumber = rawLicence ? rawLicence.toUpperCase() : null;
       const phone = (body.phone || '').trim();
       const address = (body.address || '').trim();
       const licenceExpiry = body.licence_expiry ? String(body.licence_expiry).trim() : null;
@@ -773,7 +789,7 @@ export function registerDirectoryRoutes(
 
       if (licenceNumber) {
         const existing = await c.env.DB.prepare(
-          'SELECT id FROM drivers WHERE UPPER(licence_number) = ?'
+          `SELECT id FROM drivers WHERE UPPER(licence_number) = ? AND licence_number NOT LIKE '${UNRECORDED_LICENCE_PREFIX}%'`
         )
           .bind(licenceNumber)
           .first<{ id: number }>();
@@ -785,32 +801,44 @@ export function registerDirectoryRoutes(
         }
       }
 
-      const res = await c.env.DB.prepare(
-        `INSERT INTO drivers (
-           full_name, licence_number, phone, address, licence_expiry,
-           licence_document, ddc_number, ddc_document,
-           retest_cert_number, retest_document,
-           medical_cert_number, medical_document,
-           active, created_by
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
-      )
-        .bind(
-          fullName,
-          licenceNumber,
-          phone,
-          address,
-          licenceExpiry,
-          licDoc.value,
-          ddcNumber,
-          ddcDoc.value,
-          retestCertNumber,
-          retestDoc.value,
-          medicalCertNumber,
-          medDoc.value,
-          actor.id
+      const insertDriver = async (licVal: string | null) =>
+        c.env.DB.prepare(
+          `INSERT INTO drivers (
+             full_name, licence_number, phone, address, licence_expiry,
+             licence_document, ddc_number, ddc_document,
+             retest_cert_number, retest_document,
+             medical_cert_number, medical_document,
+             active, created_by
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
         )
-        .run();
+          .bind(
+            fullName,
+            licVal,
+            phone,
+            address,
+            licenceExpiry,
+            licDoc.value,
+            ddcNumber,
+            ddcDoc.value,
+            retestCertNumber,
+            retestDoc.value,
+            medicalCertNumber,
+            medDoc.value,
+            actor.id
+          )
+          .run();
+
+      let res;
+      try {
+        res = await insertDriver(licenceNumber);
+      } catch (err) {
+        if (licenceNumber === null && isNotNullLicenceError(err)) {
+          res = await insertDriver(makeUnrecordedLicenceSentinel());
+        } else {
+          throw err;
+        }
+      }
 
       const newId = res.meta.last_row_id;
       const createdRow = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
@@ -909,12 +937,11 @@ export function registerDirectoryRoutes(
       }
 
       const nextName = body.full_name !== undefined ? body.full_name.trim() : oldDriver.full_name;
-      const nextLicence =
+      const parsedPatchLicence =
         body.licence_number !== undefined
-          ? body.licence_number
-            ? String(body.licence_number).trim().toUpperCase() || null
-            : null
+          ? normalizeDriverLicenceNumber(body.licence_number)
           : oldDriver.licence_number;
+      const nextLicence = parsedPatchLicence ? parsedPatchLicence.toUpperCase() : null;
       const nextPhone = body.phone !== undefined ? body.phone.trim() : oldDriver.phone;
       const nextAddress = body.address !== undefined ? body.address.trim() : oldDriver.address;
       const nextExpiry =
@@ -964,37 +991,31 @@ export function registerDirectoryRoutes(
         );
       }
 
-      let nextLicenceDoc = oldDriver.licence_document ?? null;
+      const docUpdates: Array<[string, string | null]> = [];
       if (body.licence_document !== undefined) {
         const res = validateDocumentDataUrl(body.licence_document, "Driver's Licence document");
         if (!res.ok) return c.json({ error: res.error }, 400);
-        nextLicenceDoc = res.value;
+        docUpdates.push(['licence_document', res.value]);
       }
-
-      let nextDdcDoc = oldDriver.ddc_document ?? null;
       if (body.ddc_document !== undefined) {
         const res = validateDocumentDataUrl(body.ddc_document, 'Defensive Driving Certificate');
         if (!res.ok) return c.json({ error: res.error }, 400);
-        nextDdcDoc = res.value;
+        docUpdates.push(['ddc_document', res.value]);
       }
-
-      let nextRetestDoc = oldDriver.retest_document ?? null;
       if (body.retest_document !== undefined) {
         const res = validateDocumentDataUrl(body.retest_document, 'Retest Certificate');
         if (!res.ok) return c.json({ error: res.error }, 400);
-        nextRetestDoc = res.value;
+        docUpdates.push(['retest_document', res.value]);
       }
-
-      let nextMedicalDoc = oldDriver.medical_document ?? null;
       if (body.medical_document !== undefined) {
         const res = validateDocumentDataUrl(body.medical_document, 'Medical Certificate');
         if (!res.ok) return c.json({ error: res.error }, 400);
-        nextMedicalDoc = res.value;
+        docUpdates.push(['medical_document', res.value]);
       }
 
       if (nextLicence && nextLicence !== oldDriver.licence_number) {
         const dup = await c.env.DB.prepare(
-          'SELECT id FROM drivers WHERE UPPER(licence_number) = ? AND id != ?'
+          `SELECT id FROM drivers WHERE UPPER(licence_number) = ? AND id != ? AND licence_number NOT LIKE '${UNRECORDED_LICENCE_PREFIX}%'`
         )
           .bind(nextLicence, id)
           .first<{ id: number }>();
@@ -1006,32 +1027,45 @@ export function registerDirectoryRoutes(
         }
       }
 
-      await c.env.DB.prepare(
-        `UPDATE drivers
-         SET full_name = ?, licence_number = ?, phone = ?, address = ?, licence_expiry = ?,
-             licence_document = ?, ddc_number = ?, ddc_document = ?,
-             retest_cert_number = ?, retest_document = ?,
-             medical_cert_number = ?, medical_document = ?,
-             active = ?
-         WHERE id = ?`
-      )
-        .bind(
-          nextName,
-          nextLicence,
-          nextPhone,
-          nextAddress,
-          nextExpiry,
-          nextLicenceDoc,
-          nextDdcNumber,
-          nextDdcDoc,
-          nextRetestNumber,
-          nextRetestDoc,
-          nextMedicalNumber,
-          nextMedicalDoc,
-          nextActive ? 1 : 0,
-          id
-        )
-        .run();
+      const setFragments = [
+        'full_name = ?',
+        'licence_number = ?',
+        'phone = ?',
+        'address = ?',
+        'licence_expiry = ?',
+        'ddc_number = ?',
+        'retest_cert_number = ?',
+        'medical_cert_number = ?',
+        'active = ?',
+        ...docUpdates.map(([col]) => `${col} = ?`),
+      ];
+      const updateSql = `UPDATE drivers SET ${setFragments.join(', ')} WHERE id = ?`;
+      const runUpdate = async (licVal: string | null) =>
+        c.env.DB.prepare(updateSql)
+          .bind(
+            nextName,
+            licVal,
+            nextPhone,
+            nextAddress,
+            nextExpiry,
+            nextDdcNumber,
+            nextRetestNumber,
+            nextMedicalNumber,
+            nextActive ? 1 : 0,
+            ...docUpdates.map(([, val]) => val),
+            id
+          )
+          .run();
+
+      try {
+        await runUpdate(nextLicence);
+      } catch (err) {
+        if (nextLicence === null && isNotNullLicenceError(err)) {
+          await runUpdate(makeUnrecordedLicenceSentinel());
+        } else {
+          throw err;
+        }
+      }
 
       const updatedRow = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
         .bind(id)

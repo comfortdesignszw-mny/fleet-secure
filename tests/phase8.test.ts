@@ -10,7 +10,7 @@ import {
 import { createApp } from '../src/server/app';
 import { LocalD1Adapter } from '../src/server/local-d1';
 import { ensureInitialSeed, resetSeedCacheForTests } from '../src/server/seed';
-import type { AppEnv } from '../src/server/types';
+import type { AppEnv, D1DatabaseLike } from '../src/server/types';
 import {
   formatDriverMissingDocsWarning,
   getDriverMissingDocuments,
@@ -594,3 +594,178 @@ test('Extended offline queue supports DRIVER_CREATE, VEHICLE_CREATE, OUT, and IN
   assert.equal(getOfflineQueue(storage)[0].kind, 'IN');
   assert.equal(getOfflineQueue(storage)[0].lastError, 'Temporary server timeout');
 });
+
+test('Cloudflare D1 FK block on DROP TABLE drivers still adds doc columns, loads enrolled drivers, and supports optional licence + doc uploads', async () => {
+  resetSeedCacheForTests();
+  const legacySchemaSql = `
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      full_name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('DRIVER','SUPERVISOR','ADMIN')),
+      pin_hash TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+      must_change_pin INTEGER NOT NULL DEFAULT 1 CHECK (must_change_pin IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    );
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      reg_number TEXT NOT NULL UNIQUE,
+      vehicle_type TEXT NOT NULL,
+      vehicle_class TEXT NOT NULL CHECK (vehicle_class IN ('ECONOMY','HEAVY')),
+      make_model TEXT NOT NULL,
+      condition TEXT NOT NULL DEFAULT 'Good',
+      last_known_mileage INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE TABLE IF NOT EXISTS drivers (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      full_name TEXT NOT NULL,
+      licence_number TEXT NOT NULL UNIQUE,
+      phone TEXT NOT NULL,
+      address TEXT NOT NULL DEFAULT '',
+      licence_expiry TEXT,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')),
+      created_by INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS trips (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      trip_type TEXT NOT NULL CHECK (trip_type IN ('HIRE','ERRAND')),
+      vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+      driver_id INTEGER NOT NULL REFERENCES drivers(id),
+      status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','CLOSED')),
+      client_name TEXT,
+      destination TEXT,
+      reason TEXT,
+      days_hired INTEGER,
+      expected_return_date TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `;
+
+  const innerDb = new LocalD1Adapter(':memory:', legacySchemaSql);
+  await innerDb
+    .prepare(
+      "INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model) VALUES ('AFX 7777', 'Sedan', 'ECONOMY', 'Honda Fit')"
+    )
+    .run();
+  await innerDb
+    .prepare(
+      "INSERT INTO drivers (full_name, licence_number, phone) VALUES ('Enrolled Legacy Driver', 'ZW-OLD-99', '+263772000001')"
+    )
+    .run();
+  await innerDb
+    .prepare(
+      "INSERT INTO trips (trip_type, vehicle_id, driver_id, status, client_name) VALUES ('HIRE', 1, 1, 'OPEN', 'Acme Corp')"
+    )
+    .run();
+
+  // Simulate Cloudflare D1 ignoring PRAGMA foreign_keys = OFF on DROP TABLE drivers
+  const d1SimulatedDb: D1DatabaseLike = {
+    prepare: (q: string) => innerDb.prepare(q),
+    exec: async (q: string) => {
+      if (/DROP\s+TABLE\s+drivers\b/i.test(q)) {
+        throw new Error('D1_ERROR: FOREIGN KEY constraint failed: SQLITE_CONSTRAINT');
+      }
+      return innerDb.exec(q);
+    },
+  };
+
+  const env: AppEnv = {
+    DB: d1SimulatedDb,
+    SESSION_SECRET: 'test-session-secret-0123456789abcdef',
+    INITIAL_ADMIN_USERNAME: 'admin',
+    INITIAL_ADMIN_PIN: '1234',
+    INITIAL_ADMIN_NAME: 'Test Admin',
+  };
+
+  const app = createApp();
+  const adminCookie = await loginAndChangePin(app, env, 'admin', '1234', '9999');
+
+  // 1. Enrolled legacy driver must load cleanly with 200 (not 500 Server error)
+  const listRes = await app.fetch(
+    new Request('http://localhost/api/drivers', { headers: { Cookie: adminCookie } }),
+    env
+  );
+  assert.equal(listRes.status, 200);
+  const listBody = (await listRes.json()) as { items: Driver[]; total: number };
+  assert.equal(listBody.total, 1);
+  assert.equal(listBody.items[0].full_name, 'Enrolled Legacy Driver');
+  assert.equal(listBody.items[0].licence_number, 'ZW-OLD-99');
+
+  // 2. Two new drivers WITHOUT licence_number must save cleanly via sentinel fallback (even with NOT NULL UNIQUE)
+  const createA = await app.fetch(
+    new Request('http://localhost/api/drivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        full_name: 'No Licence Alpha',
+        phone: '+263772000002',
+        ddc_number: 'DDC-A1',
+        ddc_document: SAMPLE_PDF_DATA_URL,
+      }),
+    }),
+    env
+  );
+  assert.equal(createA.status, 201);
+  const driverA = ((await createA.json()) as { driver: Driver }).driver;
+  assert.equal(driverA.licence_number, null);
+  assert.equal(driverA.has_ddc_document, true);
+
+  const createB = await app.fetch(
+    new Request('http://localhost/api/drivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        full_name: 'No Licence Beta',
+        phone: '+263772000003',
+        medical_document: SAMPLE_JPEG_DATA_URL,
+      }),
+    }),
+    env
+  );
+  assert.equal(createB.status, 201);
+  const driverB = ((await createB.json()) as { driver: Driver }).driver;
+  assert.equal(driverB.licence_number, null);
+
+  // 3. PATCH without licence_number preserves null externally and attaches new document cleanly
+  const patchA = await app.fetch(
+    new Request(`http://localhost/api/drivers/${driverA.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        licence_number: null,
+        retest_cert_number: 'RET-A1',
+        retest_document: SAMPLE_JPEG_DATA_URL,
+      }),
+    }),
+    env
+  );
+  assert.equal(patchA.status, 200);
+  const patchedA = ((await patchA.json()) as { driver: Driver }).driver;
+  assert.equal(patchedA.licence_number, null);
+  assert.equal(patchedA.ddc_document, SAMPLE_PDF_DATA_URL);
+  assert.equal(patchedA.retest_document, SAMPLE_JPEG_DATA_URL);
+
+  // 4. Oversized >1 MB document upload returns clean 400 JSON error (never 500)
+  const oversizedPdf = `data:application/pdf;base64,${'A'.repeat(1_050_000)}`;
+  const oversizeRes = await app.fetch(
+    new Request('http://localhost/api/drivers', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        full_name: 'Oversize Doc Driver',
+        phone: '+263772000004',
+        licence_document: oversizedPdf,
+      }),
+    }),
+    env
+  );
+  assert.equal(oversizeRes.status, 400);
+  const oversizeJson = (await oversizeRes.json()) as { error: string };
+  assert.match(oversizeJson.error, /too large/i);
+});
+

@@ -159,6 +159,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     medical: boolean;
   }>({ licence: false, ddc: false, retest: false, medical: false });
   const [formActive, setFormActive] = useState(true);
+  const [loadingExistingDocs, setLoadingExistingDocs] = useState(false);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -188,17 +189,21 @@ export const DriversView: React.FC<DriversViewProps> = ({
         // Ignore quota errors
       }
     } catch (err) {
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached) as Driver[];
-          setItems(parsed);
-          setTotal(parsed.length);
-          setUsingCache(true);
-        } else {
-          setError(err instanceof ApiError ? err.message : 'Could not load drivers.');
+      if (isLikelyNetworkError(err)) {
+        try {
+          const cached = localStorage.getItem(CACHE_KEY);
+          if (cached) {
+            const parsed = JSON.parse(cached) as Driver[];
+            setItems(parsed);
+            setTotal(parsed.length);
+            setUsingCache(true);
+          } else {
+            setError('You appear to be offline and no cached driver list is available.');
+          }
+        } catch {
+          setError('You appear to be offline and could not read cached drivers.');
         }
-      } catch {
+      } else {
         setError(err instanceof ApiError ? err.message : 'Could not load drivers.');
       }
     } finally {
@@ -276,6 +281,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     setDocChanged({ licence: false, ddc: false, retest: false, medical: false });
     setFormActive(d.active);
     setFormError(null);
+    setLoadingExistingDocs(false);
     setShowForm(true);
 
     // If opened from list (which omits heavy base64 blobs), fetch full record so previews appear
@@ -286,6 +292,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
         (d.has_retest_document && d.retest_document === undefined) ||
         (d.has_medical_document && d.medical_document === undefined))
     ) {
+      setLoadingExistingDocs(true);
       try {
         const res = await api.getDriver(d.id);
         setFormLicenceDoc(res.driver.licence_document ?? null);
@@ -294,6 +301,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
         setFormMedicalDoc(res.driver.medical_document ?? null);
       } catch {
         // Keep existing state if offline
+      } finally {
+        setLoadingExistingDocs(false);
       }
     }
   };
@@ -1055,6 +1064,15 @@ export const DriversView: React.FC<DriversViewProps> = ({
                 className="mt-4 rounded-xl border border-red-200 bg-red-50 p-3.5 text-sm font-medium text-red-800"
               >
                 {formError}
+              </div>
+            )}
+
+            {loadingExistingDocs && (
+              <div
+                role="status"
+                className="mt-4 rounded-xl border border-blue-200 bg-blue-50 p-3 text-xs font-medium text-blue-900"
+              >
+                Loading existing uploaded document previews...
               </div>
             )}
 

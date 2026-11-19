@@ -123,12 +123,27 @@ async function getAllSettings(db: D1DatabaseLike): Promise<AppSettings> {
 export function createApp() {
   const app = new Hono<{ Bindings: AppEnv; Variables: Variables }>().basePath('/api');
 
+  app.onError((err, c) => {
+    const msg = err instanceof Error ? err.message : String(err ?? 'Unknown error');
+    console.error('Unhandled API error:', msg, err);
+    if (/too big|too large|SQLITE_TOOBIG|body limit/i.test(msg)) {
+      return c.json(
+        { error: 'Uploaded document is too large for the database. Please use a smaller image or PDF (under 700 KB).' },
+        400
+      );
+    }
+    return c.json(
+      { error: 'Server error while processing this request. Please try again.' },
+      500
+    );
+  });
+
   // Security headers & strict origin/CSRF checks
   app.use('*', async (c, next) => {
     await next();
     c.header('X-Content-Type-Options', 'nosniff');
     c.header('Referrer-Policy', 'strict-origin-when-cross-origin');
-    c.header('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    c.header('Permissions-Policy', 'geolocation=(), microphone=()');
     c.header('Cache-Control', 'no-store');
   });
 

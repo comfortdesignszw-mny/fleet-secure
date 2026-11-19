@@ -3,8 +3,10 @@ import {
   DEFAULT_SETTINGS,
   FUEL_FRACTIONS,
   FUEL_LEVELS,
+  UNRECORDED_LICENCE_PREFIX,
   VEHICLE_CONDITIONS,
   VEHICLE_TYPE_TO_CLASS,
+  normalizeDriverLicenceNumber,
   type AppSettings,
   type FuelLevel,
   type NewDriverInput,
@@ -18,7 +20,13 @@ import {
   type VehicleCondition,
 } from '../shared/types';
 import { recordAudit } from './audit';
-import { computeLicenceExpiryStatus, validateDocumentDataUrl, type RouteAuthDeps } from './directories';
+import {
+  computeLicenceExpiryStatus,
+  isNotNullLicenceError,
+  makeUnrecordedLicenceSentinel,
+  validateDocumentDataUrl,
+  type RouteAuthDeps,
+} from './directories';
 import { checkAndNotifyOverdueHires, notifyManagersInApp } from './notifications';
 import type { AppEnv, D1DatabaseLike } from './types';
 
@@ -587,10 +595,8 @@ export function registerTripRoutes(
 
     if (body.new_driver) {
       const fullName = (body.new_driver.full_name || '').trim();
-      const rawLicence = body.new_driver.licence_number
-        ? String(body.new_driver.licence_number).trim().toUpperCase()
-        : '';
-      const licenceNumber = rawLicence || null;
+      const rawLicence = normalizeDriverLicenceNumber(body.new_driver.licence_number);
+      const licenceNumber = rawLicence ? rawLicence.toUpperCase() : null;
       const phone = (body.new_driver.phone || '').trim();
       const address = (body.new_driver.address || '').trim();
       const licenceExpiry = body.new_driver.licence_expiry
@@ -631,7 +637,7 @@ export function registerTripRoutes(
 
       if (licenceNumber) {
         const existingDriver = await c.env.DB.prepare(
-          'SELECT id, active FROM drivers WHERE UPPER(licence_number) = ?'
+          `SELECT id, active FROM drivers WHERE UPPER(licence_number) = ? AND licence_number NOT LIKE '${UNRECORDED_LICENCE_PREFIX}%'`
         )
           .bind(licenceNumber)
           .first<{ id: number; active: number }>();
@@ -749,33 +755,45 @@ export function registerTripRoutes(
 
     let driverId = requestedDriverId;
     if (newDriverSpec) {
-      const dInsert = await c.env.DB.prepare(
-        `INSERT INTO drivers (
-           full_name, licence_number, phone, address, licence_expiry,
-           licence_document, ddc_number, ddc_document,
-           retest_cert_number, retest_document,
-           medical_cert_number, medical_document,
-           active, created_by
-         )
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-        .bind(
-          newDriverSpec.fullName,
-          newDriverSpec.licenceNumber,
-          newDriverSpec.phone,
-          newDriverSpec.address,
-          newDriverSpec.licenceExpiry,
-          newDriverSpec.licenceDocument,
-          newDriverSpec.ddcNumber,
-          newDriverSpec.ddcDocument,
-          newDriverSpec.retestCertNumber,
-          newDriverSpec.retestDocument,
-          newDriverSpec.medicalCertNumber,
-          newDriverSpec.medicalDocument,
-          newDriverSpec.saveToDirectory ? 1 : 0,
-          actor.id
+      const insertInlineDriver = async (licVal: string | null) =>
+        c.env.DB.prepare(
+          `INSERT INTO drivers (
+             full_name, licence_number, phone, address, licence_expiry,
+             licence_document, ddc_number, ddc_document,
+             retest_cert_number, retest_document,
+             medical_cert_number, medical_document,
+             active, created_by
+           )
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
-        .run();
+          .bind(
+            newDriverSpec.fullName,
+            licVal,
+            newDriverSpec.phone,
+            newDriverSpec.address,
+            newDriverSpec.licenceExpiry,
+            newDriverSpec.licenceDocument,
+            newDriverSpec.ddcNumber,
+            newDriverSpec.ddcDocument,
+            newDriverSpec.retestCertNumber,
+            newDriverSpec.retestDocument,
+            newDriverSpec.medicalCertNumber,
+            newDriverSpec.medicalDocument,
+            newDriverSpec.saveToDirectory ? 1 : 0,
+            actor.id
+          )
+          .run();
+
+      let dInsert;
+      try {
+        dInsert = await insertInlineDriver(newDriverSpec.licenceNumber);
+      } catch (err) {
+        if (newDriverSpec.licenceNumber === null && isNotNullLicenceError(err)) {
+          dInsert = await insertInlineDriver(makeUnrecordedLicenceSentinel());
+        } else {
+          throw err;
+        }
+      }
       driverId = Number(dInsert.meta.last_row_id);
       driver = await c.env.DB.prepare('SELECT * FROM drivers WHERE id = ?')
         .bind(driverId)
