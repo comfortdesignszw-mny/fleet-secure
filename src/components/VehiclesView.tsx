@@ -15,6 +15,11 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import {
+  OFFLINE_SYNCED_EVENT,
+  enqueueOfflineEntry,
+  isLikelyNetworkError,
+} from '../lib/offlineQueue';
+import {
   VEHICLE_CONDITIONS,
   VEHICLE_TYPES,
   VEHICLE_TYPE_TO_CLASS,
@@ -174,6 +179,14 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     fetchVehicles();
   }, [fetchVehicles]);
 
+  useEffect(() => {
+    const onSynced = () => {
+      void fetchVehicles();
+    };
+    window.addEventListener(OFFLINE_SYNCED_EVENT, onSynced);
+    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, onSynced);
+  }, [fetchVehicles]);
+
   const loadVehicleDetail = useCallback(async (id: number) => {
     setSelectedId(id);
     setDetailLoading(true);
@@ -246,18 +259,57 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
         if (selectedId === res.vehicle.id) {
           await loadVehicleDetail(res.vehicle.id);
         }
+        await fetchVehicles();
       } else {
-        const res = await api.createVehicle({
-          reg_number: formReg.trim(),
+        const payload = {
+          reg_number: formReg.trim().toUpperCase().replace(/\s+/g, ' '),
           vehicle_type: formType,
           make_model: formMakeModel.trim(),
           condition: formCondition,
           last_known_mileage: mileageNum,
-        });
-        setShowForm(false);
-        setNotice(`Added ${res.vehicle.reg_number} (${res.vehicle.make_model}) to the fleet.`);
+        };
+        try {
+          const res = await api.createVehicle(payload);
+          setShowForm(false);
+          setNotice(`Added ${res.vehicle.reg_number} (${res.vehicle.make_model}) to the fleet.`);
+          await fetchVehicles();
+        } catch (err) {
+          if (isLikelyNetworkError(err)) {
+            enqueueOfflineEntry({
+              kind: 'VEHICLE_CREATE',
+              summaryLabel: `Add Vehicle · ${payload.reg_number}`,
+              payload,
+            });
+            const optimisticVehicle: Vehicle = {
+              id: -Date.now(),
+              reg_number: payload.reg_number,
+              vehicle_type: payload.vehicle_type,
+              vehicle_class: VEHICLE_TYPE_TO_CLASS[payload.vehicle_type] ?? 'ECONOMY',
+              make_model: payload.make_model,
+              condition: payload.condition,
+              last_known_mileage: payload.last_known_mileage,
+              active: true,
+              created_at: new Date().toISOString(),
+              derived_status: 'Available',
+              open_trip_id: null,
+            };
+            const nextList = [optimisticVehicle, ...items];
+            setItems(nextList);
+            setTotal(nextList.length);
+            try {
+              localStorage.setItem(CACHE_KEY, JSON.stringify(nextList));
+            } catch {
+              // Ignore quota errors
+            }
+            setShowForm(false);
+            setNotice(
+              `Saved vehicle "${payload.reg_number}" offline in local cache. Will sync automatically when connected.`
+            );
+          } else {
+            throw err;
+          }
+        }
       }
-      await fetchVehicles();
     } catch (err) {
       setFormError(err instanceof ApiError ? err.message : 'Could not save vehicle.');
     } finally {

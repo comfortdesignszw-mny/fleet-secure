@@ -30,15 +30,116 @@ export class ApiError extends Error {
   }
 }
 
-let inMemorySessionToken: string | null = null;
+const SESSION_TOKEN_KEY = 'fleet_secure_session_token';
+const CACHED_USER_KEY = 'fleet_secure_cached_user';
+const CACHED_SETTINGS_KEY = 'fleet_secure_cached_settings';
+
+function readStoredToken(): string | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    return localStorage.getItem(SESSION_TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+let inMemorySessionToken: string | null = readStoredToken();
+
+function setSessionToken(token: string | null): void {
+  inMemorySessionToken = token;
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (token) {
+      localStorage.setItem(SESSION_TOKEN_KEY, token);
+    } else {
+      localStorage.removeItem(SESSION_TOKEN_KEY);
+    }
+  } catch {
+    // Ignore storage quota / privacy mode errors
+  }
+}
+
+export function getCachedUser(): UserPublic | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(CACHED_USER_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as UserPublic;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedUser(user: UserPublic | null): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (user) {
+      localStorage.setItem(CACHED_USER_KEY, JSON.stringify(user));
+    } else {
+      localStorage.removeItem(CACHED_USER_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function getCachedSettings(): AppSettings | null {
+  try {
+    if (typeof localStorage === 'undefined') return null;
+    const raw = localStorage.getItem(CACHED_SETTINGS_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw) as AppSettings;
+  } catch {
+    return null;
+  }
+}
+
+export function setCachedSettings(settings: AppSettings | null): void {
+  try {
+    if (typeof localStorage === 'undefined') return;
+    if (settings) {
+      localStorage.setItem(CACHED_SETTINGS_KEY, JSON.stringify(settings));
+    } else {
+      localStorage.removeItem(CACHED_SETTINGS_KEY);
+    }
+  } catch {
+    // Ignore storage errors
+  }
+}
+
+export function clearCachedSession(): void {
+  setSessionToken(null);
+  setCachedUser(null);
+}
+
+export async function checkServerReachable(timeoutMs = 3000): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    return false;
+  }
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+  try {
+    const res = await fetch('/api/health', {
+      method: 'GET',
+      cache: 'no-store',
+      signal: controller?.signal,
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  if (inMemorySessionToken && !headers.has('Authorization')) {
-    headers.set('Authorization', `Bearer ${inMemorySessionToken}`);
+  const token = inMemorySessionToken ?? readStoredToken();
+  if (token && !headers.has('Authorization')) {
+    headers.set('Authorization', `Bearer ${token}`);
   }
   const res = await fetch(`/api${path}`, {
     ...init,
@@ -62,8 +163,8 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   }
 
   if (!res.ok) {
-    if (res.status === 401) {
-      inMemorySessionToken = null;
+    if (res.status === 401 && path !== '/auth/login') {
+      clearCachedSession();
     }
     const msg =
       typeof data.error === 'string' && data.error.trim()
@@ -76,7 +177,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
-  me: () => request<{ user: UserPublic }>('/auth/me'),
+  me: async () => {
+    const res = await request<{ user: UserPublic }>('/auth/me');
+    setCachedUser(res.user);
+    return res;
+  },
 
   getPreviewStatus: () =>
     request<{
@@ -100,7 +205,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
-    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    if (res.sessionToken) setSessionToken(res.sessionToken);
+    setCachedUser(res.user);
     return res;
   },
 
@@ -115,7 +221,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ username, pin }),
     });
-    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    if (res.sessionToken) setSessionToken(res.sessionToken);
+    setCachedUser(res.user);
     return res;
   },
 
@@ -125,7 +232,7 @@ export const api = {
         method: 'POST',
       });
     } finally {
-      inMemorySessionToken = null;
+      clearCachedSession();
     }
   },
 
@@ -134,17 +241,25 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ currentPin, newPin }),
     });
-    if (res.sessionToken) inMemorySessionToken = res.sessionToken;
+    if (res.sessionToken) setSessionToken(res.sessionToken);
+    setCachedUser(res.user);
     return res;
   },
 
-  getSettings: () => request<{ settings: AppSettings }>('/settings'),
+  getSettings: async () => {
+    const res = await request<{ settings: AppSettings }>('/settings');
+    setCachedSettings(res.settings);
+    return res;
+  },
 
-  updateSettings: (settings: Partial<AppSettings>) =>
-    request<{ settings: AppSettings }>('/settings', {
+  updateSettings: async (settings: Partial<AppSettings>) => {
+    const res = await request<{ settings: AppSettings }>('/settings', {
       method: 'PUT',
       body: JSON.stringify(settings),
-    }),
+    });
+    setCachedSettings(res.settings);
+    return res;
+  },
 
   listUsers: (params: { q?: string; page?: number; limit?: number } = {}) => {
     const qs = new URLSearchParams();
@@ -284,6 +399,7 @@ export const api = {
       items: Driver[];
       total: number;
       expiringCount: number;
+      missingDocsCount?: number;
       page: number;
       limit: number;
     }>(`/drivers?${qs.toString()}`);
@@ -310,10 +426,17 @@ export const api = {
 
   createDriver: (payload: {
     full_name: string;
-    licence_number: string;
+    licence_number?: string | null;
     phone: string;
-    address: string;
-    licence_expiry: string | null;
+    address?: string;
+    licence_expiry?: string | null;
+    licence_document?: string | null;
+    ddc_number?: string | null;
+    ddc_document?: string | null;
+    retest_cert_number?: string | null;
+    retest_document?: string | null;
+    medical_cert_number?: string | null;
+    medical_document?: string | null;
   }) =>
     request<{ driver: Driver }>('/drivers', {
       method: 'POST',
@@ -324,10 +447,17 @@ export const api = {
     id: number,
     payload: {
       full_name?: string;
-      licence_number?: string;
+      licence_number?: string | null;
       phone?: string;
       address?: string;
       licence_expiry?: string | null;
+      licence_document?: string | null;
+      ddc_number?: string | null;
+      ddc_document?: string | null;
+      retest_cert_number?: string | null;
+      retest_document?: string | null;
+      medical_cert_number?: string | null;
+      medical_document?: string | null;
       active?: boolean;
     }
   ) =>

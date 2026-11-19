@@ -20,10 +20,17 @@ CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
 CREATE TABLE IF NOT EXISTS drivers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   full_name TEXT NOT NULL,
-  licence_number TEXT NOT NULL UNIQUE,
+  licence_number TEXT,
   phone TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
   licence_expiry TEXT,
+  licence_document TEXT,
+  ddc_number TEXT,
+  ddc_document TEXT,
+  retest_cert_number TEXT,
+  retest_document TEXT,
+  medical_cert_number TEXT,
+  medical_document TEXT,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   created_by INTEGER REFERENCES users(id)
@@ -31,6 +38,9 @@ CREATE TABLE IF NOT EXISTS drivers (
 
 CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active);
 CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique
+  ON drivers(UPPER(licence_number))
+  WHERE licence_number IS NOT NULL AND licence_number != '';
 
 -- 3. Vehicles Directory
 CREATE TABLE IF NOT EXISTS vehicles (

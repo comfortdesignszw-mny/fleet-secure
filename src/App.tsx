@@ -2,7 +2,7 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   Bell,
   Car,
@@ -13,13 +13,28 @@ import {
   KeyRound,
   LogOut,
   Menu,
+  RefreshCw,
   ShieldCheck,
   SlidersHorizontal,
   Users,
   X,
 } from 'lucide-react';
 import { en } from './i18n/en';
-import { api } from './lib/api';
+import {
+  ApiError,
+  api,
+  checkServerReachable,
+  clearCachedSession,
+  getCachedSettings,
+  getCachedUser,
+} from './lib/api';
+import { useOnlineStatus } from './hooks/useOnlineStatus';
+import {
+  OFFLINE_QUEUE_EVENT,
+  flushOfflineQueue,
+  getOfflineQueue,
+  isLikelyNetworkError,
+} from './lib/offlineQueue';
 import { DEFAULT_SETTINGS, ROLE_LABELS, type AppSettings, type UserPublic } from './shared/types';
 import { AppFooter } from './components/AppFooter';
 import { AuditLogView } from './components/AuditLogView';
@@ -37,36 +52,124 @@ import { TripsView } from './components/TripsView';
 import { VehiclesView } from './components/VehiclesView';
 
 export default function App() {
-  const [user, setUser] = useState<UserPublic | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const isOnline = useOnlineStatus();
+  const [user, setUser] = useState<UserPublic | null>(() => getCachedUser());
+  const [authChecked, setAuthChecked] = useState<boolean>(() => Boolean(getCachedUser()));
   const [section, setSection] = useState<NavSection>('home');
   const [homeResetKey, setHomeResetKey] = useState(0);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
-  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(
+    () => getCachedSettings() ?? DEFAULT_SETTINGS
+  );
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [unreadNotifications, setUnreadNotifications] = useState(0);
   const [highUnreadNotifications, setHighUnreadNotifications] = useState(0);
   const [showWalkthrough, setShowWalkthrough] = useState(false);
+  const [pendingQueueCount, setPendingQueueCount] = useState<number>(
+    () => getOfflineQueue().length
+  );
+  const [syncingNow, setSyncingNow] = useState(false);
+  const [syncFeedback, setSyncFeedback] = useState<{
+    tone: 'ok' | 'warn';
+    text: string;
+  } | null>(null);
+
+  const verifySession = useCallback(async () => {
+    try {
+      const res = await api.me();
+      setUser(res.user);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) {
+        clearCachedSession();
+        setUser(null);
+      } else if (!isLikelyNetworkError(err) && !getCachedUser()) {
+        setUser(null);
+      }
+      // On network/offline drop, preserve the cached authenticated user session
+    } finally {
+      setAuthChecked(true);
+    }
+  }, []);
 
   useEffect(() => {
-    let active = true;
-    api
-      .me()
-      .then((res) => {
-        if (active) setUser(res.user);
-      })
-      .catch(() => {
-        if (active) setUser(null);
-      })
-      .finally(() => {
-        if (active) setAuthChecked(true);
-      });
+    void verifySession();
+  }, [verifySession]);
+
+  useEffect(() => {
+    const refreshQueueCount = () => {
+      setPendingQueueCount(getOfflineQueue().length);
+    };
+    window.addEventListener(OFFLINE_QUEUE_EVENT, refreshQueueCount);
+    window.addEventListener('storage', refreshQueueCount);
     return () => {
-      active = false;
+      window.removeEventListener(OFFLINE_QUEUE_EVENT, refreshQueueCount);
+      window.removeEventListener('storage', refreshQueueCount);
     };
   }, []);
+
+  const triggerSync = useCallback(
+    async (manual: boolean) => {
+      if (syncingNow) return;
+      setSyncingNow(true);
+      try {
+        const reachable = manual ? await checkServerReachable(2500) : isOnline;
+        if (!reachable) {
+          if (manual) {
+            const qCount = getOfflineQueue().length;
+            setSyncFeedback({
+              tone: 'warn',
+              text:
+                qCount > 0
+                  ? `Offline — ${qCount} record${qCount === 1 ? '' : 's'} saved in local cache.`
+                  : 'Offline — working from local cache.',
+            });
+          }
+          return;
+        }
+
+        await verifySession();
+        const result = await flushOfflineQueue();
+        setPendingQueueCount(result.remaining.length);
+
+        if (result.syncedCount > 0 && result.failedCount === 0) {
+          setSyncFeedback({
+            tone: 'ok',
+            text: `Synced ${result.syncedCount} offline record${result.syncedCount === 1 ? '' : 's'} to cloud.`,
+          });
+        } else if (result.failedCount > 0) {
+          setSyncFeedback({
+            tone: 'warn',
+            text: `Synced ${result.syncedCount}; ${result.failedCount} item${result.failedCount === 1 ? '' : 's'} still pending.`,
+          });
+        } else if (manual) {
+          setSyncFeedback({
+            tone: 'ok',
+            text: 'All records are synced and up to date.',
+          });
+        }
+      } finally {
+        setSyncingNow(false);
+      }
+    },
+    [isOnline, syncingNow, verifySession]
+  );
+
+  useEffect(() => {
+    if (!syncFeedback) return;
+    const timer = window.setTimeout(() => setSyncFeedback(null), 4000);
+    return () => window.clearTimeout(timer);
+  }, [syncFeedback]);
+
+  // Immediate auto-sync and silent session re-verification as soon as active connection returns
+  useEffect(() => {
+    if (!user || !isOnline) return;
+    void verifySession();
+    if (getOfflineQueue().length > 0) {
+      void triggerSync(false);
+    }
+  }, [isOnline, user?.id]);
 
   useEffect(() => {
     if (!user || user.must_change_pin) return;
@@ -74,12 +177,12 @@ export default function App() {
       .getSettings()
       .then((res) => setSettings(res.settings))
       .catch(() => {
-        // Keep defaults if offline
+        // Keep cached/default settings if offline
       });
-  }, [user]);
+  }, [user, isOnline]);
 
   useEffect(() => {
-    if (!user || user.must_change_pin) return;
+    if (!user || user.must_change_pin || !isOnline) return;
     if (user.role !== 'SUPERVISOR' && user.role !== 'ADMIN') {
       setUnreadNotifications(0);
       setHighUnreadNotifications(0);
@@ -107,7 +210,7 @@ export default function App() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [user, section]);
+  }, [user, section, isOnline]);
 
   useEffect(() => {
     if (!user || user.must_change_pin) return;
@@ -135,6 +238,8 @@ export default function App() {
   const handleLogout = async () => {
     try {
       await api.logout();
+    } catch {
+      clearCachedSession();
     } finally {
       setUser(null);
       setSection('home');
@@ -332,6 +437,40 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+            <button
+              type="button"
+              onClick={() => void triggerSync(true)}
+              disabled={syncingNow}
+              title={
+                pendingQueueCount > 0
+                  ? `Sync ${pendingQueueCount} offline record${pendingQueueCount === 1 ? '' : 's'} now`
+                  : isOnline
+                    ? 'Sync records now'
+                    : 'Offline — tap to check connection and sync'
+              }
+              aria-label={
+                pendingQueueCount > 0
+                  ? `Sync ${pendingQueueCount} pending offline records`
+                  : 'Manual cloud sync'
+              }
+              className={`relative inline-flex h-10 w-10 items-center justify-center rounded-full border transition-all ${
+                pendingQueueCount > 0
+                  ? 'border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100'
+                  : !isOnline
+                    ? 'border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    : 'border-blue-200 bg-white text-blue-700 hover:border-cyan-400 hover:text-cyan-700 cyan-glow-outline'
+              }`}
+            >
+              <RefreshCw
+                className={`h-4 w-4 ${syncingNow ? 'animate-spin' : ''}`}
+                aria-hidden="true"
+              />
+              {pendingQueueCount > 0 && (
+                <span className="absolute -right-1 -top-1 flex h-5 min-w-[20px] items-center justify-center rounded-full bg-amber-600 px-1 font-mono text-[10px] font-bold text-white shadow-xs">
+                  {pendingQueueCount}
+                </span>
+              )}
+            </button>
             {isSupervisorOrAdmin && (
               <button
                 type="button"
@@ -361,6 +500,21 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        {syncFeedback && (
+          <div className="px-4 sm:px-6 pt-3 max-w-6xl w-full mx-auto">
+            <div
+              role="status"
+              className={`rounded-xl border px-4 py-2.5 text-sm font-medium shadow-xs ${
+                syncFeedback.tone === 'ok'
+                  ? 'border-emerald-300 bg-emerald-50 text-emerald-900'
+                  : 'border-amber-300 bg-amber-50 text-amber-900'
+              }`}
+            >
+              {syncFeedback.text}
+            </div>
+          </div>
+        )}
 
         {/* Mobile Drawer */}
         {mobileMenuOpen && (

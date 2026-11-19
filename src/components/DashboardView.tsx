@@ -6,6 +6,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
+import { OFFLINE_SYNCED_EVENT } from '../lib/offlineQueue';
 import {
   formatHarareTime,
   type DashboardData,
@@ -68,6 +69,14 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   useEffect(() => {
     loadDashboard();
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const handleSynced = () => {
+      loadDashboard();
+    };
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
   }, [loadDashboard]);
 
   const applyPreset = (preset: 'month' | '7d' | '30d' | 'year') => {

@@ -152,10 +152,22 @@ export interface Vehicle {
 export interface Driver {
   id: number;
   full_name: string;
-  licence_number: string;
+  licence_number: string | null;
   phone: string;
   address: string;
   licence_expiry: string | null;
+  licence_document?: string | null;
+  has_licence_document?: boolean;
+  ddc_number: string | null;
+  ddc_document?: string | null;
+  has_ddc_document?: boolean;
+  retest_cert_number: string | null;
+  retest_document?: string | null;
+  has_retest_document?: boolean;
+  medical_cert_number: string | null;
+  medical_document?: string | null;
+  has_medical_document?: boolean;
+  missing_documents?: string[];
   active: boolean;
   created_at: string;
   created_by: number | null;
@@ -252,10 +264,17 @@ export interface TripSummary {
 
 export interface NewDriverInput {
   full_name: string;
-  licence_number: string;
+  licence_number?: string | null;
   phone: string;
   address?: string;
   licence_expiry?: string | null;
+  licence_document?: string | null;
+  ddc_number?: string | null;
+  ddc_document?: string | null;
+  retest_cert_number?: string | null;
+  retest_document?: string | null;
+  medical_cert_number?: string | null;
+  medical_document?: string | null;
   save_to_directory: boolean;
 }
 
@@ -281,7 +300,7 @@ export interface CreateTripOutPayload {
   expected_return_date?: string | null;
   mileage_out: number;
   fuel_out: FuelLevel;
-  opening_checklist_by: string;
+  opening_checklist_by?: string;
   notes?: string;
   device_time?: string;
 }
@@ -402,5 +421,68 @@ export function formatHarareTime(isoString: string | null | undefined): string {
   }).format(date);
 }
 
+export function getDriverMissingDocuments(driver: {
+  licence_number?: string | null;
+  licence_document?: string | null;
+  has_licence_document?: boolean;
+  ddc_number?: string | null;
+  ddc_document?: string | null;
+  has_ddc_document?: boolean;
+  retest_cert_number?: string | null;
+  retest_document?: string | null;
+  has_retest_document?: boolean;
+  medical_cert_number?: string | null;
+  medical_document?: string | null;
+  has_medical_document?: boolean;
+}): string[] {
+  const missing: string[] = [];
 
+  const hasLicenceNum = Boolean(driver.licence_number && driver.licence_number.trim());
+  const hasLicenceDoc = Boolean(driver.has_licence_document || driver.licence_document);
+  if (!hasLicenceNum && !hasLicenceDoc) {
+    missing.push("Driver's Licence (Number & Copy)");
+  } else if (!hasLicenceNum) {
+    missing.push("Driver's Licence Number");
+  } else if (!hasLicenceDoc) {
+    missing.push("Driver's Licence Copy (PDF/Image)");
+  }
 
+  const hasDdcNum = Boolean(driver.ddc_number && driver.ddc_number.trim());
+  const hasDdcDoc = Boolean(driver.has_ddc_document || driver.ddc_document);
+  if (!hasDdcNum && !hasDdcDoc) {
+    missing.push('Defensive Driving Certificate (DDC Number & Copy)');
+  } else if (!hasDdcNum) {
+    missing.push('Defensive Driving Certificate (DDC) Number');
+  } else if (!hasDdcDoc) {
+    missing.push('Defensive Driving Certificate (DDC) Copy');
+  }
+
+  const hasRetestNum = Boolean(driver.retest_cert_number && driver.retest_cert_number.trim());
+  const hasRetestDoc = Boolean(driver.has_retest_document || driver.retest_document);
+  if (!hasRetestNum && !hasRetestDoc) {
+    missing.push('Retest Certificate (Number & Copy)');
+  } else if (!hasRetestNum) {
+    missing.push('Retest Certificate Number');
+  } else if (!hasRetestDoc) {
+    missing.push('Retest Certificate Copy');
+  }
+
+  const hasMedNum = Boolean(driver.medical_cert_number && driver.medical_cert_number.trim());
+  const hasMedDoc = Boolean(driver.has_medical_document || driver.medical_document);
+  if (!hasMedNum && !hasMedDoc) {
+    missing.push('Medical Certificate (Number & Copy)');
+  } else if (!hasMedNum) {
+    missing.push('Medical Certificate Number');
+  } else if (!hasMedDoc) {
+    missing.push('Medical Certificate Copy');
+  }
+
+  return missing;
+}
+
+export function formatDriverMissingDocsWarning(
+  driverName: string,
+  missingDocuments: string[]
+): string {
+  return `Driver ${driverName}'s details are missing a critical document(s): ${missingDocuments.join(', ')}.`;
+}

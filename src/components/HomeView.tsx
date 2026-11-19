@@ -21,6 +21,7 @@ import {
 import { api, ApiError } from '../lib/api';
 import {
   OFFLINE_QUEUE_EVENT,
+  OFFLINE_SYNCED_EVENT,
   flushOfflineQueue,
   getOfflineQueue,
   removeOfflineEntry,
@@ -183,9 +184,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   useEffect(() => {
     const refresh = () => setQueuedEntries(getOfflineQueue());
+    const handleSynced = () => {
+      setQueuedEntries(getOfflineQueue());
+      loadOngoing();
+    };
     window.addEventListener(OFFLINE_QUEUE_EVENT, refresh);
-    return () => window.removeEventListener(OFFLINE_QUEUE_EVENT, refresh);
-  }, []);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    return () => {
+      window.removeEventListener(OFFLINE_QUEUE_EVENT, refresh);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    };
+  }, [loadOngoing]);
 
   const openYardAction = (nextMode: Exclude<ActiveYardMode, null>) => {
     setHeaderRecordOpen(false);

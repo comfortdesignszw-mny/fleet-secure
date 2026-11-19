@@ -19,10 +19,17 @@ const SCHEMA_STATEMENTS = [
   `CREATE TABLE IF NOT EXISTS drivers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     full_name TEXT NOT NULL,
-    licence_number TEXT NOT NULL UNIQUE,
+    licence_number TEXT,
     phone TEXT NOT NULL,
     address TEXT NOT NULL DEFAULT '',
     licence_expiry TEXT,
+    licence_document TEXT,
+    ddc_number TEXT,
+    ddc_document TEXT,
+    retest_cert_number TEXT,
+    retest_document TEXT,
+    medical_cert_number TEXT,
+    medical_document TEXT,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     created_by INTEGER REFERENCES users(id)
@@ -164,12 +171,7 @@ let seedChecked = false;
 export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>): Promise<void> {
   if (seedChecked) return;
 
-  const usersTable = await db
-    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'users'")
-    .first<{ name: string }>();
-  if (!usersTable) {
-    await ensureSchemaTables(db);
-  }
+  await ensureSchemaTables(db);
 
   // Ensure newer trip columns exist on pre-existing databases
   try {
@@ -183,6 +185,67 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     }
   } catch {
     // Ignore if table is freshly created from schema.sql
+  }
+
+  // Ensure drivers table supports optional licence_number and certificate/document columns
+  try {
+    const driverCols = await db
+      .prepare('PRAGMA table_info(drivers)')
+      .all<{ name: string; notnull: number }>();
+    const licenceCol = driverCols.results.find((c) => c.name === 'licence_number');
+    const driverColNames = new Set(driverCols.results.map((c) => c.name));
+
+    if (licenceCol && Number(licenceCol.notnull) === 1) {
+      await db.exec(`
+        PRAGMA foreign_keys = OFF;
+        CREATE TABLE IF NOT EXISTS drivers_migrated (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          full_name TEXT NOT NULL,
+          licence_number TEXT,
+          phone TEXT NOT NULL,
+          address TEXT NOT NULL DEFAULT '',
+          licence_expiry TEXT,
+          licence_document TEXT,
+          ddc_number TEXT,
+          ddc_document TEXT,
+          retest_cert_number TEXT,
+          retest_document TEXT,
+          medical_cert_number TEXT,
+          medical_document TEXT,
+          active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+          created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+          created_by INTEGER REFERENCES users(id)
+        );
+        INSERT INTO drivers_migrated (id, full_name, licence_number, phone, address, licence_expiry, active, created_at, created_by)
+        SELECT id, full_name, NULLIF(TRIM(licence_number), ''), phone, address, licence_expiry, active, created_at, created_by FROM drivers;
+        DROP TABLE drivers;
+        ALTER TABLE drivers_migrated RENAME TO drivers;
+        CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active);
+        CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != '';
+        PRAGMA foreign_keys = ON;
+      `);
+    } else {
+      const extraCols: Array<[string, string]> = [
+        ['licence_document', 'TEXT'],
+        ['ddc_number', 'TEXT'],
+        ['ddc_document', 'TEXT'],
+        ['retest_cert_number', 'TEXT'],
+        ['retest_document', 'TEXT'],
+        ['medical_cert_number', 'TEXT'],
+        ['medical_document', 'TEXT'],
+      ];
+      for (const [col, colType] of extraCols) {
+        if (!driverColNames.has(col)) {
+          await db.exec(`ALTER TABLE drivers ADD COLUMN ${col} ${colType}`);
+        }
+      }
+      await db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != ''`
+      );
+    }
+  } catch {
+    // Ignore if already migrated
   }
 
   // Ensure all default settings keys exist

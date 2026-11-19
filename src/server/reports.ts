@@ -303,7 +303,7 @@ async function buildReportDataset(
 
       rows.push({
         full_name: String(d.full_name),
-        licence_number: String(d.licence_number),
+        licence_number: d.licence_number ? String(d.licence_number) : 'Not recorded',
         phone: String(d.phone),
         address: String(d.address ?? ''),
         licence_expiry: d.licence_expiry ? String(d.licence_expiry) : 'Not set',

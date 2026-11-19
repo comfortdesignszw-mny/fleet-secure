@@ -18,7 +18,7 @@ import {
   type VehicleCondition,
 } from '../shared/types';
 import { recordAudit } from './audit';
-import { computeLicenceExpiryStatus, type RouteAuthDeps } from './directories';
+import { computeLicenceExpiryStatus, validateDocumentDataUrl, type RouteAuthDeps } from './directories';
 import { checkAndNotifyOverdueHires, notifyManagersInApp } from './notifications';
 import type { AppEnv, D1DatabaseLike } from './types';
 
@@ -455,7 +455,7 @@ export function registerTripRoutes(
     if (!fuelOut || !FUEL_LEVELS.includes(fuelOut)) {
       return c.json({ error: 'Tap a fuel gauge level for when the vehicle is leaving.' }, 400);
     }
-    if (!checklistBy) {
+    if (tripType === 'HIRE' && !checklistBy) {
       return c.json({ error: 'Enter the name of the person who did the opening checklist.' }, 400);
     }
 
@@ -571,28 +571,47 @@ export function registerTripRoutes(
     let driver: Record<string, unknown> | null = null;
     let newDriverSpec: {
       fullName: string;
-      licenceNumber: string;
+      licenceNumber: string | null;
       phone: string;
       address: string;
       licenceExpiry: string | null;
+      licenceDocument: string | null;
+      ddcNumber: string | null;
+      ddcDocument: string | null;
+      retestCertNumber: string | null;
+      retestDocument: string | null;
+      medicalCertNumber: string | null;
+      medicalDocument: string | null;
       saveToDirectory: boolean;
     } | null = null;
 
     if (body.new_driver) {
       const fullName = (body.new_driver.full_name || '').trim();
-      const licenceNumber = (body.new_driver.licence_number || '').trim().toUpperCase();
+      const rawLicence = body.new_driver.licence_number
+        ? String(body.new_driver.licence_number).trim().toUpperCase()
+        : '';
+      const licenceNumber = rawLicence || null;
       const phone = (body.new_driver.phone || '').trim();
       const address = (body.new_driver.address || '').trim();
       const licenceExpiry = body.new_driver.licence_expiry
         ? String(body.new_driver.licence_expiry).trim()
+        : null;
+      const ddcNumber = body.new_driver.ddc_number
+        ? String(body.new_driver.ddc_number).trim().toUpperCase() || null
+        : null;
+      const retestCertNumber = body.new_driver.retest_cert_number
+        ? String(body.new_driver.retest_cert_number).trim().toUpperCase() || null
+        : null;
+      const medicalCertNumber = body.new_driver.medical_cert_number
+        ? String(body.new_driver.medical_cert_number).trim().toUpperCase() || null
         : null;
       const saveToDirectory = Boolean(body.new_driver.save_to_directory);
 
       if (!fullName || fullName.length < 2) {
         return c.json({ error: 'Enter the new driver’s full name (at least 2 characters).' }, 400);
       }
-      if (!licenceNumber || licenceNumber.length < 3) {
-        return c.json({ error: 'Enter the new driver’s licence number.' }, 400);
+      if (licenceNumber && licenceNumber.length < 2) {
+        return c.json({ error: 'Licence number must be at least 2 characters when provided.' }, 400);
       }
       if (!phone || phone.length < 5) {
         return c.json({ error: 'Enter a contact phone number for the new driver.' }, 400);
@@ -601,21 +620,32 @@ export function registerTripRoutes(
         return c.json({ error: 'Licence expiry date must be in YYYY-MM-DD format.' }, 400);
       }
 
-      const existingDriver = await c.env.DB.prepare(
-        'SELECT id, active FROM drivers WHERE UPPER(licence_number) = ?'
-      )
-        .bind(licenceNumber)
-        .first<{ id: number; active: number }>();
-      if (existingDriver) {
-        return c.json(
-          {
-            error:
-              existingDriver.active === 1
-                ? `A driver with licence "${licenceNumber}" is already in the Drivers Directory. Select them from the driver list instead.`
-                : `A driver with licence "${licenceNumber}" already exists in past records. Use a different licence number or ask a Supervisor to re-enable them.`,
-          },
-          409
-        );
+      const licDoc = validateDocumentDataUrl(body.new_driver.licence_document, "Driver's Licence document");
+      if (!licDoc.ok) return c.json({ error: licDoc.error }, 400);
+      const ddcDoc = validateDocumentDataUrl(body.new_driver.ddc_document, 'Defensive Driving Certificate');
+      if (!ddcDoc.ok) return c.json({ error: ddcDoc.error }, 400);
+      const retestDoc = validateDocumentDataUrl(body.new_driver.retest_document, 'Retest Certificate');
+      if (!retestDoc.ok) return c.json({ error: retestDoc.error }, 400);
+      const medDoc = validateDocumentDataUrl(body.new_driver.medical_document, 'Medical Certificate');
+      if (!medDoc.ok) return c.json({ error: medDoc.error }, 400);
+
+      if (licenceNumber) {
+        const existingDriver = await c.env.DB.prepare(
+          'SELECT id, active FROM drivers WHERE UPPER(licence_number) = ?'
+        )
+          .bind(licenceNumber)
+          .first<{ id: number; active: number }>();
+        if (existingDriver) {
+          return c.json(
+            {
+              error:
+                existingDriver.active === 1
+                  ? `A driver with licence "${licenceNumber}" is already in the Drivers Directory. Select them from the driver list instead.`
+                  : `A driver with licence "${licenceNumber}" already exists in past records. Use a different licence number or ask a Supervisor to re-enable them.`,
+            },
+            409
+          );
+        }
       }
 
       newDriverSpec = {
@@ -624,6 +654,13 @@ export function registerTripRoutes(
         phone,
         address,
         licenceExpiry,
+        licenceDocument: licDoc.value,
+        ddcNumber,
+        ddcDocument: ddcDoc.value,
+        retestCertNumber,
+        retestDocument: retestDoc.value,
+        medicalCertNumber,
+        medicalDocument: medDoc.value,
         saveToDirectory,
       };
     } else {
@@ -713,8 +750,14 @@ export function registerTripRoutes(
     let driverId = requestedDriverId;
     if (newDriverSpec) {
       const dInsert = await c.env.DB.prepare(
-        `INSERT INTO drivers (full_name, licence_number, phone, address, licence_expiry, active, created_by)
-         VALUES (?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO drivers (
+           full_name, licence_number, phone, address, licence_expiry,
+           licence_document, ddc_number, ddc_document,
+           retest_cert_number, retest_document,
+           medical_cert_number, medical_document,
+           active, created_by
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
         .bind(
           newDriverSpec.fullName,
@@ -722,6 +765,13 @@ export function registerTripRoutes(
           newDriverSpec.phone,
           newDriverSpec.address,
           newDriverSpec.licenceExpiry,
+          newDriverSpec.licenceDocument,
+          newDriverSpec.ddcNumber,
+          newDriverSpec.ddcDocument,
+          newDriverSpec.retestCertNumber,
+          newDriverSpec.retestDocument,
+          newDriverSpec.medicalCertNumber,
+          newDriverSpec.medicalDocument,
           newDriverSpec.saveToDirectory ? 1 : 0,
           actor.id
         )
@@ -745,6 +795,9 @@ export function registerTripRoutes(
           phone: newDriverSpec.phone,
           address: newDriverSpec.address,
           licence_expiry: newDriverSpec.licenceExpiry,
+          ddc_number: newDriverSpec.ddcNumber,
+          retest_cert_number: newDriverSpec.retestCertNumber,
+          medical_cert_number: newDriverSpec.medicalCertNumber,
           saved_to_directory: newDriverSpec.saveToDirectory,
         },
         ip: getClientIp(c),
@@ -759,7 +812,9 @@ export function registerTripRoutes(
           title: newDriverSpec.saveToDirectory
             ? `Driver added during trip: ${newDriverSpec.fullName}`
             : `One-time driver used: ${newDriverSpec.fullName}`,
-          body: `${actor.full_name} added driver ${newDriverSpec.fullName} (${newDriverSpec.licenceNumber}) while booking a trip (${
+          body: `${actor.full_name} added driver ${newDriverSpec.fullName} (${
+            newDriverSpec.licenceNumber ?? 'No licence recorded'
+          }) while booking a trip (${
             newDriverSpec.saveToDirectory ? 'saved to directory' : 'one-time trip only'
           }).`,
         },

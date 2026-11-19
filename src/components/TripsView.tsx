@@ -12,6 +12,7 @@ import {
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
+import { OFFLINE_SYNCED_EVENT } from '../lib/offlineQueue';
 import {
   FUEL_LEVELS,
   formatHarareTime,
@@ -111,6 +112,14 @@ export const TripsView: React.FC<TripsViewProps> = ({
 
   useEffect(() => {
     fetchTrips();
+  }, [fetchTrips]);
+
+  useEffect(() => {
+    const handleSynced = () => {
+      fetchTrips();
+    };
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
   }, [fetchTrips]);
 
   const loadDetail = useCallback(async (id: number) => {
@@ -343,7 +352,11 @@ export const TripsView: React.FC<TripsViewProps> = ({
                     )}
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Checklist By</dt>
-                    <dd className="text-blue-950">{detail.out.opening_checklist_by}</dd>
+                    <dd className="text-blue-950">
+                      {detail.out.opening_checklist_by || (
+                        <span className="text-slate-400">Optional (not recorded)</span>
+                      )}
+                    </dd>
                   </div>
                   <div className="py-2 flex justify-between gap-3">
                     <dt className="text-slate-500">Recorded By</dt>

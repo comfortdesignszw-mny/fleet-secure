@@ -1,6 +1,7 @@
 import dotenv from 'dotenv';
 import express from 'express';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
 import { createApp } from './src/server/app';
@@ -12,6 +13,7 @@ dotenv.config();
 async function startServer() {
   const PORT = 3000;
   const expressApp = express();
+  const httpServer = http.createServer(expressApp);
   const db = createLocalDatabase();
   const honoApp = createApp();
 
@@ -97,7 +99,11 @@ async function startServer() {
     });
   } else {
     const vite = await createViteServer({
-      server: { middlewareMode: true },
+      server: {
+        middlewareMode: true,
+        ws: { server: httpServer },
+        allowedHosts: true,
+      },
       appType: 'spa',
     });
     expressApp.use(vite.middlewares);
@@ -115,7 +121,7 @@ async function startServer() {
     });
   }
 
-  expressApp.listen(PORT, '0.0.0.0', () => {
+  httpServer.listen(PORT, '0.0.0.0', () => {
     console.log(`Fleet Secure running on http://0.0.0.0:${PORT}`);
   });
 

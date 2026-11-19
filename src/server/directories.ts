@@ -2,6 +2,7 @@ import type { Context, Hono, MiddlewareHandler } from 'hono';
 import {
   VEHICLE_CONDITIONS,
   VEHICLE_TYPE_TO_CLASS,
+  getDriverMissingDocuments,
   type AuditLogEntry,
   type DerivedStatus,
   type Driver,
@@ -74,16 +75,73 @@ function mapVehicleRow(row: Record<string, unknown>): Vehicle {
   };
 }
 
-function mapDriverRow(row: Record<string, unknown>): Driver {
+const MAX_DOC_DATA_URL_CHARS = 2_800_000;
+
+export function validateDocumentDataUrl(
+  raw: unknown,
+  label: string
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, value: null };
+  }
+  if (typeof raw !== 'string') {
+    return { ok: false, error: `${label} must be an image or PDF file.` };
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return { ok: true, value: null };
+  }
+  const validPrefix =
+    /^data:image\/(?:jpeg|jpg|png|webp|gif|heic|heif);base64,[A-Za-z0-9+/=]+$/i.test(trimmed) ||
+    /^data:application\/pdf(?:;[^;,]+)*;base64,[A-Za-z0-9+/=]+$/i.test(trimmed);
+  if (!validPrefix) {
+    return {
+      ok: false,
+      error: `${label} must be a valid image (JPG, PNG, WEBP) or PDF document.`,
+    };
+  }
+  if (trimmed.length > MAX_DOC_DATA_URL_CHARS) {
+    return {
+      ok: false,
+      error: `${label} is too large. Please upload a PDF or image smaller than 2 MB.`,
+    };
+  }
+  return { ok: true, value: trimmed };
+}
+
+function mapDriverRow(
+  row: Record<string, unknown>,
+  options: { includeDocuments?: boolean; includeMissingWarning?: boolean } = {}
+): Driver {
   const licenceExpiry = row.licence_expiry ? String(row.licence_expiry) : null;
   const { licence_status, days_to_expiry } = computeLicenceExpiryStatus(licenceExpiry);
-  return {
+  const licenceNumber = row.licence_number ? String(row.licence_number) : null;
+  const ddcNumber = row.ddc_number ? String(row.ddc_number) : null;
+  const retestCertNumber = row.retest_cert_number ? String(row.retest_cert_number) : null;
+  const medicalCertNumber = row.medical_cert_number ? String(row.medical_cert_number) : null;
+
+  const hasLicenceDoc =
+    Number(row.has_licence_document ?? 0) === 1 || Boolean(row.licence_document);
+  const hasDdcDoc = Number(row.has_ddc_document ?? 0) === 1 || Boolean(row.ddc_document);
+  const hasRetestDoc =
+    Number(row.has_retest_document ?? 0) === 1 || Boolean(row.retest_document);
+  const hasMedicalDoc =
+    Number(row.has_medical_document ?? 0) === 1 || Boolean(row.medical_document);
+
+  const driver: Driver = {
     id: Number(row.id),
     full_name: String(row.full_name),
-    licence_number: String(row.licence_number),
+    licence_number: licenceNumber,
     phone: String(row.phone),
     address: String(row.address ?? ''),
     licence_expiry: licenceExpiry,
+    has_licence_document: hasLicenceDoc,
+    ddc_number: ddcNumber,
+    has_ddc_document: hasDdcDoc,
+    retest_cert_number: retestCertNumber,
+    has_retest_document: hasRetestDoc,
+    medical_cert_number: medicalCertNumber,
+    has_medical_document: hasMedicalDoc,
     active: Number(row.active) === 1,
     created_at: String(row.created_at),
     created_by: row.created_by ? Number(row.created_by) : null,
@@ -92,6 +150,19 @@ function mapDriverRow(row: Record<string, unknown>): Driver {
     licence_status,
     days_to_expiry,
   };
+
+  if (options.includeDocuments) {
+    driver.licence_document = row.licence_document ? String(row.licence_document) : null;
+    driver.ddc_document = row.ddc_document ? String(row.ddc_document) : null;
+    driver.retest_document = row.retest_document ? String(row.retest_document) : null;
+    driver.medical_document = row.medical_document ? String(row.medical_document) : null;
+  }
+
+  if (options.includeMissingWarning) {
+    driver.missing_documents = getDriverMissingDocuments(driver);
+  }
+
+  return driver;
 }
 
 const VEHICLE_SELECT_SQL = `
@@ -110,9 +181,28 @@ const VEHICLE_SELECT_SQL = `
   LEFT JOIN trips ot ON ot.vehicle_id = v.id AND ot.status = 'OPEN'
 `;
 
-const DRIVER_SELECT_SQL = `
+const DRIVER_LIST_SELECT_SQL = `
+  SELECT
+    d.id, d.full_name, d.licence_number, d.phone, d.address, d.licence_expiry,
+    d.ddc_number, d.retest_cert_number, d.medical_cert_number,
+    d.active, d.created_at, d.created_by,
+    CASE WHEN d.licence_document IS NOT NULL AND d.licence_document != '' THEN 1 ELSE 0 END AS has_licence_document,
+    CASE WHEN d.ddc_document IS NOT NULL AND d.ddc_document != '' THEN 1 ELSE 0 END AS has_ddc_document,
+    CASE WHEN d.retest_document IS NOT NULL AND d.retest_document != '' THEN 1 ELSE 0 END AS has_retest_document,
+    CASE WHEN d.medical_document IS NOT NULL AND d.medical_document != '' THEN 1 ELSE 0 END AS has_medical_document,
+    ot.id AS open_trip_id,
+    ot.trip_type AS open_trip_type
+  FROM drivers d
+  LEFT JOIN trips ot ON ot.driver_id = d.id AND ot.status = 'OPEN'
+`;
+
+const DRIVER_DETAIL_SELECT_SQL = `
   SELECT
     d.*,
+    CASE WHEN d.licence_document IS NOT NULL AND d.licence_document != '' THEN 1 ELSE 0 END AS has_licence_document,
+    CASE WHEN d.ddc_document IS NOT NULL AND d.ddc_document != '' THEN 1 ELSE 0 END AS has_ddc_document,
+    CASE WHEN d.retest_document IS NOT NULL AND d.retest_document != '' THEN 1 ELSE 0 END AS has_retest_document,
+    CASE WHEN d.medical_document IS NOT NULL AND d.medical_document != '' THEN 1 ELSE 0 END AS has_medical_document,
     ot.id AS open_trip_id,
     ot.trip_type AS open_trip_type
   FROM drivers d
@@ -504,6 +594,9 @@ export function registerDirectoryRoutes(
 
   // ---------------- DRIVERS DIRECTORY ----------------
   app.get('/drivers', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
+    const canSeeMissingWarnings = actor.role === 'ADMIN' || actor.role === 'SUPERVISOR';
+
     const q = (c.req.query('q') || '').trim().toLowerCase();
     const status = (c.req.query('status') || '').trim();
     const expiringOnly = c.req.query('expiring') === '1';
@@ -520,10 +613,10 @@ export function registerDirectoryRoutes(
     }
     if (q) {
       clauses.push(
-        '(LOWER(d.full_name) LIKE ? OR LOWER(d.licence_number) LIKE ? OR LOWER(d.phone) LIKE ?)'
+        "(LOWER(d.full_name) LIKE ? OR LOWER(COALESCE(d.licence_number, '')) LIKE ? OR LOWER(d.phone) LIKE ? OR LOWER(COALESCE(d.ddc_number, '')) LIKE ? OR LOWER(COALESCE(d.retest_cert_number, '')) LIKE ? OR LOWER(COALESCE(d.medical_cert_number, '')) LIKE ?)"
       );
       const like = `%${q}%`;
-      params.push(like, like, like);
+      params.push(like, like, like, like, like, like);
     }
     if (status === 'Available') {
       clauses.push('ot.id IS NULL');
@@ -536,17 +629,25 @@ export function registerDirectoryRoutes(
     const whereSql = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : '';
 
     const { results } = await c.env.DB.prepare(
-      `${DRIVER_SELECT_SQL}
+      `${DRIVER_LIST_SELECT_SQL}
        ${whereSql}
        ORDER BY d.active DESC, d.full_name ASC`
     )
       .bind(...params)
       .all<Record<string, unknown>>();
 
-    const allMapped = results.map(mapDriverRow);
+    const allMapped = results.map((r) =>
+      mapDriverRow(r, {
+        includeDocuments: false,
+        includeMissingWarning: canSeeMissingWarnings,
+      })
+    );
     const expiringCount = allMapped.filter(
       (d) => d.active && (d.licence_status === 'EXPIRING_SOON' || d.licence_status === 'EXPIRED')
     ).length;
+    const missingDocsCount = canSeeMissingWarnings
+      ? allMapped.filter((d) => d.active && (d.missing_documents?.length ?? 0) > 0).length
+      : undefined;
 
     const filtered = expiringOnly
       ? allMapped.filter(
@@ -560,18 +661,21 @@ export function registerDirectoryRoutes(
       items: paginated,
       total: filtered.length,
       expiringCount,
+      missingDocsCount,
       page,
       limit,
     });
   });
 
   app.get('/drivers/:id', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
+    const canSeeMissingWarnings = actor.role === 'ADMIN' || actor.role === 'SUPERVISOR';
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) {
       return c.json({ error: 'Invalid driver ID.' }, 400);
     }
 
-    const row = await c.env.DB.prepare(`${DRIVER_SELECT_SQL} WHERE d.id = ?`)
+    const row = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
       .bind(id)
       .first<Record<string, unknown>>();
     if (!row) {
@@ -596,7 +700,10 @@ export function registerDirectoryRoutes(
       .all<Record<string, unknown>>();
 
     return c.json({
-      driver: mapDriverRow(row),
+      driver: mapDriverRow(row, {
+        includeDocuments: true,
+        includeMissingWarning: canSeeMissingWarnings,
+      }),
       trips,
     });
   });
@@ -610,10 +717,17 @@ export function registerDirectoryRoutes(
       const actor = c.get('user')!;
       let body: {
         full_name?: string;
-        licence_number?: string;
+        licence_number?: string | null;
         phone?: string;
         address?: string;
         licence_expiry?: string | null;
+        licence_document?: string | null;
+        ddc_number?: string | null;
+        ddc_document?: string | null;
+        retest_cert_number?: string | null;
+        retest_document?: string | null;
+        medical_cert_number?: string | null;
+        medical_document?: string | null;
       };
       try {
         body = await c.req.json();
@@ -622,16 +736,24 @@ export function registerDirectoryRoutes(
       }
 
       const fullName = (body.full_name || '').trim();
-      const licenceNumber = (body.licence_number || '').trim().toUpperCase();
+      const rawLicence = body.licence_number ? String(body.licence_number).trim().toUpperCase() : '';
+      const licenceNumber = rawLicence || null;
       const phone = (body.phone || '').trim();
       const address = (body.address || '').trim();
       const licenceExpiry = body.licence_expiry ? String(body.licence_expiry).trim() : null;
+      const ddcNumber = body.ddc_number ? String(body.ddc_number).trim().toUpperCase() || null : null;
+      const retestCertNumber = body.retest_cert_number
+        ? String(body.retest_cert_number).trim().toUpperCase() || null
+        : null;
+      const medicalCertNumber = body.medical_cert_number
+        ? String(body.medical_cert_number).trim().toUpperCase() || null
+        : null;
 
       if (!fullName || fullName.length < 2) {
         return c.json({ error: 'Enter the driver’s full name.' }, 400);
       }
-      if (!licenceNumber || licenceNumber.length < 3) {
-        return c.json({ error: 'Enter the driver’s licence number.' }, 400);
+      if (licenceNumber && licenceNumber.length < 2) {
+        return c.json({ error: 'Licence number must be at least 2 characters when provided.' }, 400);
       }
       if (!phone || phone.length < 5) {
         return c.json({ error: 'Enter a contact phone number for the driver.' }, 400);
@@ -640,30 +762,64 @@ export function registerDirectoryRoutes(
         return c.json({ error: 'Licence expiry date must be in YYYY-MM-DD format.' }, 400);
       }
 
-      const existing = await c.env.DB.prepare(
-        'SELECT id FROM drivers WHERE UPPER(licence_number) = ?'
-      )
-        .bind(licenceNumber)
-        .first<{ id: number }>();
-      if (existing) {
-        return c.json(
-          { error: `A driver with licence number "${licenceNumber}" is already registered.` },
-          409
-        );
+      const licDoc = validateDocumentDataUrl(body.licence_document, "Driver's Licence document");
+      if (!licDoc.ok) return c.json({ error: licDoc.error }, 400);
+      const ddcDoc = validateDocumentDataUrl(body.ddc_document, 'Defensive Driving Certificate');
+      if (!ddcDoc.ok) return c.json({ error: ddcDoc.error }, 400);
+      const retestDoc = validateDocumentDataUrl(body.retest_document, 'Retest Certificate');
+      if (!retestDoc.ok) return c.json({ error: retestDoc.error }, 400);
+      const medDoc = validateDocumentDataUrl(body.medical_document, 'Medical Certificate');
+      if (!medDoc.ok) return c.json({ error: medDoc.error }, 400);
+
+      if (licenceNumber) {
+        const existing = await c.env.DB.prepare(
+          'SELECT id FROM drivers WHERE UPPER(licence_number) = ?'
+        )
+          .bind(licenceNumber)
+          .first<{ id: number }>();
+        if (existing) {
+          return c.json(
+            { error: `A driver with licence number "${licenceNumber}" is already registered.` },
+            409
+          );
+        }
       }
 
       const res = await c.env.DB.prepare(
-        `INSERT INTO drivers (full_name, licence_number, phone, address, licence_expiry, active, created_by)
-         VALUES (?, ?, ?, ?, ?, 1, ?)`
+        `INSERT INTO drivers (
+           full_name, licence_number, phone, address, licence_expiry,
+           licence_document, ddc_number, ddc_document,
+           retest_cert_number, retest_document,
+           medical_cert_number, medical_document,
+           active, created_by
+         )
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
       )
-        .bind(fullName, licenceNumber, phone, address, licenceExpiry, actor.id)
+        .bind(
+          fullName,
+          licenceNumber,
+          phone,
+          address,
+          licenceExpiry,
+          licDoc.value,
+          ddcNumber,
+          ddcDoc.value,
+          retestCertNumber,
+          retestDoc.value,
+          medicalCertNumber,
+          medDoc.value,
+          actor.id
+        )
         .run();
 
       const newId = res.meta.last_row_id;
-      const createdRow = await c.env.DB.prepare(`${DRIVER_SELECT_SQL} WHERE d.id = ?`)
+      const createdRow = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
         .bind(newId)
         .first<Record<string, unknown>>();
-      const created = mapDriverRow(createdRow!);
+      const created = mapDriverRow(createdRow!, {
+        includeDocuments: true,
+        includeMissingWarning: true,
+      });
 
       await recordAudit(c.env.DB, {
         userId: actor.id,
@@ -678,6 +834,13 @@ export function registerDirectoryRoutes(
           phone: created.phone,
           address: created.address,
           licence_expiry: created.licence_expiry,
+          ddc_number: created.ddc_number,
+          retest_cert_number: created.retest_cert_number,
+          medical_cert_number: created.medical_cert_number,
+          has_licence_document: created.has_licence_document,
+          has_ddc_document: created.has_ddc_document,
+          has_retest_document: created.has_retest_document,
+          has_medical_document: created.has_medical_document,
         },
         ip: getClientIp(c),
         userAgent: getUserAgent(c),
@@ -689,7 +852,9 @@ export function registerDirectoryRoutes(
           eventType: 'DRIVER_CREATED',
           priority: created.licence_status === 'EXPIRED' ? 'HIGH' : 'NORMAL',
           title: `Driver added: ${created.full_name}`,
-          body: `${actor.full_name} added driver ${created.full_name} (Licence ${created.licence_number}).`,
+          body: `${actor.full_name} added driver ${created.full_name} (${
+            created.licence_number ? `Licence ${created.licence_number}` : 'No licence recorded yet'
+          }).`,
         },
         { env: c.env }
       );
@@ -710,21 +875,31 @@ export function registerDirectoryRoutes(
         return c.json({ error: 'Invalid driver ID.' }, 400);
       }
 
-      const existingRow = await c.env.DB.prepare(`${DRIVER_SELECT_SQL} WHERE d.id = ?`)
+      const existingRow = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
         .bind(id)
         .first<Record<string, unknown>>();
       if (!existingRow) {
         return c.json({ error: 'Driver not found.' }, 404);
       }
 
-      const oldDriver = mapDriverRow(existingRow);
+      const oldDriver = mapDriverRow(existingRow, {
+        includeDocuments: true,
+        includeMissingWarning: true,
+      });
 
       let body: {
         full_name?: string;
-        licence_number?: string;
+        licence_number?: string | null;
         phone?: string;
         address?: string;
         licence_expiry?: string | null;
+        licence_document?: string | null;
+        ddc_number?: string | null;
+        ddc_document?: string | null;
+        retest_cert_number?: string | null;
+        retest_document?: string | null;
+        medical_cert_number?: string | null;
+        medical_document?: string | null;
         active?: boolean;
       };
       try {
@@ -736,7 +911,9 @@ export function registerDirectoryRoutes(
       const nextName = body.full_name !== undefined ? body.full_name.trim() : oldDriver.full_name;
       const nextLicence =
         body.licence_number !== undefined
-          ? body.licence_number.trim().toUpperCase()
+          ? body.licence_number
+            ? String(body.licence_number).trim().toUpperCase() || null
+            : null
           : oldDriver.licence_number;
       const nextPhone = body.phone !== undefined ? body.phone.trim() : oldDriver.phone;
       const nextAddress = body.address !== undefined ? body.address.trim() : oldDriver.address;
@@ -746,13 +923,31 @@ export function registerDirectoryRoutes(
             ? String(body.licence_expiry).trim()
             : null
           : oldDriver.licence_expiry;
+      const nextDdcNumber =
+        body.ddc_number !== undefined
+          ? body.ddc_number
+            ? String(body.ddc_number).trim().toUpperCase() || null
+            : null
+          : oldDriver.ddc_number;
+      const nextRetestNumber =
+        body.retest_cert_number !== undefined
+          ? body.retest_cert_number
+            ? String(body.retest_cert_number).trim().toUpperCase() || null
+            : null
+          : oldDriver.retest_cert_number;
+      const nextMedicalNumber =
+        body.medical_cert_number !== undefined
+          ? body.medical_cert_number
+            ? String(body.medical_cert_number).trim().toUpperCase() || null
+            : null
+          : oldDriver.medical_cert_number;
       const nextActive = body.active !== undefined ? Boolean(body.active) : oldDriver.active;
 
       if (!nextName || nextName.length < 2) {
         return c.json({ error: 'Enter the driver’s full name.' }, 400);
       }
-      if (!nextLicence || nextLicence.length < 3) {
-        return c.json({ error: 'Enter a valid licence number.' }, 400);
+      if (nextLicence && nextLicence.length < 2) {
+        return c.json({ error: 'Licence number must be at least 2 characters when provided.' }, 400);
       }
       if (!nextPhone || nextPhone.length < 5) {
         return c.json({ error: 'Enter a contact phone number.' }, 400);
@@ -769,7 +964,35 @@ export function registerDirectoryRoutes(
         );
       }
 
-      if (nextLicence !== oldDriver.licence_number) {
+      let nextLicenceDoc = oldDriver.licence_document ?? null;
+      if (body.licence_document !== undefined) {
+        const res = validateDocumentDataUrl(body.licence_document, "Driver's Licence document");
+        if (!res.ok) return c.json({ error: res.error }, 400);
+        nextLicenceDoc = res.value;
+      }
+
+      let nextDdcDoc = oldDriver.ddc_document ?? null;
+      if (body.ddc_document !== undefined) {
+        const res = validateDocumentDataUrl(body.ddc_document, 'Defensive Driving Certificate');
+        if (!res.ok) return c.json({ error: res.error }, 400);
+        nextDdcDoc = res.value;
+      }
+
+      let nextRetestDoc = oldDriver.retest_document ?? null;
+      if (body.retest_document !== undefined) {
+        const res = validateDocumentDataUrl(body.retest_document, 'Retest Certificate');
+        if (!res.ok) return c.json({ error: res.error }, 400);
+        nextRetestDoc = res.value;
+      }
+
+      let nextMedicalDoc = oldDriver.medical_document ?? null;
+      if (body.medical_document !== undefined) {
+        const res = validateDocumentDataUrl(body.medical_document, 'Medical Certificate');
+        if (!res.ok) return c.json({ error: res.error }, 400);
+        nextMedicalDoc = res.value;
+      }
+
+      if (nextLicence && nextLicence !== oldDriver.licence_number) {
         const dup = await c.env.DB.prepare(
           'SELECT id FROM drivers WHERE UPPER(licence_number) = ? AND id != ?'
         )
@@ -785,16 +1008,38 @@ export function registerDirectoryRoutes(
 
       await c.env.DB.prepare(
         `UPDATE drivers
-         SET full_name = ?, licence_number = ?, phone = ?, address = ?, licence_expiry = ?, active = ?
+         SET full_name = ?, licence_number = ?, phone = ?, address = ?, licence_expiry = ?,
+             licence_document = ?, ddc_number = ?, ddc_document = ?,
+             retest_cert_number = ?, retest_document = ?,
+             medical_cert_number = ?, medical_document = ?,
+             active = ?
          WHERE id = ?`
       )
-        .bind(nextName, nextLicence, nextPhone, nextAddress, nextExpiry, nextActive ? 1 : 0, id)
+        .bind(
+          nextName,
+          nextLicence,
+          nextPhone,
+          nextAddress,
+          nextExpiry,
+          nextLicenceDoc,
+          nextDdcNumber,
+          nextDdcDoc,
+          nextRetestNumber,
+          nextRetestDoc,
+          nextMedicalNumber,
+          nextMedicalDoc,
+          nextActive ? 1 : 0,
+          id
+        )
         .run();
 
-      const updatedRow = await c.env.DB.prepare(`${DRIVER_SELECT_SQL} WHERE d.id = ?`)
+      const updatedRow = await c.env.DB.prepare(`${DRIVER_DETAIL_SELECT_SQL} WHERE d.id = ?`)
         .bind(id)
         .first<Record<string, unknown>>();
-      const updated = mapDriverRow(updatedRow!);
+      const updated = mapDriverRow(updatedRow!, {
+        includeDocuments: true,
+        includeMissingWarning: true,
+      });
 
       await recordAudit(c.env.DB, {
         userId: actor.id,
@@ -809,6 +1054,13 @@ export function registerDirectoryRoutes(
           phone: oldDriver.phone,
           address: oldDriver.address,
           licence_expiry: oldDriver.licence_expiry,
+          ddc_number: oldDriver.ddc_number,
+          retest_cert_number: oldDriver.retest_cert_number,
+          medical_cert_number: oldDriver.medical_cert_number,
+          has_licence_document: oldDriver.has_licence_document,
+          has_ddc_document: oldDriver.has_ddc_document,
+          has_retest_document: oldDriver.has_retest_document,
+          has_medical_document: oldDriver.has_medical_document,
           active: oldDriver.active,
         },
         newValue: {
@@ -817,6 +1069,13 @@ export function registerDirectoryRoutes(
           phone: updated.phone,
           address: updated.address,
           licence_expiry: updated.licence_expiry,
+          ddc_number: updated.ddc_number,
+          retest_cert_number: updated.retest_cert_number,
+          medical_cert_number: updated.medical_cert_number,
+          has_licence_document: updated.has_licence_document,
+          has_ddc_document: updated.has_ddc_document,
+          has_retest_document: updated.has_retest_document,
+          has_medical_document: updated.has_medical_document,
           active: updated.active,
         },
         ip: getClientIp(c),
@@ -829,7 +1088,9 @@ export function registerDirectoryRoutes(
           eventType: 'DRIVER_UPDATED',
           priority: 'NORMAL',
           title: `Driver updated: ${updated.full_name}`,
-          body: `${actor.full_name} updated details for driver ${updated.full_name} (${updated.licence_number}).`,
+          body: `${actor.full_name} updated details for driver ${updated.full_name} (${
+            updated.licence_number ?? 'No licence recorded'
+          }).`,
         },
         { env: c.env }
       );

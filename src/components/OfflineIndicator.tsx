@@ -76,11 +76,11 @@ export const OfflineIndicator: React.FC = () => {
         <span>
           {!isOnline
             ? queue.length > 0
-              ? `Offline · ${queue.length} entr${queue.length === 1 ? 'y' : 'ies'} waiting to send`
-              : 'No internet connection. Viewing cached data.'
+              ? `Offline · ${queue.length} record${queue.length === 1 ? '' : 's'} cached locally`
+              : 'Offline mode · Session active, new entries will cache & auto-sync'
             : syncing
-              ? `Sending ${queue.length} queued entr${queue.length === 1 ? 'y' : 'ies'}...`
-              : `${queue.length} entr${queue.length === 1 ? 'y' : 'ies'} waiting to send`}
+              ? `Syncing ${queue.length} offline record${queue.length === 1 ? '' : 's'}...`
+              : `${queue.length} offline record${queue.length === 1 ? '' : 's'} waiting to sync`}
         </span>
       </div>
 
@@ -88,9 +88,11 @@ export const OfflineIndicator: React.FC = () => {
         <button
           type="button"
           onClick={handleManualSync}
-          className="cyan-glow-btn rounded-lg px-3 py-1.5 text-xs font-semibold whitespace-nowrap"
+          aria-label="Sync queued records now"
+          className="cyan-glow-btn inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full"
+          title="Sync now"
         >
-          Sync Now
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
         </button>
       )}
     </div>

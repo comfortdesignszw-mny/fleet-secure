@@ -9,7 +9,7 @@ import {
   HelpCircle,
   Lock,
 } from 'lucide-react';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, getCachedSettings } from '../lib/api';
 import { enqueueOfflineEntry, isLikelyNetworkError } from '../lib/offlineQueue';
 import {
   DEFAULT_SETTINGS,
@@ -107,9 +107,11 @@ export const TripInForm: React.FC<TripInFormProps> = ({
     let active = true;
     setLoading(true);
     const openCacheKey = `fleet_secure_cache_open_trips_${tripType}`;
+    const cachedSettingsFallback = getCachedSettings() ?? DEFAULT_SETTINGS;
+    setSettings(cachedSettingsFallback);
     Promise.all([
       api.listTrips({ status: 'OPEN', trip_type: tripType, limit: 100 }),
-      api.getSettings().catch(() => ({ settings: DEFAULT_SETTINGS })),
+      api.getSettings().catch(() => ({ settings: cachedSettingsFallback })),
     ])
       .then(([tRes, sRes]) => {
         if (!active) return;
@@ -127,6 +129,14 @@ export const TripInForm: React.FC<TripInFormProps> = ({
           const cached = localStorage.getItem(openCacheKey);
           if (cached) {
             setOpenTrips(JSON.parse(cached) as TripSummary[]);
+            return;
+          }
+          const homeOngoing = localStorage.getItem('fleet_secure_cache_home_ongoing');
+          if (homeOngoing) {
+            const parsed = (JSON.parse(homeOngoing) as TripSummary[]).filter(
+              (t) => t.trip_type === tripType
+            );
+            setOpenTrips(parsed);
             return;
           }
         } catch {

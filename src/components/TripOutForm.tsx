@@ -21,6 +21,8 @@ import {
   VEHICLE_CONDITIONS,
   VEHICLE_TYPES,
   VEHICLE_TYPE_TO_CLASS,
+  formatDriverMissingDocsWarning,
+  getDriverMissingDocuments,
   type CreateTripOutPayload,
   type Driver,
   type FuelLevel,
@@ -33,6 +35,7 @@ import {
   type Vehicle,
   type VehicleCondition,
 } from '../shared/types';
+import { DocumentUploadField } from './DocumentUploadField';
 import { FuelGaugePicker } from './FuelGaugePicker';
 
 interface TripOutFormProps {
@@ -110,6 +113,13 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
   const [newDriverPhone, setNewDriverPhone] = useState('');
   const [newDriverAddress, setNewDriverAddress] = useState('');
   const [newDriverExpiry, setNewDriverExpiry] = useState('');
+  const [newDriverLicenceDoc, setNewDriverLicenceDoc] = useState<string | null>(null);
+  const [newDriverDdcNumber, setNewDriverDdcNumber] = useState('');
+  const [newDriverDdcDoc, setNewDriverDdcDoc] = useState<string | null>(null);
+  const [newDriverRetestNumber, setNewDriverRetestNumber] = useState('');
+  const [newDriverRetestDoc, setNewDriverRetestDoc] = useState<string | null>(null);
+  const [newDriverMedicalNumber, setNewDriverMedicalNumber] = useState('');
+  const [newDriverMedicalDoc, setNewDriverMedicalDoc] = useState<string | null>(null);
   const [newDriverSaveToDir, setNewDriverSaveToDir] = useState(true);
   const [newDriverErr, setNewDriverErr] = useState<string | null>(null);
 
@@ -153,7 +163,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
         if (d.fuelOut) setFuelOut(d.fuelOut);
         if (d.daysHired) setDaysHired(d.daysHired);
         if (d.expectedReturnDate) setExpectedReturnDate(d.expectedReturnDate);
-        if (d.checklistBy) setChecklistBy(d.checklistBy);
+        if (d.checklistBy !== undefined) setChecklistBy(d.checklistBy);
         if (d.notes) setNotes(d.notes);
       }
     } catch {
@@ -288,6 +298,8 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     return { available, unavailable };
   }, [vehicles, vehicleSearch]);
 
+  const canSeeMissingDocWarnings = user.role === 'ADMIN' || user.role === 'SUPERVISOR';
+
   const filteredDrivers = useMemo(() => {
     const q = driverSearch.trim().toLowerCase();
     const list = !q
@@ -295,7 +307,8 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       : drivers.filter(
           (d) =>
             d.full_name.toLowerCase().includes(q) ||
-            d.licence_number.toLowerCase().includes(q) ||
+            (d.licence_number ?? '').toLowerCase().includes(q) ||
+            (d.ddc_number ?? '').toLowerCase().includes(q) ||
             d.phone.toLowerCase().includes(q)
         );
     const available = list.filter((d) => d.derived_status === 'Available');
@@ -325,10 +338,17 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     setNewDriverErr(null);
     if (prefill) {
       setNewDriverFullName(prefill.full_name);
-      setNewDriverLicence(prefill.licence_number);
+      setNewDriverLicence(prefill.licence_number ?? '');
       setNewDriverPhone(prefill.phone);
       setNewDriverAddress(prefill.address ?? '');
       setNewDriverExpiry(prefill.licence_expiry ?? '');
+      setNewDriverLicenceDoc(prefill.licence_document ?? null);
+      setNewDriverDdcNumber(prefill.ddc_number ?? '');
+      setNewDriverDdcDoc(prefill.ddc_document ?? null);
+      setNewDriverRetestNumber(prefill.retest_cert_number ?? '');
+      setNewDriverRetestDoc(prefill.retest_document ?? null);
+      setNewDriverMedicalNumber(prefill.medical_cert_number ?? '');
+      setNewDriverMedicalDoc(prefill.medical_document ?? null);
       setNewDriverSaveToDir(prefill.save_to_directory);
     } else {
       setNewDriverFullName('');
@@ -336,6 +356,13 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       setNewDriverPhone('');
       setNewDriverAddress('');
       setNewDriverExpiry('');
+      setNewDriverLicenceDoc(null);
+      setNewDriverDdcNumber('');
+      setNewDriverDdcDoc(null);
+      setNewDriverRetestNumber('');
+      setNewDriverRetestDoc(null);
+      setNewDriverMedicalNumber('');
+      setNewDriverMedicalDoc(null);
       setNewDriverSaveToDir(true);
     }
     setShowNewDriverForm(true);
@@ -344,17 +371,20 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
   const applyNewDriver = () => {
     setNewDriverErr(null);
     const fullName = newDriverFullName.trim();
-    const licenceNumber = newDriverLicence.trim().toUpperCase();
+    const licenceNumber = newDriverLicence.trim().toUpperCase() || null;
     const phone = newDriverPhone.trim();
     const address = newDriverAddress.trim();
     const licenceExpiry = newDriverExpiry.trim() || null;
+    const ddcNumber = newDriverDdcNumber.trim().toUpperCase() || null;
+    const retestCertNumber = newDriverRetestNumber.trim().toUpperCase() || null;
+    const medicalCertNumber = newDriverMedicalNumber.trim().toUpperCase() || null;
 
     if (fullName.length < 2) {
       setNewDriverErr('Enter the driver’s full name (at least 2 characters).');
       return;
     }
-    if (licenceNumber.length < 3) {
-      setNewDriverErr('Enter the driver’s licence number (at least 3 characters).');
+    if (licenceNumber && licenceNumber.length < 2) {
+      setNewDriverErr('Licence number must be at least 2 characters when provided.');
       return;
     }
     if (phone.length < 5) {
@@ -365,14 +395,16 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       setNewDriverErr('Licence expiry date must be in YYYY-MM-DD format.');
       return;
     }
-    const existing = drivers.find(
-      (d) => d.licence_number.toUpperCase() === licenceNumber
-    );
-    if (existing) {
-      setNewDriverErr(
-        `Licence "${licenceNumber}" already belongs to ${existing.full_name} in your directory. Select them from the driver list instead.`
+    if (licenceNumber) {
+      const existing = drivers.find(
+        (d) => d.licence_number && d.licence_number.toUpperCase() === licenceNumber
       );
-      return;
+      if (existing) {
+        setNewDriverErr(
+          `Licence "${licenceNumber}" already belongs to ${existing.full_name} in your directory. Select them from the driver list instead.`
+        );
+        return;
+      }
     }
 
     setPendingDriver({
@@ -381,6 +413,13 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       phone,
       address,
       licence_expiry: licenceExpiry,
+      licence_document: newDriverLicenceDoc,
+      ddc_number: ddcNumber,
+      ddc_document: newDriverDdcDoc,
+      retest_cert_number: retestCertNumber,
+      retest_document: newDriverRetestDoc,
+      medical_cert_number: medicalCertNumber,
+      medical_document: newDriverMedicalDoc,
       save_to_directory: newDriverSaveToDir,
     });
     setDriverId('');
@@ -522,7 +561,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
         return;
       }
     }
-    if (!checklistBy.trim()) {
+    if (tripType === 'HIRE' && !checklistBy.trim()) {
       setError('Enter who completed the opening checklist.');
       return;
     }
@@ -737,7 +776,9 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
             )}
             <div className="py-3 flex justify-between gap-4">
               <dt className="text-slate-500">Opening checklist by</dt>
-              <dd className="font-semibold text-blue-950 text-right">{checklistBy.trim()}</dd>
+              <dd className="font-semibold text-blue-950 text-right">
+                {checklistBy.trim() || <span className="font-normal text-slate-500">Optional (not recorded)</span>}
+              </dd>
             </div>
             {notes.trim() && (
               <div className="py-3 flex justify-between gap-4">
@@ -816,7 +857,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
             <li>Pick a vehicle from the Vehicles Directory or tap <strong>+ New Vehicle</strong> (choose whether to save to directory or use once).</li>
             <li>Read the exact odometer on the dashboard and enter <strong>Mileage when leaving</strong>.</li>
             <li>Look at the fuel needle and tap the matching level on the <strong>Fuel gauge</strong>.</li>
-            <li>Enter who did the vehicle checklist, tap <strong>Review &amp; Save</strong>, and confirm.</li>
+            <li>Enter who did the vehicle checklist{tripType === 'ERRAND' ? ' (optional for errands)' : ''}, tap <strong>Review &amp; Save</strong>, and confirm.</li>
           </ol>
         )}
       </div>
@@ -908,18 +949,6 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                     </div>
                     <div>
                       <label className="block text-xs font-semibold text-blue-950">
-                        Licence Number *
-                      </label>
-                      <input
-                        type="text"
-                        value={newDriverLicence}
-                        onChange={(e) => setNewDriverLicence(e.target.value.toUpperCase())}
-                        placeholder="e.g. ZW-55412"
-                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 font-mono text-sm text-blue-950"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-blue-950">
                         Phone Number *
                       </label>
                       <input
@@ -928,6 +957,18 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                         onChange={(e) => setNewDriverPhone(e.target.value)}
                         placeholder="+263 77..."
                         className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-blue-950">
+                        Licence Number (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newDriverLicence}
+                        onChange={(e) => setNewDriverLicence(e.target.value.toUpperCase())}
+                        placeholder="e.g. ZW-55412"
+                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 font-mono text-sm text-blue-950"
                       />
                     </div>
                     <div>
@@ -941,7 +982,43 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                         className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
                       />
                     </div>
-                    <div className="sm:col-span-2">
+                    <div>
+                      <label className="block text-xs font-semibold text-blue-950">
+                        DDC Number (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newDriverDdcNumber}
+                        onChange={(e) => setNewDriverDdcNumber(e.target.value.toUpperCase())}
+                        placeholder="Defensive Driving Cert No."
+                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 font-mono text-sm text-blue-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-blue-950">
+                        Retest Cert Number (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newDriverRetestNumber}
+                        onChange={(e) => setNewDriverRetestNumber(e.target.value.toUpperCase())}
+                        placeholder="Retest Certificate No."
+                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 font-mono text-sm text-blue-950"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-blue-950">
+                        Medical Cert Number (optional)
+                      </label>
+                      <input
+                        type="text"
+                        value={newDriverMedicalNumber}
+                        onChange={(e) => setNewDriverMedicalNumber(e.target.value.toUpperCase())}
+                        placeholder="Medical Certificate No."
+                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 font-mono text-sm text-blue-950"
+                      />
+                    </div>
+                    <div>
                       <label className="block text-xs font-semibold text-blue-950">
                         Address (optional)
                       </label>
@@ -953,6 +1030,29 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                         className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
                       />
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <DocumentUploadField
+                      label="Driving Licence Copy"
+                      value={newDriverLicenceDoc}
+                      onChange={setNewDriverLicenceDoc}
+                    />
+                    <DocumentUploadField
+                      label="Defensive Driving Certificate (DDC)"
+                      value={newDriverDdcDoc}
+                      onChange={setNewDriverDdcDoc}
+                    />
+                    <DocumentUploadField
+                      label="Retest Certificate Copy"
+                      value={newDriverRetestDoc}
+                      onChange={setNewDriverRetestDoc}
+                    />
+                    <DocumentUploadField
+                      label="Medical Certificate Copy"
+                      value={newDriverMedicalDoc}
+                      onChange={setNewDriverMedicalDoc}
+                    />
                   </div>
 
                   {/* Save to directory vs Use once prompt */}
@@ -1036,7 +1136,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                     <div>
                       <span className="font-bold text-blue-950">{pendingDriver.full_name}</span>
                       <span className="ml-2 font-mono text-xs text-slate-600">
-                        {pendingDriver.licence_number}
+                        {pendingDriver.licence_number ?? 'No licence recorded'}
                       </span>
                     </div>
                     <span
@@ -1061,6 +1161,21 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                       Pick from directory instead
                     </button>
                   </div>
+                  {canSeeMissingDocWarnings &&
+                    getDriverMissingDocuments(pendingDriver).length > 0 && (
+                      <div className="flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-2.5 text-xs text-amber-900">
+                        <AlertTriangle
+                          className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {formatDriverMissingDocsWarning(
+                            pendingDriver.full_name,
+                            getDriverMissingDocuments(pendingDriver)
+                          )}
+                        </span>
+                      </div>
+                    )}
                 </div>
               ) : (
                 <>
@@ -1088,14 +1203,14 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                     </option>
                     {filteredDrivers.available.map((d) => (
                       <option key={d.id} value={d.id}>
-                        {d.full_name} ({d.licence_number}) · {d.phone}
+                        {d.full_name} ({d.licence_number ?? 'No licence'}) · {d.phone}
                       </option>
                     ))}
                     {filteredDrivers.unavailable.length > 0 && (
                       <optgroup label="Currently Out on Trip (Unavailable)">
                         {filteredDrivers.unavailable.map((d) => (
                           <option key={d.id} value={d.id} disabled>
-                            {d.full_name} ({d.licence_number}) — {d.derived_status}
+                            {d.full_name} ({d.licence_number ?? 'No licence'}) — {d.derived_status}
                           </option>
                         ))}
                       </optgroup>
@@ -1107,7 +1222,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                         <strong className="text-blue-950">{selectedDriver.full_name}</strong>
                       </span>
                       <span className="font-mono text-slate-600">
-                        Licence: {selectedDriver.licence_number}
+                        Licence: {selectedDriver.licence_number ?? 'Not recorded'}
                       </span>
                       <span>Phone: {selectedDriver.phone}</span>
                     </div>
@@ -1124,6 +1239,24 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                           {selectedDriver.licence_status === 'EXPIRED'
                             ? `Warning: ${selectedDriver.full_name}'s driving licence expired on ${selectedDriver.licence_expiry}.`
                             : `Notice: ${selectedDriver.full_name}'s licence expires in ${selectedDriver.days_to_expiry} days (${selectedDriver.licence_expiry}).`}
+                        </span>
+                      </div>
+                    )}
+                  {canSeeMissingDocWarnings &&
+                    selectedDriver &&
+                    (selectedDriver.missing_documents ?? getDriverMissingDocuments(selectedDriver)).length >
+                      0 && (
+                      <div className="flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs sm:text-sm text-amber-900">
+                        <AlertTriangle
+                          className="mt-0.5 h-4 w-4 shrink-0 text-amber-700"
+                          aria-hidden="true"
+                        />
+                        <span>
+                          {formatDriverMissingDocsWarning(
+                            selectedDriver.full_name,
+                            selectedDriver.missing_documents ??
+                              getDriverMissingDocuments(selectedDriver)
+                          )}
                         </span>
                       </div>
                     )}
@@ -1555,14 +1688,17 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
             {/* Checklist by */}
             <div>
               <label htmlFor="out-checklist" className="block text-sm font-semibold text-blue-950">
-                Opening checklist done by
+                {tripType === 'ERRAND'
+                  ? 'Opening checklist done by (optional)'
+                  : 'Opening checklist done by'}
               </label>
               <input
                 id="out-checklist"
                 type="text"
-                required
+                required={tripType === 'HIRE'}
                 value={checklistBy}
                 onChange={(e) => setChecklistBy(e.target.value)}
+                placeholder={tripType === 'ERRAND' ? 'Optional for errands' : 'Name of person checking'}
                 className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
               />
             </div>
