@@ -82,11 +82,18 @@ test('Dashboard is readable by all logged-in roles and aggregates fleet, mileage
   const supCookie = await loginAndChangePin(app, env, 'sup_dash', '2222', '2288');
 
   // Create 4 vehicles: v1 (Economy), v2 (Heavy), v3 (Economy - will be on errand), v4 (Grounded)
-  const createVehicle = async (reg: string, type: string, make: string, cond: string, km: number) => {
+  const createVehicle = async (
+    reg: string,
+    type: string,
+    make: string,
+    cond: string,
+    km: number,
+    cookie = supCookie
+  ) => {
     const res = await app.fetch(
       new Request('http://localhost/api/vehicles', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', Cookie: supCookie },
+        headers: { 'Content-Type': 'application/json', Cookie: cookie },
         body: JSON.stringify({
           reg_number: reg,
           vehicle_type: type,
@@ -104,7 +111,7 @@ test('Dashboard is readable by all logged-in roles and aggregates fleet, mileage
   const v1 = await createVehicle('ADA 1001', 'Sedan', 'Toyota Corolla', 'Good', 10000);
   const v2 = await createVehicle('ADA 1002', 'Double Cab', 'Toyota Hilux', 'Very Good', 50000);
   const v3 = await createVehicle('ADA 1003', 'Hatchback', 'Honda Fit', 'Good', 20000);
-  await createVehicle('ADA 1004', 'Sedan', 'Nissan Almera', 'Grounded', 40000);
+  await createVehicle('ADA 1004', 'Sedan', 'Nissan Almera', 'Grounded', 40000, adminCookie);
 
   // Create 2 drivers
   const createDriver = async (name: string, lic: string) => {

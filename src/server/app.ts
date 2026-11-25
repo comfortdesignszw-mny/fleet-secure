@@ -15,6 +15,7 @@ import { registerDashboardRoutes } from './dashboard';
 import { registerDirectoryRoutes } from './directories';
 import { ensureInitialSeed, seedPreviewDemoData, type DemoSeedCounts } from './seed';
 import { notifyManagersInApp, registerNotificationRoutes } from './notifications';
+import { registerMaintenanceRoutes } from './maintenance';
 import { registerReportRoutes } from './reports';
 import { registerTripRoutes } from './trips';
 import type { AppEnv, D1DatabaseLike } from './types';
@@ -785,7 +786,10 @@ export function createApp() {
       return c.json({ error: 'Enter the staff member’s full name.' }, 400);
     }
     if (!role || !ROLES.includes(role)) {
-      return c.json({ error: 'Choose a valid role: Driver, Supervisor, or Admin.' }, 400);
+      return c.json(
+        { error: 'Choose a valid role: Driver, Supervisor, Fleet Manager / Supervisor, or Admin.' },
+        400
+      );
     }
     if (!pin || pin.length < 4) {
       return c.json({ error: 'Set an initial PIN or password of at least 4 characters.' }, 400);
@@ -808,8 +812,8 @@ export function createApp() {
 
     const newId = res.meta.last_row_id;
 
-    // Auto-create default IN_APP notification recipient for Supervisors and Admins
-    if (role === 'SUPERVISOR' || role === 'ADMIN') {
+    // Auto-create default IN_APP notification recipient for Supervisors, Fleet Managers, and Admins
+    if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {
       await c.env.DB.prepare(
         `INSERT INTO notification_recipients (user_id, channel, destination, active)
          VALUES (?, 'IN_APP', '', 1)`
@@ -909,6 +913,25 @@ export function createApp() {
       await c.env.DB.prepare(`UPDATE users SET full_name = ?, role = ?, active = ? WHERE id = ?`)
         .bind(nextFullName, nextRole, nextActive ? 1 : 0, targetId)
         .run();
+    }
+
+    if (
+      nextActive &&
+      (nextRole === 'SUPERVISOR' || nextRole === 'FLEET_MANAGER' || nextRole === 'ADMIN')
+    ) {
+      const hasInApp = await c.env.DB.prepare(
+        `SELECT id FROM notification_recipients WHERE user_id = ? AND channel = 'IN_APP'`
+      )
+        .bind(targetId)
+        .first<{ id: number }>();
+      if (!hasInApp) {
+        await c.env.DB.prepare(
+          `INSERT INTO notification_recipients (user_id, channel, destination, active)
+           VALUES (?, 'IN_APP', '', 1)`
+        )
+          .bind(targetId)
+          .run();
+      }
     }
 
     const updatedRow = await c.env.DB.prepare(
@@ -1054,6 +1077,14 @@ export function createApp() {
   });
 
   registerReportRoutes(app, {
+    requireAuth,
+    requirePinChanged,
+    requireRole,
+    getClientIp,
+    getUserAgent,
+  });
+
+  registerMaintenanceRoutes(app, {
     requireAuth,
     requirePinChanged,
     requireRole,

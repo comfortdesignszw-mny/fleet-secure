@@ -6,6 +6,7 @@ export const en = {
     home: 'Home',
     trips: 'Trips',
     vehicles: 'Vehicles',
+    maintenance: 'Fleet Maintenance',
     drivers: 'Drivers',
     dashboard: 'Dashboard',
     notifications: 'Alerts',

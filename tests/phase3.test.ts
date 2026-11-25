@@ -139,7 +139,7 @@ test('Trip Out/In validation, UNRECORDED_GAP, FUEL_MISMATCH, immutability, and c
   const vGroundedRes = await app.fetch(
     new Request('http://localhost/api/vehicles', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Cookie: supCookie },
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
       body: JSON.stringify({
         reg_number: 'AFX 5002',
         vehicle_type: 'Sedan',

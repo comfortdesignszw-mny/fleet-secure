@@ -663,7 +663,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
               >
                 <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
                 <div>
-                  <div className="font-semibold">Missing Critical Driver Documents</div>
+                  <div className="font-semibold">Missing Driver&apos;s Licence Details</div>
                   <p className="mt-0.5">
                     {formatDriverMissingDocsWarning(detailDriver.full_name, detailMissingDocs)}
                   </p>
@@ -877,8 +877,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
           <div className="flex items-start gap-3 text-amber-950">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-700" aria-hidden="true" />
             <div className="text-sm">
-              <span className="font-semibold">Incomplete Driver Documents:</span>{' '}
-              {missingDocsCount} active driver{missingDocsCount === 1 ? ' is' : 's are'} missing one or more critical documents (Licence, DDC, Retest, or Medical Certificate).
+              <span className="font-semibold">Missing Driver&apos;s Licence Details:</span>{' '}
+              {missingDocsCount} active driver{missingDocsCount === 1 ? ' is' : 's are'} missing Driver&apos;s Licence details (number or uploaded copy). DDC, Retest, and Medical Certificates remain optional.
             </div>
           </div>
           <button

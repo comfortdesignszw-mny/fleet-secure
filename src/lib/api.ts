@@ -5,10 +5,15 @@ import type {
   CreateTripOutPayload,
   DashboardData,
   Driver,
+  FleetMaintenanceOverview,
   FuelLevel,
+  GarageVisit,
+  GarageVisitStatus,
+  MaintenanceRecordType,
   NotificationChannel,
   NotificationRecipient,
   NotificationRecord,
+  PartsPurchaseRequest,
   ReportPreviewData,
   ReportType,
   ExportFormat,
@@ -20,6 +25,8 @@ import type {
   UserPublic,
   Vehicle,
   VehicleCondition,
+  VehicleMaintenanceLog,
+  VehicleServiceDueSummary,
 } from '../shared/types';
 
 export class ApiError extends Error {
@@ -356,6 +363,7 @@ export const api = {
     make_model: string;
     condition: VehicleCondition;
     last_known_mileage: number;
+    next_service_due_km?: number | null;
   }) =>
     request<{ vehicle: Vehicle }>('/vehicles', {
       method: 'POST',
@@ -370,6 +378,7 @@ export const api = {
       make_model?: string;
       condition?: VehicleCondition;
       last_known_mileage?: number;
+      next_service_due_km?: number | null;
       active?: boolean;
     }
   ) =>
@@ -632,6 +641,111 @@ export const api = {
     if (params.to) qs.set('to', params.to);
     return `/api/reports/export?${qs.toString()}`;
   },
+
+  getFleetMaintenanceOverview: (vehicleId?: number) => {
+    const suffix = vehicleId ? `?vehicle_id=${vehicleId}` : '';
+    return request<FleetMaintenanceOverview>(`/fleet-maintenance/overview${suffix}`);
+  },
+
+  createMaintenanceLog: (payload: {
+    vehicle_id: number;
+    record_type: MaintenanceRecordType;
+    service_date: string;
+    odometer_km: number;
+    summary: string;
+    details?: string;
+    workshop_name?: string;
+    cost?: number | null;
+    next_service_due_km?: number | null;
+  }) =>
+    request<{ log: VehicleMaintenanceLog }>('/fleet-maintenance/logs', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateVehicleNextService: (vehicleId: number, next_service_due_km: number | null) =>
+    request<{ vehicle: Vehicle; serviceDue: VehicleServiceDueSummary }>(
+      `/fleet-maintenance/next-service/${vehicleId}`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ next_service_due_km }),
+      }
+    ),
+
+  createGarageVisit: (payload: {
+    vehicle_id: number;
+    visit_date: string;
+    workshop_name: string;
+    reason: string;
+    odometer_km: number;
+    estimated_cost?: number | null;
+    notes?: string;
+  }) =>
+    request<{ visit: GarageVisit }>('/fleet-maintenance/garage-visits', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  decideGarageVisit: (
+    id: number,
+    payload: { decision: 'APPROVED' | 'REJECTED'; approval_notes?: string }
+  ) =>
+    request<{ visit: GarageVisit }>(`/fleet-maintenance/garage-visits/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateGarageVisitStatus: (
+    id: number,
+    payload: { visit_status: GarageVisitStatus; actual_cost?: number | null; notes?: string }
+  ) =>
+    request<{ visit: GarageVisit }>(`/fleet-maintenance/garage-visits/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  createPartsRequest: (payload: {
+    request_date: string;
+    vehicle_id?: number;
+    new_vehicle?: {
+      reg_number: string;
+      vehicle_type: string;
+      make_model: string;
+      condition?: VehicleCondition;
+      last_known_mileage: number;
+    };
+    parts_required: string;
+    is_full_service_kit: boolean;
+    date_required: string;
+    estimated_amount: number;
+    quotation_file?: string | null;
+    quotation_filename?: string | null;
+  }) =>
+    request<{ request: PartsPurchaseRequest; createdVehicle?: Vehicle }>(
+      '/fleet-maintenance/parts-requests',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  getPartsRequestQuotation: (id: number) =>
+    request<{ quotation_file: string; quotation_filename: string }>(
+      `/fleet-maintenance/parts-requests/${id}/quotation`
+    ),
+
+  decidePartsRequest: (
+    id: number,
+    payload: { decision: 'APPROVED' | 'REJECTED' | 'PURCHASED'; admin_notes?: string }
+  ) =>
+    request<{ request: PartsPurchaseRequest }>(`/fleet-maintenance/parts-requests/${id}/decision`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  markPartsRequestPurchased: (id: number) =>
+    request<{ request: PartsPurchaseRequest }>(`/fleet-maintenance/parts-requests/${id}/status`, {
+      method: 'PATCH',
+      body: JSON.stringify({ status: 'PURCHASED' }),
+    }),
 };
-
-

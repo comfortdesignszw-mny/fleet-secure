@@ -4,6 +4,7 @@ import type {
   AuditLogEntry,
   DashboardData,
   Driver,
+  FleetMaintenanceOverview,
   NotificationRecipient,
   NotificationRecord,
   ReportPreviewData,
@@ -37,6 +38,7 @@ export const CACHE_KEYS = {
   tripDetail: (id: number) => `trip_detail_${id}`,
   vehiclesAll: 'vehicles_all',
   vehicleDetail: (id: number) => `vehicle_detail_${id}`,
+  fleetMaintenance: 'fleet_maintenance_overview',
   driversAll: 'drivers_all',
   driverDetail: (id: number) => `driver_detail_${id}`,
   auditLogs: 'audit_logs_recent',
@@ -232,7 +234,28 @@ export async function warmOfflineCaches(
         })
         .catch(() => undefined),
       api.getSettings().catch(() => undefined),
+      api
+        .getFleetMaintenanceOverview()
+        .then((overview) => {
+          writeCachedEntry<FleetMaintenanceOverview>(CACHE_KEYS.fleetMaintenance, overview);
+        })
+        .catch(() => undefined),
     ];
+
+    if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {
+      coreTasks.push(
+        api
+          .listNotifications({ limit: 50 })
+          .then((res) => {
+            writeCachedEntry<CachedNotificationsPayload>(CACHE_KEYS.notifications, {
+              items: res.items,
+              total: res.total,
+              unreadCount: res.unreadCount,
+            });
+          })
+          .catch(() => undefined)
+      );
+    }
 
     if (role === 'SUPERVISOR' || role === 'ADMIN') {
       coreTasks.push(
@@ -242,16 +265,6 @@ export async function warmOfflineCaches(
             writeCachedEntry<CachedAuditPayload>(CACHE_KEYS.auditLogs, {
               items: res.items,
               total: res.total,
-            });
-          })
-          .catch(() => undefined),
-        api
-          .listNotifications({ limit: 50 })
-          .then((res) => {
-            writeCachedEntry<CachedNotificationsPayload>(CACHE_KEYS.notifications, {
-              items: res.items,
-              total: res.total,
-              unreadCount: res.unreadCount,
             });
           })
           .catch(() => undefined)

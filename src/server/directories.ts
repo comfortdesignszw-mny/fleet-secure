@@ -59,7 +59,7 @@ export function computeLicenceExpiryStatus(
   return { licence_status: 'OK', days_to_expiry: days };
 }
 
-function mapVehicleRow(row: Record<string, unknown>): Vehicle {
+export function mapVehicleRow(row: Record<string, unknown>): Vehicle {
   return {
     id: Number(row.id),
     reg_number: String(row.reg_number),
@@ -68,6 +68,10 @@ function mapVehicleRow(row: Record<string, unknown>): Vehicle {
     make_model: String(row.make_model),
     condition: row.condition as VehicleCondition,
     last_known_mileage: Number(row.last_known_mileage),
+    next_service_due_km:
+      row.next_service_due_km !== null && row.next_service_due_km !== undefined
+        ? Number(row.next_service_due_km)
+        : null,
     active: Number(row.active) === 1,
     created_at: String(row.created_at),
     derived_status: toDerivedStatus(row.open_trip_type),
@@ -203,7 +207,7 @@ function mapDriverRow(
   return driver;
 }
 
-const VEHICLE_SELECT_SQL = `
+export const VEHICLE_SELECT_SQL = `
   SELECT
     v.*,
     ot.id AS open_trip_id,
@@ -373,15 +377,17 @@ export function registerDirectoryRoutes(
     '/vehicles',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const actor = c.get('user')!;
+      const isFleetAuth = actor.role === 'ADMIN' || actor.role === 'FLEET_MANAGER';
       let body: {
         reg_number?: string;
         vehicle_type?: string;
         make_model?: string;
         condition?: VehicleCondition;
         last_known_mileage?: number;
+        next_service_due_km?: number | null;
       };
       try {
         body = await c.req.json();
@@ -394,6 +400,12 @@ export function registerDirectoryRoutes(
       const makeModel = (body.make_model || '').trim();
       const condition = body.condition || 'Good';
       const mileage = Number(body.last_known_mileage ?? 0);
+      const nextServiceDueKm =
+        body.next_service_due_km !== undefined &&
+        body.next_service_due_km !== null &&
+        String(body.next_service_due_km).trim() !== ''
+          ? Number(body.next_service_due_km)
+          : null;
 
       if (!regNumber || regNumber.length < 3) {
         return c.json({ error: 'Enter the vehicle registration number (at least 3 characters).' }, 400);
@@ -408,8 +420,31 @@ export function registerDirectoryRoutes(
       if (!VEHICLE_CONDITIONS.includes(condition)) {
         return c.json({ error: 'Choose a valid vehicle condition.' }, 400);
       }
+      if (!isFleetAuth && condition === 'Grounded') {
+        return c.json(
+          {
+            error:
+              'Only the Fleet Manager / Supervisor or Administrator can mark a vehicle as Grounded.',
+          },
+          403
+        );
+      }
       if (!Number.isInteger(mileage) || mileage < 0) {
         return c.json({ error: 'Starting mileage must be a whole number 0 or greater.' }, 400);
+      }
+      if (nextServiceDueKm !== null) {
+        if (!isFleetAuth) {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can set Next Service Due mileage.',
+            },
+            403
+          );
+        }
+        if (!Number.isInteger(nextServiceDueKm) || nextServiceDueKm < 0) {
+          return c.json({ error: 'Next service due mileage must be a whole number 0 or greater.' }, 400);
+        }
       }
 
       const existing = await c.env.DB.prepare('SELECT id FROM vehicles WHERE reg_number = ?')
@@ -420,10 +455,10 @@ export function registerDirectoryRoutes(
       }
 
       const res = await c.env.DB.prepare(
-        `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, condition, last_known_mileage, active)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`
+        `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, condition, last_known_mileage, next_service_due_km, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
       )
-        .bind(regNumber, vehicleType, vehicleClass, makeModel, condition, mileage)
+        .bind(regNumber, vehicleType, vehicleClass, makeModel, condition, mileage, nextServiceDueKm)
         .run();
 
       const newId = res.meta.last_row_id;
@@ -446,6 +481,7 @@ export function registerDirectoryRoutes(
           make_model: created.make_model,
           condition: created.condition,
           last_known_mileage: created.last_known_mileage,
+          next_service_due_km: created.next_service_due_km ?? null,
         },
         ip: getClientIp(c),
         userAgent: getUserAgent(c),
@@ -459,7 +495,7 @@ export function registerDirectoryRoutes(
           title: `Vehicle added: ${created.reg_number}`,
           body: `${actor.full_name} added ${created.make_model} (${created.vehicle_type} · ${created.vehicle_class}) with mileage ${created.last_known_mileage.toLocaleString()} km.`,
         },
-        { env: c.env }
+        { env: c.env, roles: ['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER'] }
       );
 
       return c.json({ vehicle: created }, 201);
@@ -470,9 +506,10 @@ export function registerDirectoryRoutes(
     '/vehicles/:id',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const actor = c.get('user')!;
+      const isFleetAuth = actor.role === 'ADMIN' || actor.role === 'FLEET_MANAGER';
       const id = Number(c.req.param('id'));
       if (!Number.isInteger(id) || id <= 0) {
         return c.json({ error: 'Invalid vehicle ID.' }, 400);
@@ -493,6 +530,7 @@ export function registerDirectoryRoutes(
         make_model?: string;
         condition?: VehicleCondition;
         last_known_mileage?: number;
+        next_service_due_km?: number | null;
         active?: boolean;
       };
       try {
@@ -517,6 +555,12 @@ export function registerDirectoryRoutes(
         body.last_known_mileage !== undefined
           ? Number(body.last_known_mileage)
           : oldVehicle.last_known_mileage;
+      const nextServiceDueKm =
+        body.next_service_due_km !== undefined
+          ? body.next_service_due_km !== null && String(body.next_service_due_km).trim() !== ''
+            ? Number(body.next_service_due_km)
+            : null
+          : (oldVehicle.next_service_due_km ?? null);
 
       if (!nextReg || nextReg.length < 3) {
         return c.json({ error: 'Registration number must be at least 3 characters.' }, 400);
@@ -532,6 +576,67 @@ export function registerDirectoryRoutes(
       }
       if (!Number.isInteger(nextMileage) || nextMileage < 0) {
         return c.json({ error: 'Mileage must be a whole number 0 or greater.' }, 400);
+      }
+      if (nextServiceDueKm !== null && (!Number.isInteger(nextServiceDueKm) || nextServiceDueKm < 0)) {
+        return c.json({ error: 'Next service due mileage must be a whole number 0 or greater.' }, 400);
+      }
+
+      if (!isFleetAuth) {
+        if (nextCondition === 'Grounded' && oldVehicle.condition !== 'Grounded') {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can mark a vehicle as Grounded.',
+            },
+            403
+          );
+        }
+        if (oldVehicle.condition === 'Grounded' && nextCondition !== 'Grounded') {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can authorise returning a Grounded vehicle to active service.',
+            },
+            403
+          );
+        }
+        if (!oldVehicle.active && nextActive) {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can authorise returning an inactive vehicle to active service.',
+            },
+            403
+          );
+        }
+        if (
+          oldVehicle.condition !== nextCondition &&
+          (nextCondition === 'Good' || nextCondition === 'Very Good') &&
+          (oldVehicle.condition === 'Needs Little Attention' ||
+            oldVehicle.condition === 'Bad Condition' ||
+            oldVehicle.condition === 'Accident' ||
+            oldVehicle.condition === 'Grounded')
+        ) {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can clear a vehicle back to Good or Very Good condition.',
+            },
+            403
+          );
+        }
+        if (
+          body.next_service_due_km !== undefined &&
+          nextServiceDueKm !== (oldVehicle.next_service_due_km ?? null)
+        ) {
+          return c.json(
+            {
+              error:
+                'Only the Fleet Manager / Supervisor or Administrator can update Next Service Due mileage.',
+            },
+            403
+          );
+        }
       }
 
       if (!nextActive && oldVehicle.open_trip_id) {
@@ -556,7 +661,7 @@ export function registerDirectoryRoutes(
 
       await c.env.DB.prepare(
         `UPDATE vehicles
-         SET reg_number = ?, vehicle_type = ?, vehicle_class = ?, make_model = ?, condition = ?, last_known_mileage = ?, active = ?
+         SET reg_number = ?, vehicle_type = ?, vehicle_class = ?, make_model = ?, condition = ?, last_known_mileage = ?, next_service_due_km = ?, active = ?
          WHERE id = ?`
       )
         .bind(
@@ -566,6 +671,7 @@ export function registerDirectoryRoutes(
           nextMakeModel,
           nextCondition,
           nextMileage,
+          nextServiceDueKm,
           nextActive ? 1 : 0,
           id
         )
@@ -593,6 +699,7 @@ export function registerDirectoryRoutes(
           make_model: oldVehicle.make_model,
           condition: oldVehicle.condition,
           last_known_mileage: oldVehicle.last_known_mileage,
+          next_service_due_km: oldVehicle.next_service_due_km ?? null,
           active: oldVehicle.active,
         },
         newValue: {
@@ -602,6 +709,7 @@ export function registerDirectoryRoutes(
           make_model: updated.make_model,
           condition: updated.condition,
           last_known_mileage: updated.last_known_mileage,
+          next_service_due_km: updated.next_service_due_km ?? null,
           active: updated.active,
         },
         ip: getClientIp(c),
@@ -609,7 +717,10 @@ export function registerDirectoryRoutes(
       });
 
       const highPriority =
-        conditionChanged && (updated.condition === 'Accident' || updated.condition === 'Grounded');
+        conditionChanged &&
+        (updated.condition === 'Accident' ||
+          updated.condition === 'Grounded' ||
+          oldVehicle.condition === 'Grounded');
 
       await notifyManagersInApp(
         c.env.DB,
@@ -623,7 +734,7 @@ export function registerDirectoryRoutes(
             ? `${actor.full_name} changed ${updated.reg_number} (${updated.make_model}) from "${oldVehicle.condition}" to "${updated.condition}".`
             : `${actor.full_name} updated details for ${updated.reg_number} (${updated.make_model}).`,
         },
-        { env: c.env }
+        { env: c.env, roles: ['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER'] }
       );
 
       return c.json({ vehicle: updated });

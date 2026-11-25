@@ -43,6 +43,7 @@ interface VehiclesViewProps {
   userRole: Role;
   initialVehicleId?: number | null;
   onOpenTrip?: (tripId: number) => void;
+  onOpenMaintenance?: () => void;
 }
 
 const LEGACY_CACHE_KEY = 'fleet_secure_cache_vehicles';
@@ -84,12 +85,38 @@ function ConditionText({ condition }: { condition: VehicleCondition }) {
   return <span className="text-sm font-medium text-blue-900">{condition}</span>;
 }
 
+function canSupervisorPickCondition(
+  oldCondition: VehicleCondition | null,
+  candidate: VehicleCondition,
+  isFleetAuth: boolean
+): boolean {
+  if (isFleetAuth) return true;
+  if (candidate === 'Grounded' && oldCondition !== 'Grounded') return false;
+  if (oldCondition === 'Grounded' && candidate !== 'Grounded') return false;
+  if (
+    oldCondition &&
+    oldCondition !== candidate &&
+    (candidate === 'Good' || candidate === 'Very Good') &&
+    (oldCondition === 'Needs Little Attention' ||
+      oldCondition === 'Bad Condition' ||
+      oldCondition === 'Accident' ||
+      oldCondition === 'Grounded')
+  ) {
+    return false;
+  }
+  return true;
+}
+
 export const VehiclesView: React.FC<VehiclesViewProps> = ({
   userRole,
   initialVehicleId = null,
   onOpenTrip,
+  onOpenMaintenance,
 }) => {
-  const canManage = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
+  const canManage =
+    userRole === 'SUPERVISOR' || userRole === 'FLEET_MANAGER' || userRole === 'ADMIN';
+  const canAuthorizeGrounded = userRole === 'FLEET_MANAGER' || userRole === 'ADMIN';
+  const canMaintain = userRole === 'FLEET_MANAGER' || userRole === 'ADMIN';
 
   const [items, setItems] = useState<Vehicle[]>([]);
   const [total, setTotal] = useState(0);
@@ -140,6 +167,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
   const [formMakeModel, setFormMakeModel] = useState('');
   const [formCondition, setFormCondition] = useState<VehicleCondition>('Good');
   const [formMileage, setFormMileage] = useState('0');
+  const [formNextServiceDueKm, setFormNextServiceDueKm] = useState('');
   const [formActive, setFormActive] = useState(true);
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
@@ -323,6 +351,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     setFormMakeModel('');
     setFormCondition('Good');
     setFormMileage('0');
+    setFormNextServiceDueKm('');
     setFormActive(true);
     setFormError(null);
     setShowForm(true);
@@ -335,6 +364,11 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     setFormMakeModel(v.make_model);
     setFormCondition(v.condition);
     setFormMileage(String(v.last_known_mileage));
+    setFormNextServiceDueKm(
+      v.next_service_due_km !== null && v.next_service_due_km !== undefined
+        ? String(v.next_service_due_km)
+        : ''
+    );
     setFormActive(v.active);
     setFormError(null);
     setShowForm(true);
@@ -352,6 +386,14 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
         return;
       }
 
+      const nextDueVal =
+        formNextServiceDueKm.trim() === '' ? null : Number(formNextServiceDueKm);
+      if (nextDueVal !== null && (!Number.isInteger(nextDueVal) || nextDueVal < 0)) {
+        setFormError('Next service due mileage must be a whole number 0 or greater.');
+        setSaving(false);
+        return;
+      }
+
       if (editingVehicle) {
         const res = await api.updateVehicle(editingVehicle.id, {
           reg_number: formReg.trim(),
@@ -359,6 +401,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           make_model: formMakeModel.trim(),
           condition: formCondition,
           last_known_mileage: mileageNum,
+          ...(canMaintain ? { next_service_due_km: nextDueVal } : {}),
           active: formActive,
         });
         setShowForm(false);
@@ -374,6 +417,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           make_model: formMakeModel.trim(),
           condition: formCondition,
           last_known_mileage: mileageNum,
+          ...(canMaintain && nextDueVal !== null ? { next_service_due_km: nextDueVal } : {}),
         };
         try {
           const res = await api.createVehicle(payload);
@@ -465,16 +509,28 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
             <span>Back to Vehicles</span>
           </button>
 
-          {canManage && detailVehicle && (
-            <button
-              type="button"
-              onClick={() => openEditModal(detailVehicle)}
-              className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
-            >
-              <Edit3 className="h-4 w-4" aria-hidden="true" />
-              <span>Edit Vehicle</span>
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {onOpenMaintenance && (
+              <button
+                type="button"
+                onClick={onOpenMaintenance}
+                className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
+              >
+                <Wrench className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+                <span>Fleet Maintenance</span>
+              </button>
+            )}
+            {canManage && detailVehicle && (
+              <button
+                type="button"
+                onClick={() => openEditModal(detailVehicle)}
+                className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
+              >
+                <Edit3 className="h-4 w-4" aria-hidden="true" />
+                <span>Edit Vehicle</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {usingCache && (
@@ -528,11 +584,20 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 </div>
               </div>
 
-              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-blue-100 pt-5 sm:grid-cols-3">
+              <div className="mt-6 grid grid-cols-1 gap-4 border-t border-blue-100 pt-5 sm:grid-cols-4">
                 <div>
                   <div className="text-xs font-medium text-slate-500">Current Condition</div>
                   <div className="mt-1">
                     <ConditionText condition={detailVehicle.condition} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-xs font-medium text-slate-500">Next Service Due</div>
+                  <div className="mt-1 text-base font-semibold font-mono tabular-nums text-blue-950">
+                    {detailVehicle.next_service_due_km !== null &&
+                    detailVehicle.next_service_due_km !== undefined
+                      ? `${detailVehicle.next_service_due_km.toLocaleString()} km`
+                      : 'Not set'}
                   </div>
                 </div>
                 <div>
@@ -558,23 +623,36 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                     Update Vehicle Condition (Logged Automatically)
                   </label>
                   <p className="mt-0.5 text-xs text-slate-500">
-                    Vehicles marked &ldquo;Accident&rdquo; or &ldquo;Grounded&rdquo; cannot be booked out on trips.
+                    Vehicles marked &ldquo;Accident&rdquo; or &ldquo;Grounded&rdquo; cannot be booked out on trips. Only Fleet Manager / Supervisor or Admin can mark a vehicle Grounded or restore a Grounded vehicle back to Good / Very Good.
                   </p>
                   <div className="mt-2.5 flex flex-wrap gap-2">
-                    {VEHICLE_CONDITIONS.map((cond) => (
-                      <button
-                        key={cond}
-                        type="button"
-                        onClick={() => handleQuickCondition(detailVehicle, cond)}
-                        className={`min-h-[44px] rounded-xl border px-3.5 text-sm font-medium transition-all ${
-                          detailVehicle.condition === cond
-                            ? 'cyan-glow-active'
-                            : 'cyan-glow-outline border-blue-200 bg-white text-blue-900'
-                        }`}
-                      >
-                        {cond}
-                      </button>
-                    ))}
+                    {VEHICLE_CONDITIONS.map((cond) => {
+                      const allowed = canSupervisorPickCondition(
+                        detailVehicle.condition,
+                        cond,
+                        canAuthorizeGrounded
+                      );
+                      return (
+                        <button
+                          key={cond}
+                          type="button"
+                          disabled={!allowed}
+                          title={
+                            !allowed
+                              ? 'Fleet Manager / Supervisor or Admin authorization required'
+                              : undefined
+                          }
+                          onClick={() => handleQuickCondition(detailVehicle, cond)}
+                          className={`min-h-[44px] rounded-xl border px-3.5 text-sm font-medium transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                            detailVehicle.condition === cond
+                              ? 'cyan-glow-active'
+                              : 'cyan-glow-outline border-blue-200 bg-white text-blue-900'
+                          }`}
+                        >
+                          {cond}
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
               )}
@@ -1047,11 +1125,19 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   onChange={(e) => setFormCondition(e.target.value as VehicleCondition)}
                   className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
                 >
-                  {VEHICLE_CONDITIONS.map((cond) => (
-                    <option key={cond} value={cond}>
-                      {cond}
-                    </option>
-                  ))}
+                  {VEHICLE_CONDITIONS.map((cond) => {
+                    const allowed = canSupervisorPickCondition(
+                      editingVehicle?.condition ?? null,
+                      cond,
+                      canAuthorizeGrounded
+                    );
+                    return (
+                      <option key={cond} value={cond} disabled={!allowed}>
+                        {cond}
+                        {!allowed ? ' (Fleet Manager / Admin only)' : ''}
+                      </option>
+                    );
+                  })}
                 </select>
               </div>
 
@@ -1071,20 +1157,41 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 />
               </div>
 
+              {canMaintain && (
+                <div>
+                  <label htmlFor="v-next-due" className="block text-sm font-semibold text-blue-950">
+                    Next Service Due (km, optional)
+                  </label>
+                  <input
+                    id="v-next-due"
+                    type="number"
+                    min={0}
+                    step="1"
+                    value={formNextServiceDueKm}
+                    onChange={(e) => setFormNextServiceDueKm(e.target.value)}
+                    placeholder="e.g. 135000"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono tabular-nums text-base text-blue-950"
+                  />
+                </div>
+              )}
+
               {editingVehicle && (
                 <div className="flex items-center justify-between rounded-xl border border-blue-200 p-3.5 bg-blue-50/30">
                   <div>
                     <div className="text-sm font-semibold text-blue-950">Vehicle Active</div>
                     <div className="text-xs text-slate-500">
-                      Uncheck to retire a vehicle without deleting its history
+                      {!editingVehicle.active && !canAuthorizeGrounded
+                        ? 'Fleet Manager or Admin authorization required to reactivate'
+                        : 'Uncheck to retire a vehicle without deleting its history'}
                     </div>
                   </div>
                   <input
                     type="checkbox"
                     checked={formActive}
+                    disabled={!editingVehicle.active && !canAuthorizeGrounded}
                     onChange={(e) => setFormActive(e.target.checked)}
                     aria-label="Vehicle active"
-                    className="h-6 w-6 rounded border-blue-300 text-cyan-600 accent-cyan-600"
+                    className="h-6 w-6 rounded border-blue-300 text-cyan-600 accent-cyan-600 disabled:opacity-40"
                   />
                 </div>
               )}

@@ -53,9 +53,9 @@ const SLIDES_BY_ROLE: Record<Role, SlideItem[]> = {
   ],
   SUPERVISOR: [
     {
-      title: 'Yard Oversight & Directories',
-      body: 'You can record trips like a Driver, plus add or update Vehicles, set vehicle conditions (including Grounded or Accident), and manage Driver licence records.',
-      tip: 'Marking a vehicle "Grounded" or "Accident" blocks anyone from booking it out.',
+      title: 'Yard Oversight & Drivers Directory',
+      body: 'You can record trips like a Driver, add or update Drivers, and log routine vehicle condition notes. Grounding a vehicle or returning a Grounded vehicle requires Fleet Manager or Admin authorization.',
+      tip: 'Vehicles marked "Grounded" or "Accident" cannot be booked out on trips.',
       icon: ClipboardList,
     },
     {
@@ -77,10 +77,36 @@ const SLIDES_BY_ROLE: Record<Role, SlideItem[]> = {
       icon: CheckCircle2,
     },
   ],
+  FLEET_MANAGER: [
+    {
+      title: 'Vehicle Directory & Condition Control',
+      body: 'You have full control over the Vehicles Directory. Only Fleet Managers and Admins can mark a vehicle Grounded, restore a Grounded vehicle to active service, or clear vehicles back to Good / Very Good condition.',
+      tip: 'Drivers, Staff Accounts, and Settings remain read-only or Admin-managed.',
+      icon: ClipboardList,
+    },
+    {
+      title: 'Mechanical & Service History + Next Service km',
+      body: 'Open Fleet Maintenance to log mechanical repairs and full services, and track Next Service Due odometer readings across every vehicle.',
+      tip: 'Vehicles within 1,000 km of service automatically highlight as Due Soon.',
+      icon: AlertTriangle,
+    },
+    {
+      title: 'Garage Visits & Parts Purchases',
+      body: 'Schedule Garage Visits and submit Parts & Service Kits purchase requests (selecting from the Fleet Database or adding a new vehicle with quotation attachment) for Admin authorization.',
+      tip: 'Admins receive an alert right away and approve or authorize from Fleet Maintenance.',
+      icon: ShieldCheck,
+    },
+    {
+      title: 'Live Fleet Alerts',
+      body: 'Receive vehicle status, maintenance, and Admin authorization updates in your Alerts inbox and device notifications.',
+      tip: 'Open Help anytime to replay this guide.',
+      icon: CheckCircle2,
+    },
+  ],
   ADMIN: [
     {
       title: 'Staff Accounts & Roles',
-      body: 'Use Settings -> Staff Accounts & Roles to create Driver, Supervisor, or Admin logins, disable accounts, or reset forgotten PINs.',
+      body: 'Use Settings -> Staff Accounts & Roles to create Driver, Supervisor, Fleet Manager / Supervisor, or Admin logins, disable accounts, or reset forgotten PINs.',
       tip: 'New or reset accounts are forced to choose their own private PIN on first sign-in.',
       icon: SlidersHorizontal,
     },

@@ -1,10 +1,16 @@
-export type Role = 'DRIVER' | 'SUPERVISOR' | 'ADMIN';
+export type Role = 'DRIVER' | 'SUPERVISOR' | 'FLEET_MANAGER' | 'ADMIN';
 
-export const ROLES: readonly Role[] = ['DRIVER', 'SUPERVISOR', 'ADMIN'] as const;
+export const ROLES: readonly Role[] = [
+  'DRIVER',
+  'SUPERVISOR',
+  'FLEET_MANAGER',
+  'ADMIN',
+] as const;
 
 export const ROLE_LABELS: Record<Role, string> = {
   DRIVER: 'Driver',
   SUPERVISOR: 'Supervisor (Loss Control)',
+  FLEET_MANAGER: 'Fleet Manager / Supervisor',
   ADMIN: 'Admin',
 };
 
@@ -141,6 +147,7 @@ export interface Vehicle {
   make_model: string;
   condition: VehicleCondition;
   last_known_mileage: number;
+  next_service_due_km?: number | null;
   active: boolean;
   created_at: string;
   derived_status: DerivedStatus;
@@ -444,6 +451,111 @@ export function normalizeDriverLicenceNumber(raw: unknown): string | null {
   return trimmed;
 }
 
+export type MaintenanceRecordType = 'MECHANICAL' | 'SERVICE';
+
+export interface VehicleMaintenanceLog {
+  id: number;
+  vehicle_id: number;
+  reg_number: string;
+  make_model: string;
+  record_type: MaintenanceRecordType;
+  service_date: string;
+  odometer_km: number;
+  summary: string;
+  details: string;
+  workshop_name: string;
+  cost: number | null;
+  next_service_due_km: number | null;
+  created_by: number | null;
+  created_by_name?: string;
+  created_at: string;
+}
+
+export type GarageApprovalStatus = 'PENDING_APPROVAL' | 'APPROVED' | 'REJECTED';
+export type GarageVisitStatus = 'SCHEDULED' | 'IN_GARAGE' | 'COMPLETED' | 'CANCELLED';
+
+export interface GarageVisit {
+  id: number;
+  vehicle_id: number;
+  reg_number: string;
+  make_model: string;
+  visit_date: string;
+  workshop_name: string;
+  reason: string;
+  odometer_km: number;
+  estimated_cost: number | null;
+  actual_cost: number | null;
+  approval_status: GarageApprovalStatus;
+  visit_status: GarageVisitStatus;
+  notes: string;
+  requested_by: number | null;
+  requested_by_name?: string;
+  approved_by: number | null;
+  approved_by_name?: string;
+  approved_at: string | null;
+  approval_notes: string;
+  created_at: string;
+}
+
+export type PartsPurchaseStatus =
+  | 'PENDING_ADMIN_AUTHORIZATION'
+  | 'APPROVED'
+  | 'REJECTED'
+  | 'PURCHASED';
+
+export interface PartsPurchaseRequest {
+  id: number;
+  request_date: string;
+  vehicle_id: number;
+  reg_number: string;
+  make_model: string;
+  parts_required: string;
+  is_full_service_kit: boolean;
+  date_required: string;
+  estimated_amount: number;
+  quotation_file?: string | null;
+  quotation_filename: string | null;
+  has_quotation_file: boolean;
+  status: PartsPurchaseStatus;
+  admin_notes: string;
+  requested_by: number | null;
+  requested_by_name?: string;
+  authorized_by: number | null;
+  authorized_by_name?: string;
+  authorized_at: string | null;
+  created_at: string;
+}
+
+export type NextServiceStatus = 'UNSET' | 'OK' | 'DUE_SOON' | 'OVERDUE';
+
+export interface VehicleServiceDueSummary {
+  vehicle_id: number;
+  reg_number: string;
+  make_model: string;
+  vehicle_type: string;
+  condition: VehicleCondition;
+  last_known_mileage: number;
+  next_service_due_km: number | null;
+  remaining_km: number | null;
+  service_due_status: NextServiceStatus;
+  active: boolean;
+}
+
+export interface FleetMaintenanceOverview {
+  maintenanceLogs: VehicleMaintenanceLog[];
+  garageVisits: GarageVisit[];
+  partsRequests: PartsPurchaseRequest[];
+  serviceDues: VehicleServiceDueSummary[];
+  summary: {
+    totalLogs: number;
+    pendingGarageApprovals: number;
+    inGarageCount: number;
+    pendingPartsAuthorizations: number;
+    serviceDueSoonOrOverdueCount: number;
+    groundedVehiclesCount: number;
+  };
+}
+
 export function getDriverMissingDocuments(driver: {
   licence_number?: string | null;
   licence_document?: string | null;
@@ -460,6 +572,7 @@ export function getDriverMissingDocuments(driver: {
 }): string[] {
   const missing: string[] = [];
 
+  // DDC, Retest, and Medical Certificates are optional — only warn if the Driver's Licence itself is incomplete.
   const normalizedLicence = normalizeDriverLicenceNumber(driver.licence_number);
   const hasLicenceNum = Boolean(normalizedLicence);
   const hasLicenceDoc = Boolean(driver.has_licence_document || driver.licence_document);
@@ -471,36 +584,6 @@ export function getDriverMissingDocuments(driver: {
     missing.push("Driver's Licence Copy (PDF/Image)");
   }
 
-  const hasDdcNum = Boolean(driver.ddc_number && driver.ddc_number.trim());
-  const hasDdcDoc = Boolean(driver.has_ddc_document || driver.ddc_document);
-  if (!hasDdcNum && !hasDdcDoc) {
-    missing.push('Defensive Driving Certificate (DDC Number & Copy)');
-  } else if (!hasDdcNum) {
-    missing.push('Defensive Driving Certificate (DDC) Number');
-  } else if (!hasDdcDoc) {
-    missing.push('Defensive Driving Certificate (DDC) Copy');
-  }
-
-  const hasRetestNum = Boolean(driver.retest_cert_number && driver.retest_cert_number.trim());
-  const hasRetestDoc = Boolean(driver.has_retest_document || driver.retest_document);
-  if (!hasRetestNum && !hasRetestDoc) {
-    missing.push('Retest Certificate (Number & Copy)');
-  } else if (!hasRetestNum) {
-    missing.push('Retest Certificate Number');
-  } else if (!hasRetestDoc) {
-    missing.push('Retest Certificate Copy');
-  }
-
-  const hasMedNum = Boolean(driver.medical_cert_number && driver.medical_cert_number.trim());
-  const hasMedDoc = Boolean(driver.has_medical_document || driver.medical_document);
-  if (!hasMedNum && !hasMedDoc) {
-    missing.push('Medical Certificate (Number & Copy)');
-  } else if (!hasMedNum) {
-    missing.push('Medical Certificate Number');
-  } else if (!hasMedDoc) {
-    missing.push('Medical Certificate Copy');
-  }
-
   return missing;
 }
 
@@ -508,5 +591,5 @@ export function formatDriverMissingDocsWarning(
   driverName: string,
   missingDocuments: string[]
 ): string {
-  return `Driver ${driverName}'s details are missing a critical document(s): ${missingDocuments.join(', ')}.`;
+  return `Driver ${driverName}'s details are missing Driver's Licence information: ${missingDocuments.join(', ')}.`;
 }

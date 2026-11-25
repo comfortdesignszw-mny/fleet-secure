@@ -23,6 +23,7 @@ export interface ManagerNotificationInput {
 export interface DispatchOptions {
   env?: AppEnv;
   waitUntil?: (promise: Promise<unknown>) => void;
+  roles?: Role[];
 }
 
 const VALID_CHANNELS: readonly NotificationChannel[] = ['IN_APP', 'EMAIL', 'WHATSAPP', 'PUSH'];
@@ -83,9 +84,12 @@ export async function sendEmailNotification(params: {
 async function dispatchExternalChannels(
   db: D1DatabaseLike,
   input: ManagerNotificationInput,
-  env?: AppEnv
+  env?: AppEnv,
+  roles: Role[] = ['ADMIN', 'SUPERVISOR']
 ): Promise<void> {
   try {
+    const targetRoles = roles.length > 0 ? roles : (['ADMIN', 'SUPERVISOR'] as Role[]);
+    const rolePlaceholders = targetRoles.map(() => '?').join(', ');
     const { results: recipients } = await db
       .prepare(
         `SELECT nr.channel, nr.destination
@@ -93,10 +97,11 @@ async function dispatchExternalChannels(
          JOIN users u ON u.id = nr.user_id
          WHERE nr.active = 1
            AND u.active = 1
-           AND u.role IN ('ADMIN', 'SUPERVISOR')
+           AND u.role IN (${rolePlaceholders})
            AND nr.channel IN ('EMAIL', 'WHATSAPP')
            AND TRIM(nr.destination) != ''`
       )
+      .bind(...targetRoles)
       .all<{ channel: NotificationChannel; destination: string }>();
 
     const prefix = input.priority === 'HIGH' ? '[HIGH PRIORITY] ' : '';
@@ -123,7 +128,7 @@ async function dispatchExternalChannels(
 }
 
 /**
- * Queues in-app notifications for every active Admin and Supervisor recipient,
+ * Queues in-app notifications for every active recipient in target roles (defaults to Admin + Supervisor),
  * and fires configured external Email/WhatsApp channels non-blockingly.
  * Never throws so directory/trip transactions cannot be blocked by delivery failures.
  */
@@ -133,15 +138,19 @@ export async function notifyManagersInApp(
   options?: DispatchOptions
 ): Promise<void> {
   try {
+    const targetRoles: Role[] =
+      options?.roles && options.roles.length > 0 ? options.roles : ['ADMIN', 'SUPERVISOR'];
+    const rolePlaceholders = targetRoles.map(() => '?').join(', ');
     const { results } = await db
       .prepare(
         `SELECT DISTINCT u.id
          FROM users u
          LEFT JOIN notification_recipients nr ON nr.user_id = u.id AND nr.channel = 'IN_APP'
          WHERE u.active = 1
-           AND u.role IN ('ADMIN', 'SUPERVISOR')
+           AND u.role IN (${rolePlaceholders})
            AND (nr.id IS NULL OR nr.active = 1)`
       )
+      .bind(...targetRoles)
       .all<{ id: number }>();
 
     for (const row of results) {
@@ -161,7 +170,7 @@ export async function notifyManagersInApp(
         .run();
     }
 
-    const externalWork = dispatchExternalChannels(db, input, options?.env);
+    const externalWork = dispatchExternalChannels(db, input, options?.env, targetRoles);
     if (options?.waitUntil) {
       options.waitUntil(externalWork);
     } else {
@@ -392,18 +401,20 @@ export function registerNotificationRoutes(
 ) {
   const { requireAuth, requirePinChanged, requireRole, getClientIp, getUserAgent } = deps;
 
-  // ---------------- INBOX (SUPERVISOR / ADMIN) ----------------
+  // ---------------- INBOX (SUPERVISOR / FLEET_MANAGER / ADMIN) ----------------
   app.get(
     '/notifications/unread-count',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
-      await checkAndNotifyOverdueHires(c.env.DB, {
-        env: c.env,
-        waitUntil: getWaitUntil(c),
-      });
+      if (user.role === 'ADMIN' || user.role === 'SUPERVISOR') {
+        await checkAndNotifyOverdueHires(c.env.DB, {
+          env: c.env,
+          waitUntil: getWaitUntil(c),
+        });
+      }
 
       const counts = await c.env.DB.prepare(
         `SELECT
@@ -436,13 +447,15 @@ export function registerNotificationRoutes(
     '/notifications',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
-      await checkAndNotifyOverdueHires(c.env.DB, {
-        env: c.env,
-        waitUntil: getWaitUntil(c),
-      });
+      if (user.role === 'ADMIN' || user.role === 'SUPERVISOR') {
+        await checkAndNotifyOverdueHires(c.env.DB, {
+          env: c.env,
+          waitUntil: getWaitUntil(c),
+        });
+      }
 
       const unreadOnly = c.req.query('unreadOnly') === '1';
       const priority = (c.req.query('priority') || '').trim();
@@ -495,7 +508,7 @@ export function registerNotificationRoutes(
     '/notifications/read-all',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
       const nowIso = new Date().toISOString();
@@ -513,7 +526,7 @@ export function registerNotificationRoutes(
     '/notifications/:id/read',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
       const id = Number(c.req.param('id'));
@@ -576,7 +589,7 @@ export function registerNotificationRoutes(
       const { results: managerRows } = await c.env.DB.prepare(
         `SELECT id, username, full_name, role
          FROM users
-         WHERE active = 1 AND role IN ('SUPERVISOR', 'ADMIN')
+         WHERE active = 1 AND role IN ('SUPERVISOR', 'FLEET_MANAGER', 'ADMIN')
          ORDER BY full_name ASC`
       ).all<{ id: number; username: string; full_name: string; role: Role }>();
 
@@ -645,9 +658,16 @@ export function registerNotificationRoutes(
       if (!targetUser || targetUser.active !== 1) {
         return c.json({ error: 'Selected user account is inactive or missing.' }, 404);
       }
-      if (targetUser.role !== 'SUPERVISOR' && targetUser.role !== 'ADMIN') {
+      if (
+        targetUser.role !== 'SUPERVISOR' &&
+        targetUser.role !== 'FLEET_MANAGER' &&
+        targetUser.role !== 'ADMIN'
+      ) {
         return c.json(
-          { error: 'Only Supervisors and Administrators can receive management alerts.' },
+          {
+            error:
+              'Only Supervisors, Fleet Managers, and Administrators can receive management alerts.',
+          },
           400
         );
       }

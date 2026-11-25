@@ -80,7 +80,7 @@ const FAQS = [
   },
   {
     q: 'Why is a vehicle missing from the Hire Out dropdown?',
-    a: 'Only active vehicles that are currently parked in the yard AND in roadworthy condition appear. If a vehicle is currently out on another trip, or marked "Accident" or "Grounded" by a Supervisor, it cannot leave until returned or cleared.',
+    a: 'Only active vehicles that are currently parked in the yard AND in roadworthy condition appear. If a vehicle is currently out on another trip, marked "Accident", or marked "Grounded" (authorized only by the Fleet Manager / Supervisor or Administrator), it cannot leave until returned or cleared back to active condition.',
   },
   {
     q: 'What do the red or amber Trip Flags mean?',

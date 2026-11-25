@@ -171,12 +171,12 @@ test('Vehicles and Drivers CRUD, auto class mapping, derived status, and RBAC', 
   const hiluxData = (await createHilux.json()) as { vehicle: Vehicle };
   assert.equal(hiluxData.vehicle.vehicle_class, 'HEAVY');
 
-  // 3. Supervisor updates condition -> logs VEHICLE_CONDITION_CHANGED + notification
+  // 3. Supervisor updates condition -> logs VEHICLE_CONDITION_CHANGED + HIGH notification
   const condPatch = await app.fetch(
     new Request(`http://localhost/api/vehicles/${hiluxData.vehicle.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Cookie: supCookie },
-      body: JSON.stringify({ condition: 'Grounded' }),
+      body: JSON.stringify({ condition: 'Accident' }),
     }),
     env
   );

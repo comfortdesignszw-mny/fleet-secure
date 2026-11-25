@@ -16,6 +16,7 @@ import {
   SlidersHorizontal,
   Trash2,
   WifiOff,
+  Wrench,
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
@@ -52,6 +53,7 @@ export type NavSection =
   | 'home'
   | 'trips'
   | 'vehicles'
+  | 'maintenance'
   | 'drivers'
   | 'dashboard'
   | 'notifications'
@@ -868,29 +870,69 @@ export const HomeView: React.FC<HomeViewProps> = ({
         )}
       </section>
 
-      {(user.role === 'SUPERVISOR' || user.role === 'ADMIN') && (
+      {(user.role === 'FLEET_MANAGER' || user.role === 'SUPERVISOR' || user.role === 'ADMIN') && (
         <section aria-labelledby="admin-tools-heading">
           <h2 id="admin-tools-heading" className="text-base font-semibold text-blue-950">
-            Supervisor &amp; Admin Quick Access
+            Management Quick Access
           </h2>
           <div className="mt-3 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <button
               type="button"
-              onClick={() => onNavigate('audit')}
+              onClick={() => onNavigate('maintenance')}
               className="cyan-glow-card group flex min-h-[76px] items-center gap-3.5 rounded-2xl border border-blue-200/80 bg-white p-5 text-left"
             >
               <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-cyan-600 group-hover:bg-cyan-500 group-hover:text-white transition-colors">
-                <ShieldCheck className="h-6 w-6" aria-hidden="true" />
+                <Wrench className="h-6 w-6" aria-hidden="true" />
               </div>
               <div>
                 <div className="text-base font-semibold text-blue-950 group-hover:text-blue-700">
-                  Audit Log &amp; Integrity Check
+                  Fleet Maintenance Dashboard
                 </div>
                 <div className="text-sm text-slate-600">
-                  Inspect permanent logs and verify the SHA-256 hash chain
+                  {user.role === 'FLEET_MANAGER' || user.role === 'ADMIN'
+                    ? 'Mechanical/service history, garage visits, parts kits & service dues'
+                    : 'View service dues, garage visits, and parts requests (read-only)'}
                 </div>
               </div>
             </button>
+
+            <button
+              type="button"
+              onClick={() => onNavigate('vehicles')}
+              className="cyan-glow-card group flex min-h-[76px] items-center gap-3.5 rounded-2xl border border-blue-200/80 bg-white p-5 text-left"
+            >
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-blue-700 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                <Car className="h-6 w-6" aria-hidden="true" />
+              </div>
+              <div>
+                <div className="text-base font-semibold text-blue-950 group-hover:text-blue-700">
+                  Vehicles Directory
+                </div>
+                <div className="text-sm text-slate-600">
+                  Manage vehicle condition, Grounded status, and odometer readings
+                </div>
+              </div>
+            </button>
+
+            {(user.role === 'SUPERVISOR' || user.role === 'ADMIN') && (
+              <button
+                type="button"
+                onClick={() => onNavigate('audit')}
+                className="cyan-glow-card group flex min-h-[76px] items-center gap-3.5 rounded-2xl border border-blue-200/80 bg-white p-5 text-left"
+              >
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-blue-50 text-cyan-600 group-hover:bg-cyan-500 group-hover:text-white transition-colors">
+                  <ShieldCheck className="h-6 w-6" aria-hidden="true" />
+                </div>
+                <div>
+                  <div className="text-base font-semibold text-blue-950 group-hover:text-blue-700">
+                    Audit Log &amp; Integrity Check
+                  </div>
+                  <div className="text-sm text-slate-600">
+                    Inspect permanent logs and verify the SHA-256 hash chain
+                  </div>
+                </div>
+              </button>
+            )}
 
             {user.role === 'ADMIN' && (
               <button

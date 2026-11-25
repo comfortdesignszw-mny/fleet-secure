@@ -17,6 +17,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   Users,
+  Wrench,
   X,
 } from 'lucide-react';
 import { en } from './i18n/en';
@@ -50,6 +51,7 @@ import { DEFAULT_SETTINGS, ROLE_LABELS, type AppSettings, type UserPublic } from
 import { AppFooter } from './components/AppFooter';
 import { AuditLogView } from './components/AuditLogView';
 import { DriversView } from './components/DriversView';
+import { FleetMaintenanceView } from './components/FleetMaintenanceView';
 import { HelpView } from './components/HelpView';
 import { HomeView, type NavSection } from './components/HomeView';
 import { LoginView } from './components/LoginView';
@@ -231,17 +233,21 @@ export default function App() {
 
   useEffect(() => {
     if (!user || user.must_change_pin || !isOnline) return;
-    if (user.role !== 'SUPERVISOR' && user.role !== 'ADMIN') {
+    const isAlertUser =
+      user.role === 'SUPERVISOR' || user.role === 'FLEET_MANAGER' || user.role === 'ADMIN';
+    if (!isAlertUser) {
       setUnreadNotifications(0);
       setHighUnreadNotifications(0);
       return;
     }
 
     let cancelled = false;
+    const canScanOverdue = user.role === 'SUPERVISOR' || user.role === 'ADMIN';
     const refreshCount = (checkOverdue = false) => {
-      const preCheck = checkOverdue
-        ? api.checkOverdueHires().catch(() => undefined)
-        : Promise.resolve();
+      const preCheck =
+        checkOverdue && canScanOverdue
+          ? api.checkOverdueHires().catch(() => undefined)
+          : Promise.resolve();
       void preCheck.then(() =>
         api
           .getUnreadNotificationsCount()
@@ -331,6 +337,7 @@ export default function App() {
   }
 
   const isSupervisorOrAdmin = user.role === 'SUPERVISOR' || user.role === 'ADMIN';
+  const isAlertRecipient = isSupervisorOrAdmin || user.role === 'FLEET_MANAGER';
   const isAdmin = user.role === 'ADMIN';
 
   const navItems: {
@@ -342,8 +349,9 @@ export default function App() {
     { id: 'home', label: en.nav.home, icon: Home, visible: true },
     { id: 'trips', label: en.nav.trips, icon: ClipboardList, visible: true },
     { id: 'vehicles', label: en.nav.vehicles, icon: Car, visible: true },
+    { id: 'maintenance', label: en.nav.maintenance, icon: Wrench, visible: true },
     { id: 'drivers', label: en.nav.drivers, icon: Users, visible: true },
-    { id: 'notifications', label: en.nav.notifications, icon: Bell, visible: isSupervisorOrAdmin },
+    { id: 'notifications', label: en.nav.notifications, icon: Bell, visible: isAlertRecipient },
     { id: 'audit', label: en.nav.auditLog, icon: ShieldCheck, visible: isSupervisorOrAdmin },
     { id: 'reports', label: en.nav.reports, icon: FileSpreadsheet, visible: isSupervisorOrAdmin },
     { id: 'settings', label: en.nav.settings, icon: SlidersHorizontal, visible: true },
@@ -352,7 +360,16 @@ export default function App() {
 
   const visibleNav = navItems.filter((item) => item.visible);
   const mobileBottomNav = visibleNav.filter((item) =>
-    ['home', 'trips', 'vehicles', isSupervisorOrAdmin ? 'audit' : 'settings'].includes(item.id)
+    [
+      'home',
+      'trips',
+      'vehicles',
+      user.role === 'FLEET_MANAGER'
+        ? 'maintenance'
+        : isSupervisorOrAdmin
+          ? 'audit'
+          : 'settings',
+    ].includes(item.id)
   );
 
   const navigateTo = (next: NavSection, tripId?: number) => {
@@ -531,7 +548,7 @@ export default function App() {
                 </span>
               )}
             </button>
-            {isSupervisorOrAdmin && (
+            {isAlertRecipient && (
               <button
                 type="button"
                 onClick={() => navigateTo('notifications')}
@@ -576,7 +593,7 @@ export default function App() {
           </div>
         )}
 
-        {isSupervisorOrAdmin &&
+        {isAlertRecipient &&
           !user.must_change_pin &&
           pushPrefs.pushEnabled &&
           notifPerm === 'default' &&
@@ -763,6 +780,13 @@ export default function App() {
               userRole={user.role}
               initialVehicleId={selectedVehicleId}
               onOpenTrip={(tid) => navigateTo('trips', tid)}
+              onOpenMaintenance={() => navigateTo('maintenance')}
+            />
+          )}
+          {!user.must_change_pin && section === 'maintenance' && (
+            <FleetMaintenanceView
+              userRole={user.role}
+              onOpenVehicle={openVehicleFromDashboard}
             />
           )}
           {!user.must_change_pin && section === 'drivers' && (
@@ -774,7 +798,7 @@ export default function App() {
           {!user.must_change_pin && section === 'trips' && (
             <TripsView userRole={user.role} initialTripId={selectedTripId} />
           )}
-          {!user.must_change_pin && section === 'notifications' && isSupervisorOrAdmin && (
+          {!user.must_change_pin && section === 'notifications' && isAlertRecipient && (
             <NotificationsView
               onOpenTrip={(tid) => navigateTo('trips', tid)}
               onUnreadCountChanged={(cnt) => {

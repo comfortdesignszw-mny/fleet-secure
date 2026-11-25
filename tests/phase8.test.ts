@@ -321,10 +321,12 @@ test('Drivers support optional docs, DDC/Retest/Medical certs, partial uniquenes
   assert.equal(createD1.status, 201);
   const d1 = ((await createD1.json()) as { driver: Driver }).driver;
   assert.equal(d1.licence_number, null);
-  assert.ok(d1.missing_documents && d1.missing_documents.length === 4);
+  assert.ok(d1.missing_documents && d1.missing_documents.length === 1);
 
   const warningText = formatDriverMissingDocsWarning(d1.full_name, d1.missing_documents!);
-  assert.ok(warningText.startsWith("Driver Tinashe Ncube's details are missing a critical document(s):"));
+  assert.ok(
+    warningText.startsWith("Driver Tinashe Ncube's details are missing Driver's Licence information:")
+  );
 
   const createD2 = await app.fetch(
     new Request('http://localhost/api/drivers', {
