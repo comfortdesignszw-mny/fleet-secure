@@ -23,7 +23,7 @@ import {
   validateDocumentDataUrl,
   type RouteAuthDeps,
 } from './directories';
-import { notifyManagersInApp } from './notifications';
+import { checkAndNotifyVehicleServiceDues, notifyManagersInApp } from './notifications';
 import type { AppEnv } from './types';
 
 function isValidIsoDate(val: string): boolean {
@@ -195,10 +195,15 @@ export function registerMaintenanceRoutes(
 
   // ---------------- OVERVIEW (ALL AUTHENTICATED ROLES; READ-ONLY FOR DRIVER/SUPERVISOR) ----------------
   app.get('/fleet-maintenance/overview', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
     const vehicleIdParam = c.req.query('vehicle_id');
     const filterVehicleId = vehicleIdParam ? Number(vehicleIdParam) : null;
     if (vehicleIdParam && (!Number.isInteger(filterVehicleId) || (filterVehicleId ?? 0) <= 0)) {
       return c.json({ error: 'Invalid vehicle filter.' }, 400);
+    }
+
+    if (actor.role === 'FLEET_MANAGER' || actor.role === 'ADMIN') {
+      await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
     }
 
     const whereClause = filterVehicleId ? 'WHERE v.id = ?' : '';
@@ -256,23 +261,36 @@ export function registerMaintenanceRoutes(
       ? serviceDues.filter((s) => s.vehicle_id === filterVehicleId)
       : serviceDues;
 
+    const serviceOverdueCount = filteredServiceDues.filter(
+      (s) => s.active && s.service_due_status === 'OVERDUE'
+    ).length;
+    const serviceDueSoonCount = filteredServiceDues.filter(
+      (s) => s.active && s.service_due_status === 'DUE_SOON'
+    ).length;
+
     const summary: FleetMaintenanceOverview['summary'] = {
       totalLogs: maintenanceLogs.length,
+      serviceLogsCount: maintenanceLogs.filter((l) => l.record_type === 'SERVICE').length,
+      mechanicalLogsCount: maintenanceLogs.filter((l) => l.record_type === 'MECHANICAL').length,
       pendingGarageApprovals: garageVisits.filter((g) => g.approval_status === 'PENDING_APPROVAL')
         .length,
       inGarageCount: garageVisits.filter(
         (g) => g.approval_status === 'APPROVED' && g.visit_status === 'IN_GARAGE'
       ).length,
+      approvedGarageCount: garageVisits.filter((g) => g.approval_status === 'APPROVED').length,
+      completedGarageCount: garageVisits.filter((g) => g.visit_status === 'COMPLETED').length,
+      totalGarageVisits: garageVisits.length,
       pendingPartsAuthorizations: partsRequests.filter(
         (p) => p.status === 'PENDING_ADMIN_AUTHORIZATION'
       ).length,
-      serviceDueSoonOrOverdueCount: serviceDues.filter(
-        (s) =>
-          s.active &&
-          (s.service_due_status === 'DUE_SOON' || s.service_due_status === 'OVERDUE')
+      approvedPartsCount: partsRequests.filter((p) => p.status === 'APPROVED').length,
+      purchasedPartsCount: partsRequests.filter((p) => p.status === 'PURCHASED').length,
+      serviceDueSoonOrOverdueCount: serviceOverdueCount + serviceDueSoonCount,
+      serviceOverdueCount,
+      serviceDueSoonCount,
+      groundedVehiclesCount: filteredServiceDues.filter(
+        (s) => s.active && s.condition === 'Grounded'
       ).length,
-      groundedVehiclesCount: serviceDues.filter((s) => s.active && s.condition === 'Grounded')
-        .length,
     };
 
     const payload: FleetMaintenanceOverview = {
@@ -411,6 +429,8 @@ export function registerMaintenanceRoutes(
         { env: c.env, roles: ['ADMIN', 'FLEET_MANAGER'] }
       );
 
+      await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
+
       return c.json({ log }, 201);
     }
   );
@@ -472,6 +492,8 @@ export function registerMaintenanceRoutes(
         updated.last_known_mileage,
         updated.next_service_due_km ?? null
       );
+
+      await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
 
       return c.json({
         vehicle: updated,
@@ -772,6 +794,19 @@ export function registerMaintenanceRoutes(
         ip: getClientIp(c),
         userAgent: getUserAgent(c),
       });
+
+      await notifyManagersInApp(
+        c.env.DB,
+        {
+          eventType: 'GARAGE_VISIT_STATUS_UPDATED',
+          priority: visit.visit_status === 'IN_GARAGE' ? 'HIGH' : 'NORMAL',
+          title: `Garage status (${visit.visit_status.replace('_', ' ')}): ${visit.reg_number}`,
+          body: `${actor.full_name} updated garage visit for ${visit.reg_number} at ${visit.workshop_name} to ${visit.visit_status.replace('_', ' ')}.${
+            visit.actual_cost !== null ? ` Actual cost: $${visit.actual_cost.toFixed(2)}.` : ''
+          }`,
+        },
+        { env: c.env, roles: ['FLEET_MANAGER', 'ADMIN'] }
+      );
 
       return c.json({ visit });
     }
@@ -1159,6 +1194,17 @@ export function registerMaintenanceRoutes(
         ip: getClientIp(c),
         userAgent: getUserAgent(c),
       });
+
+      await notifyManagersInApp(
+        c.env.DB,
+        {
+          eventType: 'PARTS_PURCHASE_COMPLETED',
+          priority: 'NORMAL',
+          title: `Parts purchased: ${updated.reg_number}`,
+          body: `${actor.full_name} marked approved parts request for ${updated.reg_number} (${updated.parts_required}) as Purchased.`,
+        },
+        { env: c.env, roles: ['FLEET_MANAGER', 'ADMIN'] }
+      );
 
       return c.json({ request: updated });
     }

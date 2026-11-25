@@ -125,10 +125,13 @@ async function startServer() {
     console.log(`Fleet Secure running on http://0.0.0.0:${PORT}`);
   });
 
-  // Run overdue hire alerts periodically in local server mode (mirrors Cloudflare Cron Trigger)
-  const { checkAndNotifyOverdueHires } = await import('./src/server/notifications');
+  // Run overdue hire & vehicle service-due alerts periodically in local server mode (mirrors Cloudflare Cron Trigger)
+  const { checkAndNotifyOverdueHires, checkAndNotifyVehicleServiceDues } = await import(
+    './src/server/notifications'
+  );
   setInterval(() => {
     void checkAndNotifyOverdueHires(db, { env: appEnv });
+    void checkAndNotifyVehicleServiceDues(db, { env: appEnv });
   }, 15 * 60_000);
 }
 

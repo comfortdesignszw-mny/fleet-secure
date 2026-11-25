@@ -16,7 +16,7 @@ import {
   type VehicleCondition,
 } from '../shared/types';
 import { recordAudit } from './audit';
-import { notifyManagersInApp } from './notifications';
+import { checkAndNotifyVehicleServiceDues, notifyManagersInApp } from './notifications';
 import type { AppEnv } from './types';
 
 export interface RouteAuthDeps {
@@ -498,6 +498,10 @@ export function registerDirectoryRoutes(
         { env: c.env, roles: ['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER'] }
       );
 
+      if (created.next_service_due_km !== null && created.next_service_due_km !== undefined) {
+        await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
+      }
+
       return c.json({ vehicle: created }, 201);
     }
   );
@@ -736,6 +740,10 @@ export function registerDirectoryRoutes(
         },
         { env: c.env, roles: ['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER'] }
       );
+
+      if (updated.next_service_due_km !== null && updated.next_service_due_km !== undefined) {
+        await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
+      }
 
       return c.json({ vehicle: updated });
     }

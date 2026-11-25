@@ -28,6 +28,7 @@ import type {
   VehicleMaintenanceLog,
   VehicleServiceDueSummary,
 } from '../shared/types';
+import { notifyMaintenanceUpdated, requestNotificationsRefresh } from './pushNotifications';
 
 export class ApiError extends Error {
   status: number;
@@ -357,20 +358,23 @@ export const api = {
       conditionHistory: AuditLogEntry[];
     }>(`/vehicles/${id}`),
 
-  createVehicle: (payload: {
+  createVehicle: async (payload: {
     reg_number: string;
     vehicle_type: string;
     make_model: string;
     condition: VehicleCondition;
     last_known_mileage: number;
     next_service_due_km?: number | null;
-  }) =>
-    request<{ vehicle: Vehicle }>('/vehicles', {
+  }) => {
+    const res = await request<{ vehicle: Vehicle }>('/vehicles', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    });
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  updateVehicle: (
+  updateVehicle: async (
     id: number,
     payload: {
       reg_number?: string;
@@ -381,11 +385,14 @@ export const api = {
       next_service_due_km?: number | null;
       active?: boolean;
     }
-  ) =>
-    request<{ vehicle: Vehicle }>(`/vehicles/${id}`, {
+  ) => {
+    const res = await request<{ vehicle: Vehicle }>(`/vehicles/${id}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
-    }),
+    });
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
   listDrivers: (
     params: {
@@ -509,13 +516,16 @@ export const api = {
 
   getTrip: (id: number) => request<TripDetail>(`/trips/${id}`),
 
-  createTripOut: (payload: CreateTripOutPayload) =>
-    request<{ trip: TripSummary; flags: TripSummary['flags'] }>('/trips/out', {
+  createTripOut: async (payload: CreateTripOutPayload) => {
+    const res = await request<{ trip: TripSummary; flags: TripSummary['flags'] }>('/trips/out', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    });
+    requestNotificationsRefresh();
+    return res;
+  },
 
-  createTripIn: (
+  createTripIn: async (
     tripId: number,
     payload: {
       mileage_in: number;
@@ -524,11 +534,14 @@ export const api = {
       notes?: string;
       device_time?: string;
     }
-  ) =>
-    request<{ trip: TripSummary; flags: TripSummary['flags'] }>(`/trips/${tripId}/in`, {
+  ) => {
+    const res = await request<{ trip: TripSummary; flags: TripSummary['flags'] }>(`/trips/${tripId}/in`, {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    });
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
   createTripCorrection: (
     tripId: number,
@@ -647,7 +660,7 @@ export const api = {
     return request<FleetMaintenanceOverview>(`/fleet-maintenance/overview${suffix}`);
   },
 
-  createMaintenanceLog: (payload: {
+  createMaintenanceLog: async (payload: {
     vehicle_id: number;
     record_type: MaintenanceRecordType;
     service_date: string;
@@ -657,22 +670,28 @@ export const api = {
     workshop_name?: string;
     cost?: number | null;
     next_service_due_km?: number | null;
-  }) =>
-    request<{ log: VehicleMaintenanceLog }>('/fleet-maintenance/logs', {
+  }) => {
+    const res = await request<{ log: VehicleMaintenanceLog }>('/fleet-maintenance/logs', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    });
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  updateVehicleNextService: (vehicleId: number, next_service_due_km: number | null) =>
-    request<{ vehicle: Vehicle; serviceDue: VehicleServiceDueSummary }>(
+  updateVehicleNextService: async (vehicleId: number, next_service_due_km: number | null) => {
+    const res = await request<{ vehicle: Vehicle; serviceDue: VehicleServiceDueSummary }>(
       `/fleet-maintenance/next-service/${vehicleId}`,
       {
         method: 'PATCH',
         body: JSON.stringify({ next_service_due_km }),
       }
-    ),
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  createGarageVisit: (payload: {
+  createGarageVisit: async (payload: {
     vehicle_id: number;
     visit_date: string;
     workshop_name: string;
@@ -680,31 +699,46 @@ export const api = {
     odometer_km: number;
     estimated_cost?: number | null;
     notes?: string;
-  }) =>
-    request<{ visit: GarageVisit }>('/fleet-maintenance/garage-visits', {
+  }) => {
+    const res = await request<{ visit: GarageVisit }>('/fleet-maintenance/garage-visits', {
       method: 'POST',
       body: JSON.stringify(payload),
-    }),
+    });
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  decideGarageVisit: (
+  decideGarageVisit: async (
     id: number,
     payload: { decision: 'APPROVED' | 'REJECTED'; approval_notes?: string }
-  ) =>
-    request<{ visit: GarageVisit }>(`/fleet-maintenance/garage-visits/${id}/decision`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  ) => {
+    const res = await request<{ visit: GarageVisit }>(
+      `/fleet-maintenance/garage-visits/${id}/decision`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  updateGarageVisitStatus: (
+  updateGarageVisitStatus: async (
     id: number,
     payload: { visit_status: GarageVisitStatus; actual_cost?: number | null; notes?: string }
-  ) =>
-    request<{ visit: GarageVisit }>(`/fleet-maintenance/garage-visits/${id}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify(payload),
-    }),
+  ) => {
+    const res = await request<{ visit: GarageVisit }>(
+      `/fleet-maintenance/garage-visits/${id}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify(payload),
+      }
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  createPartsRequest: (payload: {
+  createPartsRequest: async (payload: {
     request_date: string;
     vehicle_id?: number;
     new_vehicle?: {
@@ -720,32 +754,47 @@ export const api = {
     estimated_amount: number;
     quotation_file?: string | null;
     quotation_filename?: string | null;
-  }) =>
-    request<{ request: PartsPurchaseRequest; createdVehicle?: Vehicle }>(
+  }) => {
+    const res = await request<{ request: PartsPurchaseRequest; createdVehicle?: Vehicle }>(
       '/fleet-maintenance/parts-requests',
       {
         method: 'POST',
         body: JSON.stringify(payload),
       }
-    ),
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
   getPartsRequestQuotation: (id: number) =>
     request<{ quotation_file: string; quotation_filename: string }>(
       `/fleet-maintenance/parts-requests/${id}/quotation`
     ),
 
-  decidePartsRequest: (
+  decidePartsRequest: async (
     id: number,
     payload: { decision: 'APPROVED' | 'REJECTED' | 'PURCHASED'; admin_notes?: string }
-  ) =>
-    request<{ request: PartsPurchaseRequest }>(`/fleet-maintenance/parts-requests/${id}/decision`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }),
+  ) => {
+    const res = await request<{ request: PartsPurchaseRequest }>(
+      `/fleet-maintenance/parts-requests/${id}/decision`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 
-  markPartsRequestPurchased: (id: number) =>
-    request<{ request: PartsPurchaseRequest }>(`/fleet-maintenance/parts-requests/${id}/status`, {
-      method: 'PATCH',
-      body: JSON.stringify({ status: 'PURCHASED' }),
-    }),
+  markPartsRequestPurchased: async (id: number) => {
+    const res = await request<{ request: PartsPurchaseRequest }>(
+      `/fleet-maintenance/parts-requests/${id}/status`,
+      {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'PURCHASED' }),
+      }
+    );
+    notifyMaintenanceUpdated();
+    return res;
+  },
 };

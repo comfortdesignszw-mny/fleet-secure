@@ -369,6 +369,111 @@ export async function checkAndNotifyOverdueHires(
   }
 }
 
+/**
+ * Scans active vehicles whose odometer (`last_known_mileage`) has reached or exceeded
+ * `next_service_due_km`, sending a HIGH-priority alert once per `(vehicle_id, next_service_due_km)`
+ * milestone to Fleet Managers / Supervisors (`FLEET_MANAGER`) and Administrators (`ADMIN`).
+ */
+export async function checkAndNotifyVehicleServiceDues(
+  db: D1DatabaseLike,
+  options?: DispatchOptions
+): Promise<{ checked: number; newlyNotified: number }> {
+  try {
+    const { results: dueVehicles } = await db
+      .prepare(
+        `SELECT id, reg_number, make_model, condition, last_known_mileage, next_service_due_km
+         FROM vehicles
+         WHERE active = 1
+           AND next_service_due_km IS NOT NULL
+           AND last_known_mileage >= next_service_due_km
+         ORDER BY id ASC`
+      )
+      .all<{
+        id: number;
+        reg_number: string;
+        make_model: string;
+        condition: string;
+        last_known_mileage: number;
+        next_service_due_km: number;
+      }>();
+
+    let newlyNotified = 0;
+
+    for (const v of dueVehicles) {
+      const dueKm = Number(v.next_service_due_km);
+      const mileage = Number(v.last_known_mileage);
+      if (!Number.isFinite(dueKm) || !Number.isFinite(mileage) || mileage < dueKm) continue;
+
+      const { results: prevAudits } = await db
+        .prepare(
+          `SELECT new_json FROM audit_log
+           WHERE action = 'VEHICLE_SERVICE_DUE_DETECTED'
+             AND entity = 'vehicles'
+             AND entity_id = ?
+           ORDER BY id DESC
+           LIMIT 25`
+        )
+        .bind(String(v.id))
+        .all<{ new_json: string | null }>();
+
+      const alreadyAlertedForTarget = prevAudits.some((row) => {
+        if (!row.new_json) return false;
+        try {
+          const parsed = JSON.parse(row.new_json) as { next_service_due_km?: unknown };
+          return Number(parsed.next_service_due_km) === dueKm;
+        } catch {
+          return false;
+        }
+      });
+
+      if (alreadyAlertedForTarget) continue;
+
+      const overdueKm = Math.max(0, mileage - dueKm);
+      const statusDetail =
+        overdueKm > 0
+          ? `${overdueKm.toLocaleString()} km past service due target`
+          : 'exactly at service due target';
+
+      await notifyManagersInApp(
+        db,
+        {
+          eventType: 'VEHICLE_SERVICE_DUE',
+          priority: 'HIGH',
+          title: `Service Due: ${v.reg_number} (${dueKm.toLocaleString()} km)`,
+          body: `${v.reg_number} (${v.make_model}) has reached ${mileage.toLocaleString()} km (next service due: ${dueKm.toLocaleString()} km — ${statusDetail}). Please schedule service.`,
+        },
+        {
+          ...options,
+          roles: ['FLEET_MANAGER', 'ADMIN'],
+        }
+      );
+
+      await recordAudit(db, {
+        userId: null,
+        username: 'system',
+        userRole: 'SYSTEM',
+        action: 'VEHICLE_SERVICE_DUE_DETECTED',
+        entity: 'vehicles',
+        entityId: v.id,
+        newValue: {
+          reg_number: v.reg_number,
+          make_model: v.make_model,
+          last_known_mileage: mileage,
+          next_service_due_km: dueKm,
+          overdue_km: overdueKm,
+        },
+      });
+
+      newlyNotified++;
+    }
+
+    return { checked: dueVehicles.length, newlyNotified };
+  } catch (err) {
+    console.error('Vehicle service due check error:', err);
+    return { checked: 0, newlyNotified: 0 };
+  }
+}
+
 function mapNotificationRow(row: Record<string, unknown>): NotificationRecord {
   return {
     id: Number(row.id),
@@ -409,10 +514,17 @@ export function registerNotificationRoutes(
     requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
+      const waitUntil = getWaitUntil(c);
       if (user.role === 'ADMIN' || user.role === 'SUPERVISOR') {
         await checkAndNotifyOverdueHires(c.env.DB, {
           env: c.env,
-          waitUntil: getWaitUntil(c),
+          waitUntil,
+        });
+      }
+      if (user.role === 'ADMIN' || user.role === 'FLEET_MANAGER') {
+        await checkAndNotifyVehicleServiceDues(c.env.DB, {
+          env: c.env,
+          waitUntil,
         });
       }
 
@@ -450,10 +562,17 @@ export function registerNotificationRoutes(
     requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
       const user = c.get('user')!;
+      const waitUntil = getWaitUntil(c);
       if (user.role === 'ADMIN' || user.role === 'SUPERVISOR') {
         await checkAndNotifyOverdueHires(c.env.DB, {
           env: c.env,
-          waitUntil: getWaitUntil(c),
+          waitUntil,
+        });
+      }
+      if (user.role === 'ADMIN' || user.role === 'FLEET_MANAGER') {
+        await checkAndNotifyVehicleServiceDues(c.env.DB, {
+          env: c.env,
+          waitUntil,
         });
       }
 
@@ -562,13 +681,31 @@ export function registerNotificationRoutes(
     '/notifications/check-overdue',
     requireAuth,
     requirePinChanged(),
-    requireRole(['SUPERVISOR', 'ADMIN']),
+    requireRole(['SUPERVISOR', 'FLEET_MANAGER', 'ADMIN']),
     async (c) => {
-      const result = await checkAndNotifyOverdueHires(c.env.DB, {
-        env: c.env,
-        waitUntil: getWaitUntil(c),
+      const user = c.get('user')!;
+      const waitUntil = getWaitUntil(c);
+      const hireResult =
+        user.role === 'SUPERVISOR' || user.role === 'ADMIN'
+          ? await checkAndNotifyOverdueHires(c.env.DB, {
+              env: c.env,
+              waitUntil,
+            })
+          : { checked: 0, newlyNotified: 0 };
+      const serviceResult =
+        user.role === 'FLEET_MANAGER' || user.role === 'ADMIN'
+          ? await checkAndNotifyVehicleServiceDues(c.env.DB, {
+              env: c.env,
+              waitUntil,
+            })
+          : { checked: 0, newlyNotified: 0 };
+
+      return c.json({
+        checked: hireResult.checked + serviceResult.checked,
+        newlyNotified: hireResult.newlyNotified + serviceResult.newlyNotified,
+        overdueHires: hireResult,
+        serviceDues: serviceResult,
       });
-      return c.json(result);
     }
   );
 

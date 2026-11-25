@@ -548,10 +548,19 @@ export interface FleetMaintenanceOverview {
   serviceDues: VehicleServiceDueSummary[];
   summary: {
     totalLogs: number;
+    serviceLogsCount?: number;
+    mechanicalLogsCount?: number;
     pendingGarageApprovals: number;
     inGarageCount: number;
+    approvedGarageCount?: number;
+    completedGarageCount?: number;
+    totalGarageVisits?: number;
     pendingPartsAuthorizations: number;
+    approvedPartsCount?: number;
+    purchasedPartsCount?: number;
     serviceDueSoonOrOverdueCount: number;
+    serviceOverdueCount?: number;
+    serviceDueSoonCount?: number;
     groundedVehiclesCount: number;
   };
 }

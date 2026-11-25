@@ -23,6 +23,7 @@ import {
   writeCachedEntry,
 } from '../lib/offlineCache';
 import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
+import { MAINTENANCE_UPDATED_EVENT } from '../lib/pushNotifications';
 import {
   VEHICLE_CONDITIONS,
   VEHICLE_TYPES,
@@ -198,53 +199,72 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
   } | null>(null);
   const [loadingQuotationId, setLoadingQuotationId] = useState<number | null>(null);
 
-  const loadData = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setUsingCache(false);
-    setCacheUpdatedAt(null);
-    const vFilterNum = vehicleFilter ? Number(vehicleFilter) : undefined;
-    try {
-      const [maintRes, vehRes] = await Promise.all([
-        api.getFleetMaintenanceOverview(vFilterNum),
-        api.listVehicles({ includeInactive: true, limit: 500 }),
-      ]);
-      setOverview(maintRes);
-      setVehicles(vehRes.items);
-      if (!vFilterNum) {
-        writeCachedEntry<FleetMaintenanceOverview>(CACHE_KEYS.fleetMaintenance, maintRes);
+  const loadData = useCallback(
+    async (silent = false) => {
+      if (!silent) {
+        setLoading(true);
+        setError(null);
       }
-    } catch (err) {
-      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
-        const cachedMaint = readCachedEntry<FleetMaintenanceOverview>(CACHE_KEYS.fleetMaintenance);
-        const cachedVeh = readCachedEntry<{ items: Vehicle[] }>(CACHE_KEYS.vehiclesAll);
-        if (cachedMaint) {
-          setOverview(cachedMaint.data);
-          if (cachedVeh?.data.items) setVehicles(cachedVeh.data.items);
-          setUsingCache(true);
-          setCacheUpdatedAt(cachedMaint.updatedAt);
-        } else {
-          setError('Offline mode — no cached fleet maintenance records saved yet.');
+      setUsingCache(false);
+      setCacheUpdatedAt(null);
+      const vFilterNum = vehicleFilter ? Number(vehicleFilter) : undefined;
+      try {
+        const [maintRes, vehRes] = await Promise.all([
+          api.getFleetMaintenanceOverview(vFilterNum),
+          api.listVehicles({ includeInactive: true, limit: 500 }),
+        ]);
+        setOverview(maintRes);
+        setVehicles(vehRes.items);
+        if (!vFilterNum) {
+          writeCachedEntry<FleetMaintenanceOverview>(CACHE_KEYS.fleetMaintenance, maintRes);
         }
-      } else {
-        setError(err instanceof ApiError ? err.message : 'Could not load fleet maintenance data.');
+      } catch (err) {
+        if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+          const cachedMaint = readCachedEntry<FleetMaintenanceOverview>(
+            CACHE_KEYS.fleetMaintenance
+          );
+          const cachedVeh = readCachedEntry<{ items: Vehicle[] }>(CACHE_KEYS.vehiclesAll);
+          if (cachedMaint) {
+            setOverview(cachedMaint.data);
+            if (cachedVeh?.data.items) setVehicles(cachedVeh.data.items);
+            setUsingCache(true);
+            setCacheUpdatedAt(cachedMaint.updatedAt);
+          } else if (!silent) {
+            setError('Offline mode — no cached fleet maintenance records saved yet.');
+          }
+        } else if (!silent) {
+          setError(err instanceof ApiError ? err.message : 'Could not load fleet maintenance data.');
+        }
+      } finally {
+        if (!silent) {
+          setLoading(false);
+        }
       }
-    } finally {
-      setLoading(false);
-    }
-  }, [vehicleFilter]);
+    },
+    [vehicleFilter]
+  );
 
   useEffect(() => {
-    void loadData();
+    void loadData(false);
   }, [loadData]);
 
   useEffect(() => {
-    const refresh = () => void loadData();
-    window.addEventListener(OFFLINE_SYNCED_EVENT, refresh);
-    window.addEventListener(ONLINE_RECONNECTED_EVENT, refresh);
+    const refreshSilent = () => {
+      void loadData(true);
+    };
+    window.addEventListener(MAINTENANCE_UPDATED_EVENT, refreshSilent);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshSilent);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshSilent);
+    const interval = window.setInterval(() => {
+      if (typeof navigator === 'undefined' || navigator.onLine) {
+        void loadData(true);
+      }
+    }, 15_000);
     return () => {
-      window.removeEventListener(OFFLINE_SYNCED_EVENT, refresh);
-      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refresh);
+      window.removeEventListener(MAINTENANCE_UPDATED_EVENT, refreshSilent);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshSilent);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshSilent);
+      window.clearInterval(interval);
     };
   }, [loadData]);
 
@@ -511,14 +531,71 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
     }
   };
 
-  const summary = overview?.summary ?? {
-    totalLogs: 0,
-    pendingGarageApprovals: 0,
-    inGarageCount: 0,
-    pendingPartsAuthorizations: 0,
-    serviceDueSoonOrOverdueCount: 0,
-    groundedVehiclesCount: 0,
-  };
+  const summary = useMemo(() => {
+    const serverSummary = overview?.summary;
+    const serviceDues = overview?.serviceDues ?? [];
+    const logs = overview?.maintenanceLogs ?? [];
+    const visits = overview?.garageVisits ?? [];
+    const parts = overview?.partsRequests ?? [];
+
+    const serviceOverdueCount =
+      serverSummary?.serviceOverdueCount ??
+      serviceDues.filter((d) => d.service_due_status === 'OVERDUE').length;
+    const serviceDueSoonCount =
+      serverSummary?.serviceDueSoonCount ??
+      serviceDues.filter((d) => d.service_due_status === 'DUE_SOON').length;
+    const serviceDueSoonOrOverdueCount =
+      serverSummary?.serviceDueSoonOrOverdueCount ?? serviceOverdueCount + serviceDueSoonCount;
+    const groundedVehiclesCount =
+      serverSummary?.groundedVehiclesCount ??
+      serviceDues.filter((d) => d.condition === 'Grounded').length;
+
+    const pendingGarageApprovals =
+      serverSummary?.pendingGarageApprovals ??
+      visits.filter((v) => v.approval_status === 'PENDING_APPROVAL').length;
+    const approvedGarageCount =
+      serverSummary?.approvedGarageCount ??
+      visits.filter((v) => v.approval_status === 'APPROVED').length;
+    const inGarageCount =
+      serverSummary?.inGarageCount ??
+      visits.filter((v) => v.approval_status === 'APPROVED' && v.visit_status === 'IN_GARAGE')
+        .length;
+    const completedGarageCount =
+      serverSummary?.completedGarageCount ??
+      visits.filter((v) => v.visit_status === 'COMPLETED').length;
+
+    const pendingPartsAuthorizations =
+      serverSummary?.pendingPartsAuthorizations ??
+      parts.filter((p) => p.status === 'PENDING_ADMIN_AUTHORIZATION').length;
+    const approvedPartsCount =
+      serverSummary?.approvedPartsCount ?? parts.filter((p) => p.status === 'APPROVED').length;
+    const purchasedPartsCount =
+      serverSummary?.purchasedPartsCount ?? parts.filter((p) => p.status === 'PURCHASED').length;
+
+    const totalLogs = serverSummary?.totalLogs ?? logs.length;
+    const serviceLogsCount =
+      serverSummary?.serviceLogsCount ?? logs.filter((l) => l.record_type === 'SERVICE').length;
+    const mechanicalLogsCount =
+      serverSummary?.mechanicalLogsCount ??
+      logs.filter((l) => l.record_type === 'MECHANICAL').length;
+
+    return {
+      totalLogs,
+      serviceLogsCount,
+      mechanicalLogsCount,
+      pendingGarageApprovals,
+      approvedGarageCount,
+      inGarageCount,
+      completedGarageCount,
+      pendingPartsAuthorizations,
+      approvedPartsCount,
+      purchasedPartsCount,
+      serviceDueSoonOrOverdueCount,
+      serviceOverdueCount,
+      serviceDueSoonCount,
+      groundedVehiclesCount,
+    };
+  }, [overview]);
 
   return (
     <div className="space-y-6">
@@ -606,18 +683,35 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
 
       {/* KPI Summary Grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('service-dues')}
+          className={`text-left rounded-2xl border bg-white p-4 shadow-xs transition-all cyan-glow-card ${
+            activeTab === 'service-dues' ? 'border-cyan-400 ring-1 ring-cyan-300' : 'border-blue-200/80'
+          }`}
+        >
           <div className="text-xs font-medium text-slate-500">Service Due / Overdue</div>
           <div
             className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
-              summary.serviceDueSoonOrOverdueCount > 0 ? 'text-amber-700' : 'text-blue-950'
+              summary.serviceOverdueCount > 0
+                ? 'text-red-700'
+                : summary.serviceDueSoonOrOverdueCount > 0
+                  ? 'text-amber-700'
+                  : 'text-blue-950'
             }`}
           >
             {summary.serviceDueSoonOrOverdueCount}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.serviceOverdueCount} overdue · {summary.serviceDueSoonCount} due soon
+          </div>
+        </button>
 
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('service-dues')}
+          className="text-left rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs transition-all cyan-glow-card"
+        >
           <div className="text-xs font-medium text-slate-500">Grounded Vehicles</div>
           <div
             className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
@@ -626,9 +720,18 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
           >
             {summary.groundedVehiclesCount}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.groundedVehiclesCount > 0 ? 'Held from dispatch' : 'All fleet clear'}
+          </div>
+        </button>
 
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('garage')}
+          className={`text-left rounded-2xl border bg-white p-4 shadow-xs transition-all cyan-glow-card ${
+            activeTab === 'garage' ? 'border-cyan-400 ring-1 ring-cyan-300' : 'border-blue-200/80'
+          }`}
+        >
           <div className="text-xs font-medium text-slate-500">Garage Pending Admin</div>
           <div
             className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
@@ -637,16 +740,32 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
           >
             {summary.pendingGarageApprovals}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.approvedGarageCount} approved · {summary.completedGarageCount} completed
+          </div>
+        </button>
 
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('garage')}
+          className="text-left rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs transition-all cyan-glow-card"
+        >
           <div className="text-xs font-medium text-slate-500">Vehicles in Garage</div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-cyan-700">
             {summary.inGarageCount}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.approvedGarageCount} total authorized
+          </div>
+        </button>
 
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('parts')}
+          className={`text-left rounded-2xl border bg-white p-4 shadow-xs transition-all cyan-glow-card ${
+            activeTab === 'parts' ? 'border-cyan-400 ring-1 ring-cyan-300' : 'border-blue-200/80'
+          }`}
+        >
           <div className="text-xs font-medium text-slate-500">Parts Pending Admin</div>
           <div
             className={`mt-1 font-mono text-2xl font-bold tabular-nums ${
@@ -655,14 +774,26 @@ export const FleetMaintenanceView: React.FC<FleetMaintenanceViewProps> = ({
           >
             {summary.pendingPartsAuthorizations}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.approvedPartsCount} ready · {summary.purchasedPartsCount} purchased
+          </div>
+        </button>
 
-        <div className="rounded-2xl border border-blue-200/80 bg-white p-4 shadow-xs">
+        <button
+          type="button"
+          onClick={() => setActiveTab('history')}
+          className={`text-left rounded-2xl border bg-white p-4 shadow-xs transition-all cyan-glow-card ${
+            activeTab === 'history' ? 'border-cyan-400 ring-1 ring-cyan-300' : 'border-blue-200/80'
+          }`}
+        >
           <div className="text-xs font-medium text-slate-500">Logged Services</div>
           <div className="mt-1 font-mono text-2xl font-bold tabular-nums text-blue-950">
             {summary.totalLogs}
           </div>
-        </div>
+          <div className="mt-1 text-[11px] font-medium text-slate-500">
+            {summary.serviceLogsCount} service · {summary.mechanicalLogsCount} mechanical
+          </div>
+        </button>
       </div>
 
       {/* Filter & Sub-tab Controls */}

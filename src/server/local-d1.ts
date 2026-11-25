@@ -79,6 +79,28 @@ export class LocalD1Adapter implements D1DatabaseLike {
       duration: Date.now() - start,
     };
   }
+
+  async batch<T = unknown>(
+    statements: D1PreparedStatementLike[]
+  ): Promise<Array<{ success: boolean; results?: T[]; meta?: D1ResultMeta }>> {
+    const results: Array<{ success: boolean; results?: T[]; meta?: D1ResultMeta }> = [];
+    this.raw.exec('BEGIN IMMEDIATE');
+    try {
+      for (const stmt of statements) {
+        const res = await stmt.run();
+        results.push({ success: res.success, meta: res.meta });
+      }
+      this.raw.exec('COMMIT');
+      return results;
+    } catch (err) {
+      try {
+        this.raw.exec('ROLLBACK');
+      } catch {
+        // Ignore rollback error
+      }
+      throw err;
+    }
+  }
 }
 
 export function createLocalDatabase(dbFilePath = path.resolve(process.cwd(), 'fleet_secure.db')): LocalD1Adapter {

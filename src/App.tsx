@@ -39,12 +39,16 @@ import {
 } from './lib/offlineQueue';
 import { ONLINE_RECONNECTED_EVENT, warmOfflineCaches } from './lib/offlineCache';
 import {
+  MAINTENANCE_UPDATED_EVENT,
+  OPEN_NOTIFICATION_EVENT,
   PUSH_PREFS_EVENT,
+  REFRESH_NOTIFICATIONS_EVENT,
   getNotificationPermissionState,
   getPushPreferences,
   installAudioUnlockListeners,
   processIncomingNotifications,
   requestBrowserNotificationPermission,
+  requestNotificationsRefresh,
   unlockNotificationAudio,
 } from './lib/pushNotifications';
 import { DEFAULT_SETTINGS, ROLE_LABELS, type AppSettings, type UserPublic } from './shared/types';
@@ -73,6 +77,19 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
+  const [selectedNotificationId, setSelectedNotificationId] = useState<number | null>(null);
+  const [pendingNotificationLink, setPendingNotificationLink] = useState<{
+    notificationId: number | null;
+  } | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('section') !== 'notifications') return null;
+    const rawId = params.get('notificationId');
+    const parsedId = rawId ? Number(rawId) : NaN;
+    return {
+      notificationId: Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null,
+    };
+  });
   const [settings, setSettings] = useState<AppSettings>(
     () => getCachedSettings() ?? DEFAULT_SETTINGS
   );
@@ -231,6 +248,75 @@ export default function App() {
       });
   }, [user, isOnline]);
 
+  // Apply deep-linked notification route from URL or Service Worker click once user session is ready
+  useEffect(() => {
+    if (!user || user.must_change_pin || !pendingNotificationLink) return;
+    const isAlertUser =
+      user.role === 'SUPERVISOR' || user.role === 'FLEET_MANAGER' || user.role === 'ADMIN';
+    if (isAlertUser) {
+      setSection('notifications');
+      setSelectedNotificationId(pendingNotificationLink.notificationId);
+      setSelectedTripId(null);
+      setSelectedVehicleId(null);
+      setMobileMenuOpen(false);
+      requestNotificationsRefresh();
+    }
+    setPendingNotificationLink(null);
+    if (typeof window !== 'undefined' && window.location.search.includes('section=notifications')) {
+      window.history.replaceState({}, '', window.location.pathname || '/');
+    }
+  }, [user, pendingNotificationLink]);
+
+  // Handle notification click events from browser Notification API fallback or SW postMessage
+  useEffect(() => {
+    const openFromPayload = (payload: {
+      notificationId?: unknown;
+      tripId?: unknown;
+    } | null) => {
+      const rawId = payload?.notificationId;
+      const parsedId = typeof rawId === 'number' || typeof rawId === 'string' ? Number(rawId) : NaN;
+      const cleanId = Number.isInteger(parsedId) && parsedId > 0 ? parsedId : null;
+
+      if (!user || user.must_change_pin) {
+        setPendingNotificationLink({ notificationId: cleanId });
+        return;
+      }
+
+      const isAlertUser =
+        user.role === 'SUPERVISOR' || user.role === 'FLEET_MANAGER' || user.role === 'ADMIN';
+      if (!isAlertUser) return;
+
+      setSection('notifications');
+      setSelectedNotificationId(cleanId);
+      setSelectedTripId(null);
+      setSelectedVehicleId(null);
+      setMobileMenuOpen(false);
+      requestNotificationsRefresh();
+    };
+
+    const onCustomOpen = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ notificationId?: unknown; tripId?: unknown }>).detail;
+      openFromPayload(detail ?? null);
+    };
+
+    const onSwMessage = (ev: MessageEvent) => {
+      if (ev.data && typeof ev.data === 'object' && ev.data.type === 'OPEN_NOTIFICATION') {
+        openFromPayload(ev.data as { notificationId?: unknown; tripId?: unknown });
+      }
+    };
+
+    window.addEventListener(OPEN_NOTIFICATION_EVENT, onCustomOpen);
+    if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', onSwMessage);
+    }
+    return () => {
+      window.removeEventListener(OPEN_NOTIFICATION_EVENT, onCustomOpen);
+      if (typeof navigator !== 'undefined' && 'serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', onSwMessage);
+      }
+    };
+  }, [user]);
+
   useEffect(() => {
     if (!user || user.must_change_pin || !isOnline) return;
     const isAlertUser =
@@ -242,7 +328,8 @@ export default function App() {
     }
 
     let cancelled = false;
-    const canScanOverdue = user.role === 'SUPERVISOR' || user.role === 'ADMIN';
+    const canScanOverdue =
+      user.role === 'SUPERVISOR' || user.role === 'FLEET_MANAGER' || user.role === 'ADMIN';
     const refreshCount = (checkOverdue = false) => {
       const preCheck =
         checkOverdue && canScanOverdue
@@ -268,13 +355,18 @@ export default function App() {
     refreshCount(true);
     const timer = window.setInterval(() => refreshCount(true), 30_000);
     const onReconnect = () => refreshCount(true);
+    const onImmediateRefresh = () => refreshCount(false);
     window.addEventListener(ONLINE_RECONNECTED_EVENT, onReconnect);
     window.addEventListener(OFFLINE_SYNCED_EVENT, onReconnect);
+    window.addEventListener(REFRESH_NOTIFICATIONS_EVENT, onImmediateRefresh);
+    window.addEventListener(MAINTENANCE_UPDATED_EVENT, onImmediateRefresh);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
       window.removeEventListener(ONLINE_RECONNECTED_EVENT, onReconnect);
       window.removeEventListener(OFFLINE_SYNCED_EVENT, onReconnect);
+      window.removeEventListener(REFRESH_NOTIFICATIONS_EVENT, onImmediateRefresh);
+      window.removeEventListener(MAINTENANCE_UPDATED_EVENT, onImmediateRefresh);
     };
   }, [user, section, isOnline]);
 
@@ -375,6 +467,7 @@ export default function App() {
   const navigateTo = (next: NavSection, tripId?: number) => {
     setSelectedTripId(tripId ?? null);
     setSelectedVehicleId(null);
+    setSelectedNotificationId(null);
     setMobileMenuOpen(false);
     if (next === 'home' || next === 'dashboard') {
       setSection('home');
@@ -395,6 +488,7 @@ export default function App() {
   const openPinChangeInSettings = () => {
     setSelectedTripId(null);
     setSelectedVehicleId(null);
+    setSelectedNotificationId(null);
     setSettingsTab('pin');
     setSection('settings');
     setMobileMenuOpen(false);
@@ -403,6 +497,7 @@ export default function App() {
   const openVehicleFromDashboard = (vid: number) => {
     setSelectedVehicleId(vid);
     setSelectedTripId(null);
+    setSelectedNotificationId(null);
     setSection('vehicles');
     setMobileMenuOpen(false);
   };
@@ -800,7 +895,10 @@ export default function App() {
           )}
           {!user.must_change_pin && section === 'notifications' && isAlertRecipient && (
             <NotificationsView
+              focusedNotificationId={selectedNotificationId}
+              onClearFocusedNotification={() => setSelectedNotificationId(null)}
               onOpenTrip={(tid) => navigateTo('trips', tid)}
+              onOpenMaintenance={() => navigateTo('maintenance')}
               onUnreadCountChanged={(cnt) => {
                 setUnreadNotifications(cnt);
                 if (cnt === 0) setHighUnreadNotifications(0);

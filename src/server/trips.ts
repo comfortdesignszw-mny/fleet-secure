@@ -28,7 +28,11 @@ import {
   validateDriverLicenceCode,
   type RouteAuthDeps,
 } from './directories';
-import { checkAndNotifyOverdueHires, notifyManagersInApp } from './notifications';
+import {
+  checkAndNotifyOverdueHires,
+  checkAndNotifyVehicleServiceDues,
+  notifyManagersInApp,
+} from './notifications';
 import type { AppEnv, D1DatabaseLike } from './types';
 
 export interface FuelCalcResult {
@@ -1200,6 +1204,8 @@ export function registerTripRoutes(
       },
       { env: c.env }
     );
+
+    await checkAndNotifyVehicleServiceDues(c.env.DB, { env: c.env });
 
     return c.json({ trip: summary, flags: summary.flags });
   });

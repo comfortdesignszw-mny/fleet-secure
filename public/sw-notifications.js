@@ -1,7 +1,13 @@
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
+  const data = (event.notification && event.notification.data) || {};
+  const notificationId = data.notificationId ?? null;
+  const tripId = data.tripId ?? null;
   const targetUrl =
-    (event.notification.data && event.notification.data.url) || '/';
+    data.url ||
+    (notificationId
+      ? `/?section=notifications&notificationId=${notificationId}`
+      : '/?section=notifications');
 
   event.waitUntil(
     self.clients
@@ -9,6 +15,16 @@ self.addEventListener('notificationclick', (event) => {
       .then((clients) => {
         for (const client of clients) {
           if ('focus' in client) {
+            try {
+              client.postMessage({
+                type: 'OPEN_NOTIFICATION',
+                notificationId,
+                tripId,
+                url: targetUrl,
+              });
+            } catch {
+              // Ignore postMessage failure
+            }
             return client.focus();
           }
         }

@@ -1,6 +1,9 @@
 import type { ExecutionContext } from 'hono';
 import { createApp } from './server/app';
-import { checkAndNotifyOverdueHires } from './server/notifications';
+import {
+  checkAndNotifyOverdueHires,
+  checkAndNotifyVehicleServiceDues,
+} from './server/notifications';
 import type { AppEnv } from './server/types';
 
 const app = createApp();
@@ -44,6 +47,11 @@ export default {
     ctx: ExecutionContext
   ): Promise<void> {
     if (!env?.DB) return;
-    ctx.waitUntil(checkAndNotifyOverdueHires(env.DB, { env }));
+    ctx.waitUntil(
+      Promise.allSettled([
+        checkAndNotifyOverdueHires(env.DB, { env }),
+        checkAndNotifyVehicleServiceDues(env.DB, { env }),
+      ])
+    );
   },
 };

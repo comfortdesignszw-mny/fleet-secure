@@ -18,6 +18,9 @@ export interface D1PreparedStatementLike {
 export interface D1DatabaseLike {
   prepare(query: string): D1PreparedStatementLike;
   exec(query: string): Promise<D1ExecResult>;
+  batch?<T = unknown>(
+    statements: D1PreparedStatementLike[]
+  ): Promise<Array<{ success: boolean; results?: T[]; meta?: D1ResultMeta }>>;
 }
 
 export interface AssetsFetcherLike {

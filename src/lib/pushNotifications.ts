@@ -2,8 +2,24 @@ import type { NotificationPriority, NotificationRecord, TripSummary } from '../s
 
 export const PUSH_PREFS_KEY = 'fleet_secure_push_prefs_v1';
 export const PUSH_PREFS_EVENT = 'fleet-secure-push-prefs-changed';
+export const OPEN_NOTIFICATION_EVENT = 'fleet-secure-open-notification';
+export const REFRESH_NOTIFICATIONS_EVENT = 'fleet-secure-refresh-notifications';
+export const MAINTENANCE_UPDATED_EVENT = 'fleet-secure-maintenance-updated';
 const ALERTED_NOTIF_IDS_KEY = 'fleet_secure_alerted_notif_ids_v1';
 const ALERTED_LOCAL_HIRE_KEY = 'fleet_secure_alerted_local_hire_v1';
+
+export function requestNotificationsRefresh(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(REFRESH_NOTIFICATIONS_EVENT));
+  }
+}
+
+export function notifyMaintenanceUpdated(): void {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MAINTENANCE_UPDATED_EVENT));
+    window.dispatchEvent(new CustomEvent(REFRESH_NOTIFICATIONS_EVENT));
+  }
+}
 
 export interface PushPreferences {
   pushEnabled: boolean;
@@ -159,11 +175,16 @@ export async function showDeviceNotification(params: {
   title: string;
   body: string;
   tag: string;
+  notificationId?: number | null;
   tripId?: number | null;
   priority?: NotificationPriority;
 }): Promise<boolean> {
   if (typeof window === 'undefined' || !('Notification' in window)) return false;
   if (Notification.permission !== 'granted') return false;
+
+  const targetUrl = params.notificationId
+    ? `/?section=notifications&notificationId=${params.notificationId}`
+    : '/?section=notifications';
 
   const notifOptions: NotificationOptions & { renotify?: boolean } = {
     body: params.body,
@@ -173,8 +194,9 @@ export async function showDeviceNotification(params: {
     renotify: true,
     requireInteraction: params.priority === 'HIGH',
     data: {
+      notificationId: params.notificationId ?? null,
       tripId: params.tripId ?? null,
-      url: '/',
+      url: targetUrl,
     },
   };
 
@@ -201,6 +223,14 @@ export async function showDeviceNotification(params: {
       } catch {
         // Ignore
       }
+      window.dispatchEvent(
+        new CustomEvent(OPEN_NOTIFICATION_EVENT, {
+          detail: {
+            notificationId: params.notificationId ?? null,
+            tripId: params.tripId ?? null,
+          },
+        })
+      );
       n.close();
     };
     return true;
@@ -271,6 +301,7 @@ export async function processIncomingNotifications(
         title: item.title,
         body: item.body,
         tag: `fleet-secure-notif-${item.id}`,
+        notificationId: item.id,
         tripId: item.trip_id,
         priority: item.priority,
       });

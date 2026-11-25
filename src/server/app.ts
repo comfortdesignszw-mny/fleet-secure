@@ -13,7 +13,12 @@ import { recordAudit, verifyAuditChain } from './audit';
 import { hashPin, signSession, verifyPin, verifySession } from './crypto';
 import { registerDashboardRoutes } from './dashboard';
 import { registerDirectoryRoutes } from './directories';
-import { ensureInitialSeed, seedPreviewDemoData, type DemoSeedCounts } from './seed';
+import {
+  ensureInitialSeed,
+  ensureUsersRoleConstraintAllowsFleetManager,
+  seedPreviewDemoData,
+  type DemoSeedCounts,
+} from './seed';
 import { notifyManagersInApp, registerNotificationRoutes } from './notifications';
 import { registerMaintenanceRoutes } from './maintenance';
 import { registerReportRoutes } from './reports';
@@ -803,23 +808,52 @@ export function createApp() {
     }
 
     const pinHash = await hashPin(pin);
-    const res = await c.env.DB.prepare(
-      `INSERT INTO users (username, full_name, role, pin_hash, active, must_change_pin)
-       VALUES (?, ?, ?, ?, 1, 1)`
-    )
-      .bind(username, fullName, role, pinHash)
-      .run();
+    const insertUser = async () =>
+      c.env.DB.prepare(
+        `INSERT INTO users (username, full_name, role, pin_hash, active, must_change_pin)
+         VALUES (?, ?, ?, ?, 1, 1)`
+      )
+        .bind(username, fullName, role, pinHash)
+        .run();
+
+    let res;
+    try {
+      res = await insertUser();
+    } catch (insertErr) {
+      const msg = insertErr instanceof Error ? insertErr.message : String(insertErr);
+      if (/check constraint/i.test(msg)) {
+        const migrated = await ensureUsersRoleConstraintAllowsFleetManager(c.env.DB);
+        if (migrated) {
+          res = await insertUser();
+        } else {
+          throw insertErr;
+        }
+      } else {
+        throw insertErr;
+      }
+    }
 
     const newId = res.meta.last_row_id;
 
     // Auto-create default IN_APP notification recipient for Supervisors, Fleet Managers, and Admins
     if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {
-      await c.env.DB.prepare(
-        `INSERT INTO notification_recipients (user_id, channel, destination, active)
-         VALUES (?, 'IN_APP', '', 1)`
-      )
-        .bind(newId)
-        .run();
+      try {
+        const hasInApp = await c.env.DB.prepare(
+          `SELECT id FROM notification_recipients WHERE user_id = ? AND channel = 'IN_APP'`
+        )
+          .bind(newId)
+          .first<{ id: number }>();
+        if (!hasInApp) {
+          await c.env.DB.prepare(
+            `INSERT INTO notification_recipients (user_id, channel, destination, active)
+             VALUES (?, 'IN_APP', '', 1)`
+          )
+            .bind(newId)
+            .run();
+        }
+      } catch (recErr) {
+        console.warn('Could not auto-create IN_APP notification recipient:', recErr);
+      }
     }
 
     const createdRow = await c.env.DB.prepare(
@@ -898,39 +932,68 @@ export function createApp() {
       }
     }
 
-    if (body.resetPin !== undefined) {
-      const resetPin = String(body.resetPin).trim();
-      if (resetPin.length < 4) {
+    const runUpdate = async () => {
+      if (body.resetPin !== undefined) {
+        const resetPin = String(body.resetPin).trim();
+        if (resetPin.length < 4) {
+          return { invalidPin: true as const };
+        }
+        const newHash = await hashPin(resetPin);
+        await c.env.DB.prepare(
+          `UPDATE users SET full_name = ?, role = ?, active = ?, pin_hash = ?, must_change_pin = 1 WHERE id = ?`
+        )
+          .bind(nextFullName, nextRole, nextActive ? 1 : 0, newHash, targetId)
+          .run();
+      } else {
+        await c.env.DB.prepare(`UPDATE users SET full_name = ?, role = ?, active = ? WHERE id = ?`)
+          .bind(nextFullName, nextRole, nextActive ? 1 : 0, targetId)
+          .run();
+      }
+      return { invalidPin: false as const };
+    };
+
+    try {
+      const updateOutcome = await runUpdate();
+      if (updateOutcome.invalidPin) {
         return c.json({ error: 'Reset PIN must be at least 4 characters.' }, 400);
       }
-      const newHash = await hashPin(resetPin);
-      await c.env.DB.prepare(
-        `UPDATE users SET full_name = ?, role = ?, active = ?, pin_hash = ?, must_change_pin = 1 WHERE id = ?`
-      )
-        .bind(nextFullName, nextRole, nextActive ? 1 : 0, newHash, targetId)
-        .run();
-    } else {
-      await c.env.DB.prepare(`UPDATE users SET full_name = ?, role = ?, active = ? WHERE id = ?`)
-        .bind(nextFullName, nextRole, nextActive ? 1 : 0, targetId)
-        .run();
+    } catch (updateErr) {
+      const msg = updateErr instanceof Error ? updateErr.message : String(updateErr);
+      if (/check constraint/i.test(msg)) {
+        const migrated = await ensureUsersRoleConstraintAllowsFleetManager(c.env.DB);
+        if (migrated) {
+          const retryOutcome = await runUpdate();
+          if (retryOutcome.invalidPin) {
+            return c.json({ error: 'Reset PIN must be at least 4 characters.' }, 400);
+          }
+        } else {
+          throw updateErr;
+        }
+      } else {
+        throw updateErr;
+      }
     }
 
     if (
       nextActive &&
       (nextRole === 'SUPERVISOR' || nextRole === 'FLEET_MANAGER' || nextRole === 'ADMIN')
     ) {
-      const hasInApp = await c.env.DB.prepare(
-        `SELECT id FROM notification_recipients WHERE user_id = ? AND channel = 'IN_APP'`
-      )
-        .bind(targetId)
-        .first<{ id: number }>();
-      if (!hasInApp) {
-        await c.env.DB.prepare(
-          `INSERT INTO notification_recipients (user_id, channel, destination, active)
-           VALUES (?, 'IN_APP', '', 1)`
+      try {
+        const hasInApp = await c.env.DB.prepare(
+          `SELECT id FROM notification_recipients WHERE user_id = ? AND channel = 'IN_APP'`
         )
           .bind(targetId)
-          .run();
+          .first<{ id: number }>();
+        if (!hasInApp) {
+          await c.env.DB.prepare(
+            `INSERT INTO notification_recipients (user_id, channel, destination, active)
+             VALUES (?, 'IN_APP', '', 1)`
+          )
+            .bind(targetId)
+            .run();
+        }
+      } catch (recErr) {
+        console.warn('Could not ensure IN_APP notification recipient:', recErr);
       }
     }
 

@@ -228,6 +228,106 @@ async function ensureSchemaTables(db: D1DatabaseLike): Promise<void> {
 
 let seedChecked = false;
 
+export async function ensureUsersRoleConstraintAllowsFleetManager(
+  db: D1DatabaseLike
+): Promise<boolean> {
+  try {
+    const usersSchemaRow = await db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+      .first<{ sql: string }>();
+    if (!usersSchemaRow?.sql) return false;
+    if (usersSchemaRow.sql.includes('FLEET_MANAGER')) return true;
+
+    const createUsersSql = `CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      full_name TEXT NOT NULL,
+      role TEXT NOT NULL CHECK (role IN ('DRIVER', 'SUPERVISOR', 'FLEET_MANAGER', 'ADMIN')),
+      pin_hash TEXT NOT NULL,
+      active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+      must_change_pin INTEGER NOT NULL DEFAULT 1 CHECK (must_change_pin IN (0, 1)),
+      created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )`;
+
+    // Attempt 1: Cloudflare D1-compatible batch transaction using PRAGMA defer_foreign_keys = ON
+    // Recreating `users` directly and re-inserting all rows decrements SQLite's deferred FK counter
+    // back to 0 before COMMIT (unlike `ALTER TABLE RENAME`, which leaves deferred FK violations open).
+    try {
+      const statements = [
+        db.prepare('PRAGMA defer_foreign_keys = ON'),
+        db.prepare('DROP TABLE IF EXISTS users_backup'),
+        db.prepare('CREATE TABLE users_backup AS SELECT * FROM users'),
+        db.prepare('DROP TABLE users'),
+        db.prepare(createUsersSql),
+        db.prepare(
+          `INSERT INTO users (id, username, full_name, role, pin_hash, active, must_change_pin, created_at)
+           SELECT id, username, full_name, role, pin_hash, active, must_change_pin, created_at FROM users_backup`
+        ),
+        db.prepare('DROP TABLE users_backup'),
+        db.prepare('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)'),
+        db.prepare('CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active)'),
+        db.prepare('PRAGMA defer_foreign_keys = OFF'),
+      ];
+      if (typeof db.batch === 'function') {
+        await db.batch(statements);
+      } else {
+        await db.exec(`
+          BEGIN IMMEDIATE;
+          PRAGMA defer_foreign_keys = ON;
+          DROP TABLE IF EXISTS users_backup;
+          CREATE TABLE users_backup AS SELECT * FROM users;
+          DROP TABLE users;
+          ${createUsersSql};
+          INSERT INTO users (id, username, full_name, role, pin_hash, active, must_change_pin, created_at)
+          SELECT id, username, full_name, role, pin_hash, active, must_change_pin, created_at FROM users_backup;
+          DROP TABLE users_backup;
+          CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+          CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
+          COMMIT;
+        `);
+      }
+    } catch (batchErr) {
+      try {
+        await db.prepare('DROP TABLE IF EXISTS users_backup').run();
+      } catch {
+        // Ignore cleanup
+      }
+
+      // Attempt 2: Standard SQLite fallback using PRAGMA foreign_keys = OFF (e.g., if legacy rows had orphaned refs)
+      try {
+        await db.exec(`
+          PRAGMA foreign_keys = OFF;
+          DROP TABLE IF EXISTS users_backup;
+          CREATE TABLE users_backup AS SELECT * FROM users;
+          DROP TABLE users;
+          ${createUsersSql};
+          INSERT INTO users (id, username, full_name, role, pin_hash, active, must_change_pin, created_at)
+          SELECT id, username, full_name, role, pin_hash, active, must_change_pin, created_at FROM users_backup;
+          DROP TABLE users_backup;
+          CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+          CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
+          PRAGMA foreign_keys = ON;
+        `);
+      } catch (fallbackErr) {
+        try {
+          await db.prepare('DROP TABLE IF EXISTS users_backup').run();
+          await db.prepare('PRAGMA foreign_keys = ON').run();
+        } catch {
+          // Ignore cleanup
+        }
+        console.warn('Users CHECK constraint migration warning:', batchErr, fallbackErr);
+      }
+    }
+
+    const verifiedRow = await db
+      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
+      .first<{ sql: string }>();
+    return Boolean(verifiedRow?.sql?.includes('FLEET_MANAGER'));
+  } catch {
+    return false;
+  }
+}
+
 export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>): Promise<void> {
   if (seedChecked) return;
 
@@ -258,46 +358,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
   }
 
   // Ensure users table CHECK constraint allows FLEET_MANAGER on pre-existing databases
-  try {
-    const usersSchemaRow = await db
-      .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'users'")
-      .first<{ sql: string }>();
-    if (usersSchemaRow?.sql && !usersSchemaRow.sql.includes('FLEET_MANAGER')) {
-      try {
-        await db.prepare('DROP TABLE IF EXISTS users_migrated').run();
-        await db.exec(`
-          PRAGMA foreign_keys = OFF;
-          CREATE TABLE users_migrated (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
-            full_name TEXT NOT NULL,
-            role TEXT NOT NULL CHECK (role IN ('DRIVER', 'SUPERVISOR', 'FLEET_MANAGER', 'ADMIN')),
-            pin_hash TEXT NOT NULL,
-            active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
-            must_change_pin INTEGER NOT NULL DEFAULT 1 CHECK (must_change_pin IN (0, 1)),
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-          );
-          INSERT INTO users_migrated (id, username, full_name, role, pin_hash, active, must_change_pin, created_at)
-          SELECT id, username, full_name, role, pin_hash, active, must_change_pin, created_at FROM users;
-          DROP TABLE users;
-          ALTER TABLE users_migrated RENAME TO users;
-          CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-          CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
-          PRAGMA foreign_keys = ON;
-        `);
-      } catch (err) {
-        try {
-          await db.prepare('DROP TABLE IF EXISTS users_migrated').run();
-          await db.prepare('PRAGMA foreign_keys = ON').run();
-        } catch {
-          // ignore cleanup
-        }
-        console.warn('Users CHECK constraint migration warning:', err);
-      }
-    }
-  } catch {
-    // ignore sqlite_master inspection warning
-  }
+  const usersRoleMigrated = await ensureUsersRoleConstraintAllowsFleetManager(db);
 
   // Ensure drivers table has all certificate/document columns and supports optional licence_number
   try {
@@ -449,7 +510,9 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     });
   }
 
-  seedChecked = true;
+  if (usersRoleMigrated) {
+    seedChecked = true;
+  }
 }
 
 export interface DemoSeedCounts {
