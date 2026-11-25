@@ -303,6 +303,54 @@ export async function checkAndNotifyOverdueHires(
           newlyNotified++;
         }
       }
+
+      if (hire.expected_return_date && hire.expected_return_date < todayHarare) {
+        const existingReturnOverdue = await db
+          .prepare(
+            `SELECT id FROM notifications WHERE event_type = 'HIRE_RETURN_OVERDUE' AND trip_id = ? LIMIT 1`
+          )
+          .bind(hire.id)
+          .first<{ id: number }>();
+
+        if (!existingReturnOverdue) {
+          const daysOverdue = Math.max(
+            1,
+            Math.round(
+              (new Date(`${todayHarare}T00:00:00Z`).getTime() -
+                new Date(`${hire.expected_return_date}T00:00:00Z`).getTime()) /
+                86_400_000
+            )
+          );
+          await notifyManagersInApp(
+            db,
+            {
+              eventType: 'HIRE_RETURN_OVERDUE',
+              priority: 'HIGH',
+              title: `Overdue Vehicle Return: ${hire.reg_number} (${daysOverdue}d past ${hire.expected_return_date})`,
+              body: `Overdue Return: ${hire.reg_number} (${hire.make_model}) hired to ${hire.client_name || 'client'} with driver ${hire.driver_name} was due back on ${hire.expected_return_date} (${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue) and has not been closed.`,
+              tripId: hire.id,
+            },
+            options
+          );
+
+          await recordAudit(db, {
+            userId: null,
+            username: 'system',
+            userRole: 'SYSTEM',
+            action: 'HIRE_RETURN_OVERDUE_DETECTED',
+            entity: 'trips',
+            entityId: hire.id,
+            newValue: {
+              reg_number: hire.reg_number,
+              days_hired: hire.days_hired,
+              expected_return_date: hire.expected_return_date,
+              days_overdue: daysOverdue,
+            },
+          });
+
+          newlyNotified++;
+        }
+      }
     }
 
     return { checked: openHires.length, newlyNotified };
@@ -367,9 +415,19 @@ export function registerNotificationRoutes(
         .bind(user.id)
         .first<{ unread_count: number; high_unread_count: number | null }>();
 
+      const { results: latestRows } = await c.env.DB.prepare(
+        `SELECT * FROM notifications
+         WHERE recipient_user_id = ? AND read_at IS NULL
+         ORDER BY id DESC
+         LIMIT 10`
+      )
+        .bind(user.id)
+        .all<Record<string, unknown>>();
+
       return c.json({
         unreadCount: Number(counts?.unread_count ?? 0),
         highUnreadCount: Number(counts?.high_unread_count ?? 0),
+        latestUnread: latestRows.map(mapNotificationRow),
       });
     }
   );

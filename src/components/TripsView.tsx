@@ -12,7 +12,14 @@ import {
   X,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
-import { OFFLINE_SYNCED_EVENT } from '../lib/offlineQueue';
+import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+  type CachedTripsPayload,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
 import {
   FUEL_LEVELS,
   formatHarareTime,
@@ -29,7 +36,18 @@ interface TripsViewProps {
   onRecordReturn?: (trip: TripSummary) => void;
 }
 
-const CACHE_KEY = 'fleet_secure_cache_trips';
+const LEGACY_CACHE_KEY = 'fleet_secure_cache_trips';
+
+function toHarareDateOnly(isoString: string): string {
+  const dt = new Date(isoString);
+  if (Number.isNaN(dt.getTime())) return isoString.slice(0, 10);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(dt);
+}
 
 export const TripsView: React.FC<TripsViewProps> = ({
   userRole,
@@ -53,6 +71,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
 
   // Detail state
   const [selectedId, setSelectedId] = useState<number | null>(initialTripId);
@@ -69,10 +88,44 @@ export const TripsView: React.FC<TripsViewProps> = ({
   const [corrError, setCorrError] = useState<string | null>(null);
   const [corrNotice, setCorrNotice] = useState<string | null>(null);
 
+  const applyOfflineTripFilters = useCallback(
+    (rawList: TripSummary[]): { paged: TripSummary[]; total: number } => {
+      const q = query.trim().toLowerCase();
+      const filtered = rawList.filter((t) => {
+        if (tab !== 'ALL' && t.status !== tab) return false;
+        if (tripType && t.trip_type !== tripType) return false;
+        if (flaggedOnly && t.flags.length === 0) return false;
+        const outDate = toHarareDateOnly(t.out_at);
+        if (fromDate && outDate < fromDate) return false;
+        if (toDate && outDate > toDate) return false;
+        if (q) {
+          const hay = [
+            t.reg_number,
+            t.make_model,
+            t.driver_name,
+            t.client_name ?? '',
+            t.destination ?? '',
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const offset = (page - 1) * limit;
+      return {
+        paged: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+      };
+    },
+    [tab, tripType, flaggedOnly, fromDate, toDate, query, page]
+  );
+
   const fetchTrips = useCallback(async () => {
     setLoading(true);
     setError(null);
     setUsingCache(false);
+    setCacheUpdatedAt(null);
     try {
       const res = await api.listTrips({
         status: tab === 'ALL' ? '' : tab,
@@ -86,55 +139,136 @@ export const TripsView: React.FC<TripsViewProps> = ({
       });
       setItems(res.items);
       setTotal(res.total);
+      if (tab === 'ALL' && !tripType && !flaggedOnly && !fromDate && !toDate && !query && page === 1) {
+        writeCachedEntry<CachedTripsPayload>(CACHE_KEYS.tripsAll, {
+          items: res.items,
+          total: res.total,
+        });
+      }
       try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify(res.items));
+        localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(res.items));
       } catch {
         // Ignore
       }
     } catch (err) {
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached) as TripSummary[];
-          setItems(parsed);
-          setTotal(parsed.length);
-          setUsingCache(true);
-        } else {
-          setError(err instanceof ApiError ? err.message : 'Could not load trips.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedV2 = readCachedEntry<CachedTripsPayload>(CACHE_KEYS.tripsAll);
+        let rawList: TripSummary[] | null = cachedV2?.data.items ?? null;
+        const updatedAt = cachedV2?.updatedAt ?? null;
+        if (!rawList) {
+          try {
+            const legacy = localStorage.getItem(LEGACY_CACHE_KEY);
+            if (legacy) rawList = JSON.parse(legacy) as TripSummary[];
+          } catch {
+            // Ignore
+          }
         }
-      } catch {
+        if (rawList) {
+          const applied = applyOfflineTripFilters(rawList);
+          setItems(applied.paged);
+          setTotal(applied.total);
+          setUsingCache(true);
+          setCacheUpdatedAt(updatedAt);
+        } else {
+          setError('Offline mode — no cached trips saved yet.');
+        }
+      } else {
         setError(err instanceof ApiError ? err.message : 'Could not load trips.');
       }
     } finally {
       setLoading(false);
     }
-  }, [tab, tripType, flaggedOnly, fromDate, toDate, query, page]);
+  }, [tab, tripType, flaggedOnly, fromDate, toDate, query, page, applyOfflineTripFilters]);
+
+  const loadDetail = useCallback(async (id: number) => {
+    setSelectedId(id);
+    setDetailLoading(true);
+    setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
+    try {
+      const data = await api.getTrip(id);
+      setDetail(data);
+      writeCachedEntry<TripDetail>(CACHE_KEYS.tripDetail(id), data);
+    } catch (err) {
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedDetail = readCachedEntry<TripDetail>(CACHE_KEYS.tripDetail(id));
+        if (cachedDetail) {
+          setDetail(cachedDetail.data);
+          setUsingCache(true);
+          setCacheUpdatedAt(cachedDetail.updatedAt);
+        } else {
+          const cachedAll = readCachedEntry<CachedTripsPayload>(CACHE_KEYS.tripsAll);
+          const match = cachedAll?.data.items.find((t) => t.id === id);
+          if (match) {
+            setDetail({
+              trip: match,
+              out: {
+                trip_id: match.id,
+                out_at: match.out_at,
+                device_time: null,
+                received_at: match.created_at,
+                mileage_out: match.mileage_out,
+                fuel_out: match.fuel_out,
+                opening_checklist_by: '',
+                notes: '',
+                flags: match.flags,
+                recorded_by: 0,
+                recorded_by_name: 'Cached summary',
+              },
+              inRecord:
+                match.in_at && match.mileage_in !== null && match.fuel_in
+                  ? {
+                      trip_id: match.id,
+                      in_at: match.in_at,
+                      device_time: null,
+                      received_at: match.in_at,
+                      mileage_in: match.mileage_in,
+                      fuel_in: match.fuel_in,
+                      closing_checklist_by: 'Cached summary',
+                      notes: '',
+                      recorded_by: 0,
+                      recorded_by_name: 'Cached summary',
+                      total_mileage: match.total_mileage ?? 0,
+                      est_fuel_litres: match.est_fuel_litres ?? 0,
+                      gauge_fuel_litres: match.gauge_fuel_litres ?? 0,
+                      flags: match.flags,
+                    }
+                  : null,
+              corrections: [],
+            });
+            setUsingCache(true);
+            setCacheUpdatedAt(cachedAll?.updatedAt ?? null);
+          } else {
+            setError('You are offline and this trip’s details have not been cached yet.');
+          }
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load trip details.');
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchTrips();
   }, [fetchTrips]);
 
   useEffect(() => {
-    const handleSynced = () => {
-      fetchTrips();
+    const refreshOnReconnect = () => {
+      void fetchTrips();
+      if (selectedId !== null) {
+        void loadDetail(selectedId);
+      }
     };
-    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
-    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
-  }, [fetchTrips]);
-
-  const loadDetail = useCallback(async (id: number) => {
-    setSelectedId(id);
-    setDetailLoading(true);
-    setError(null);
-    try {
-      const data = await api.getTrip(id);
-      setDetail(data);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load trip details.');
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    return () => {
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    };
+  }, [fetchTrips, loadDetail, selectedId]);
 
   useEffect(() => {
     if (initialTripId) {
@@ -231,6 +365,15 @@ export const TripsView: React.FC<TripsViewProps> = ({
           </div>
         </div>
 
+        {usingCache && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+          >
+            Offline mode — showing cached trip record
+            {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Will refresh automatically when connected.
+          </div>
+        )}
         {corrNotice && (
           <div
             role="status"
@@ -340,11 +483,17 @@ export const TripsView: React.FC<TripsViewProps> = ({
                             <dt className="text-slate-500">Expected Return Date</dt>
                             <dd
                               className={`font-mono tabular-nums font-semibold ${
-                                detail.trip.is_return_due ? 'text-red-700' : 'text-blue-950'
+                                detail.trip.is_return_due || detail.trip.is_return_overdue
+                                  ? 'text-red-700'
+                                  : 'text-blue-950'
                               }`}
                             >
                               {detail.trip.expected_return_date}
-                              {detail.trip.is_return_due ? ' (Return Due)' : ''}
+                              {detail.trip.is_return_overdue
+                                ? ' (Return Overdue)'
+                                : detail.trip.is_return_due
+                                  ? ' (Return Due)'
+                                  : ''}
                             </dd>
                           </div>
                         )}
@@ -645,7 +794,8 @@ export const TripsView: React.FC<TripsViewProps> = ({
           role="status"
           className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
         >
-          Showing your last saved trips list because you are offline.
+          Offline mode — showing cached trips
+          {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Ready to refresh instantly on active connection.
         </div>
       )}
 
@@ -814,11 +964,17 @@ export const TripsView: React.FC<TripsViewProps> = ({
                         <span aria-hidden="true">·</span>
                         <span
                           className={`font-mono tabular-nums font-medium ${
-                            t.is_return_due ? 'text-red-700 font-semibold' : 'text-slate-600'
+                            t.is_return_due || t.is_return_overdue
+                              ? 'text-red-700 font-semibold'
+                              : 'text-slate-600'
                           }`}
                         >
                           Due {t.expected_return_date}
-                          {t.is_return_due ? ' (Return Due)' : ''}
+                          {t.is_return_overdue
+                            ? ' (Return Overdue)'
+                            : t.is_return_due
+                              ? ' (Return Due)'
+                              : ''}
                         </span>
                       </>
                     )}
@@ -842,9 +998,21 @@ export const TripsView: React.FC<TripsViewProps> = ({
                   )}
 
                   {t.status === 'OPEN' ? (
-                    <span className="inline-flex items-center gap-1 text-sm font-semibold text-amber-700">
+                    <span
+                      className={`inline-flex items-center gap-1 text-sm font-semibold ${
+                        t.is_overdue || t.is_return_overdue || t.is_return_due
+                          ? 'text-red-700'
+                          : 'text-amber-700'
+                      }`}
+                    >
                       <Clock className="h-4 w-4" aria-hidden="true" />
-                      <span>{t.is_overdue ? 'Overdue' : 'Ongoing'}</span>
+                      <span>
+                        {t.is_return_overdue || t.is_overdue
+                          ? 'Overdue'
+                          : t.is_return_due
+                            ? 'Return Due'
+                            : 'Ongoing'}
+                      </span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center gap-1 text-sm font-medium text-cyan-700">

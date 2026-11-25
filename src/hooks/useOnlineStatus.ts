@@ -1,10 +1,19 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { checkServerReachable } from '../lib/api';
+import { dispatchOnlineReconnected } from '../lib/offlineCache';
 
 export function useOnlineStatus() {
   const [isOnline, setIsOnline] = useState(
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
+  const wasOnlineRef = useRef(isOnline);
+
+  useEffect(() => {
+    if (!wasOnlineRef.current && isOnline) {
+      dispatchOnlineReconnected();
+    }
+    wasOnlineRef.current = isOnline;
+  }, [isOnline]);
 
   const probeNow = useCallback(async (): Promise<boolean> => {
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
@@ -43,7 +52,7 @@ export function useOnlineStatus() {
       if (!isOnline) {
         void probeNow();
       }
-    }, 6000);
+    }, 5000);
 
     return () => {
       window.removeEventListener('online', handleOnline);

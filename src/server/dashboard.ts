@@ -146,16 +146,36 @@ export function registerDashboardRoutes(
 
       const status = r.status as 'OPEN' | 'CLOSED';
       const tripType = r.trip_type as TripType;
+      const expectedReturnDate = r.expected_return_date ? String(r.expected_return_date) : null;
+      const isReturnDue =
+        status === 'OPEN' &&
+        tripType === 'HIRE' &&
+        Boolean(expectedReturnDate) &&
+        expectedReturnDate! <= todayStr;
+      const isReturnOverdue =
+        status === 'OPEN' &&
+        tripType === 'HIRE' &&
+        Boolean(expectedReturnDate) &&
+        expectedReturnDate! < todayStr;
       const elapsedHours = (nowMs - new Date(outAt).getTime()) / 3_600_000;
-      const isOverdue = status === 'OPEN' && tripType === 'HIRE' && elapsedHours > overdueHours;
+      const elapsedOverdue = status === 'OPEN' && tripType === 'HIRE' && elapsedHours > overdueHours;
+      const isOverdue = elapsedOverdue || isReturnOverdue;
 
       if (isOverdue) {
         overdueHires++;
-        combinedFlags.push({
-          code: 'OVERDUE',
-          severity: 'HIGH',
-          message: `Hire out for ${Math.floor(elapsedHours)}h (limit ${overdueHours}h).`,
-        });
+        if (elapsedOverdue) {
+          combinedFlags.push({
+            code: 'OVERDUE',
+            severity: 'HIGH',
+            message: `Hire out for ${Math.floor(elapsedHours)}h (limit ${overdueHours}h).`,
+          });
+        } else if (isReturnOverdue) {
+          combinedFlags.push({
+            code: 'OVERDUE',
+            severity: 'HIGH',
+            message: `Return date was ${expectedReturnDate} and hire is still open.`,
+          });
+        }
       }
 
       if (combinedFlags.length > 0) {
@@ -175,11 +195,6 @@ export function registerDashboardRoutes(
       if (status === 'OPEN') {
         const daysHired =
           r.days_hired !== null && r.days_hired !== undefined ? Number(r.days_hired) : null;
-        const expectedReturnDate = r.expected_return_date ? String(r.expected_return_date) : null;
-        const isReturnDue =
-          tripType === 'HIRE' &&
-          Boolean(expectedReturnDate) &&
-          expectedReturnDate! <= todayStr;
 
         longestVehiclesOut.push({
           id: Number(r.id),
@@ -193,6 +208,7 @@ export function registerDashboardRoutes(
           days_hired: daysHired,
           expected_return_date: expectedReturnDate,
           is_return_due: isReturnDue,
+          is_return_overdue: isReturnOverdue,
           created_at: String(r.created_at),
           reg_number: String(r.reg_number),
           make_model: String(r.make_model),

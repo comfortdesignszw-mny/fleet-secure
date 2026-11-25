@@ -25,6 +25,7 @@ import {
   isNotNullLicenceError,
   makeUnrecordedLicenceSentinel,
   validateDocumentDataUrl,
+  validateDriverLicenceCode,
   type RouteAuthDeps,
 } from './directories';
 import { checkAndNotifyOverdueHires, notifyManagersInApp } from './notifications';
@@ -128,15 +129,35 @@ function mapTripSummaryRow(
     tripType === 'HIRE' &&
     Boolean(expectedReturnDate) &&
     expectedReturnDate! <= todayHarare;
+  const isReturnOverdue =
+    status === 'OPEN' &&
+    tripType === 'HIRE' &&
+    Boolean(expectedReturnDate) &&
+    expectedReturnDate! < todayHarare;
 
   const elapsedHours = (nowMs - new Date(outAt).getTime()) / 3_600_000;
-  const isOverdue = status === 'OPEN' && tripType === 'HIRE' && elapsedHours > overdueHours;
+  const elapsedOverdue = status === 'OPEN' && tripType === 'HIRE' && elapsedHours > overdueHours;
+  const isOverdue = elapsedOverdue || isReturnOverdue;
 
-  if (isOverdue && !combinedFlags.some((f) => f.code === 'OVERDUE')) {
+  if (elapsedOverdue && !combinedFlags.some((f) => f.code === 'OVERDUE')) {
     combinedFlags.push({
       code: 'OVERDUE',
       severity: 'HIGH',
       message: `Hire has been out for ${Math.floor(elapsedHours)} hours (limit: ${overdueHours}h).`,
+    });
+  } else if (isReturnOverdue && !combinedFlags.some((f) => f.code === 'OVERDUE')) {
+    const daysOverdue = Math.max(
+      1,
+      Math.round(
+        (new Date(`${todayHarare}T00:00:00Z`).getTime() -
+          new Date(`${expectedReturnDate}T00:00:00Z`).getTime()) /
+          86_400_000
+      )
+    );
+    combinedFlags.push({
+      code: 'OVERDUE',
+      severity: 'HIGH',
+      message: `Vehicle return date (${expectedReturnDate}) is ${daysOverdue} day${daysOverdue === 1 ? '' : 's'} overdue and hire is still open.`,
     });
   }
 
@@ -152,6 +173,7 @@ function mapTripSummaryRow(
     days_hired: daysHired,
     expected_return_date: expectedReturnDate,
     is_return_due: isReturnDue,
+    is_return_overdue: isReturnOverdue,
     created_at: String(row.created_at),
     reg_number: String(row.reg_number),
     make_model: String(row.make_model),
@@ -580,6 +602,7 @@ export function registerTripRoutes(
     let newDriverSpec: {
       fullName: string;
       licenceNumber: string | null;
+      licenceCode: string | null;
       phone: string;
       address: string;
       licenceExpiry: string | null;
@@ -597,6 +620,9 @@ export function registerTripRoutes(
       const fullName = (body.new_driver.full_name || '').trim();
       const rawLicence = normalizeDriverLicenceNumber(body.new_driver.licence_number);
       const licenceNumber = rawLicence ? rawLicence.toUpperCase() : null;
+      const licCodeCheck = validateDriverLicenceCode(body.new_driver.licence_code);
+      if (!licCodeCheck.ok) return c.json({ error: licCodeCheck.error }, 400);
+      const licenceCode = licCodeCheck.value;
       const phone = (body.new_driver.phone || '').trim();
       const address = (body.new_driver.address || '').trim();
       const licenceExpiry = body.new_driver.licence_expiry
@@ -657,6 +683,7 @@ export function registerTripRoutes(
       newDriverSpec = {
         fullName,
         licenceNumber,
+        licenceCode,
         phone,
         address,
         licenceExpiry,
@@ -758,17 +785,18 @@ export function registerTripRoutes(
       const insertInlineDriver = async (licVal: string | null) =>
         c.env.DB.prepare(
           `INSERT INTO drivers (
-             full_name, licence_number, phone, address, licence_expiry,
+             full_name, licence_number, licence_code, phone, address, licence_expiry,
              licence_document, ddc_number, ddc_document,
              retest_cert_number, retest_document,
              medical_cert_number, medical_document,
              active, created_by
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         )
           .bind(
             newDriverSpec.fullName,
             licVal,
+            newDriverSpec.licenceCode,
             newDriverSpec.phone,
             newDriverSpec.address,
             newDriverSpec.licenceExpiry,
@@ -810,6 +838,7 @@ export function registerTripRoutes(
         newValue: {
           full_name: newDriverSpec.fullName,
           licence_number: newDriverSpec.licenceNumber,
+          licence_code: newDriverSpec.licenceCode,
           phone: newDriverSpec.phone,
           address: newDriverSpec.address,
           licence_expiry: newDriverSpec.licenceExpiry,

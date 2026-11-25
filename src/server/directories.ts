@@ -1,5 +1,6 @@
 import type { Context, Hono, MiddlewareHandler } from 'hono';
 import {
+  DRIVER_LICENCE_CODES,
   UNRECORDED_LICENCE_PREFIX,
   VEHICLE_CONDITIONS,
   VEHICLE_TYPE_TO_CLASS,
@@ -125,6 +126,25 @@ export function validateDocumentDataUrl(
   return { ok: true, value: trimmed };
 }
 
+export function validateDriverLicenceCode(
+  raw: unknown
+): { ok: true; value: string | null } | { ok: false; error: string } {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, value: null };
+  }
+  const trimmed = String(raw).trim();
+  if (!trimmed) {
+    return { ok: true, value: null };
+  }
+  if (!(DRIVER_LICENCE_CODES as readonly string[]).includes(trimmed)) {
+    return {
+      ok: false,
+      error: `Choose a valid Driver's Licence Code/Class (${DRIVER_LICENCE_CODES.join(', ')}).`,
+    };
+  }
+  return { ok: true, value: trimmed };
+}
+
 function mapDriverRow(
   row: Record<string, unknown>,
   options: { includeDocuments?: boolean; includeMissingWarning?: boolean } = {}
@@ -132,6 +152,7 @@ function mapDriverRow(
   const licenceExpiry = row.licence_expiry ? String(row.licence_expiry) : null;
   const { licence_status, days_to_expiry } = computeLicenceExpiryStatus(licenceExpiry);
   const licenceNumber = normalizeDriverLicenceNumber(row.licence_number);
+  const licenceCode = row.licence_code ? String(row.licence_code) : null;
   const ddcNumber = row.ddc_number ? String(row.ddc_number) : null;
   const retestCertNumber = row.retest_cert_number ? String(row.retest_cert_number) : null;
   const medicalCertNumber = row.medical_cert_number ? String(row.medical_cert_number) : null;
@@ -148,6 +169,7 @@ function mapDriverRow(
     id: Number(row.id),
     full_name: String(row.full_name),
     licence_number: licenceNumber,
+    licence_code: licenceCode,
     phone: String(row.phone),
     address: String(row.address ?? ''),
     licence_expiry: licenceExpiry,
@@ -199,7 +221,7 @@ const VEHICLE_SELECT_SQL = `
 
 const DRIVER_LIST_SELECT_SQL = `
   SELECT
-    d.id, d.full_name, d.licence_number, d.phone, d.address, d.licence_expiry,
+    d.id, d.full_name, d.licence_number, d.licence_code, d.phone, d.address, d.licence_expiry,
     d.ddc_number, d.retest_cert_number, d.medical_cert_number,
     d.active, d.created_at, d.created_by,
     CASE WHEN d.licence_document IS NOT NULL AND d.licence_document != '' THEN 1 ELSE 0 END AS has_licence_document,
@@ -629,10 +651,10 @@ export function registerDirectoryRoutes(
     }
     if (q) {
       clauses.push(
-        "(LOWER(d.full_name) LIKE ? OR LOWER(COALESCE(d.licence_number, '')) LIKE ? OR LOWER(d.phone) LIKE ? OR LOWER(COALESCE(d.ddc_number, '')) LIKE ? OR LOWER(COALESCE(d.retest_cert_number, '')) LIKE ? OR LOWER(COALESCE(d.medical_cert_number, '')) LIKE ?)"
+        "(LOWER(d.full_name) LIKE ? OR LOWER(COALESCE(d.licence_number, '')) LIKE ? OR LOWER(COALESCE(d.licence_code, '')) LIKE ? OR LOWER(d.phone) LIKE ? OR LOWER(COALESCE(d.ddc_number, '')) LIKE ? OR LOWER(COALESCE(d.retest_cert_number, '')) LIKE ? OR LOWER(COALESCE(d.medical_cert_number, '')) LIKE ?)"
       );
       const like = `%${q}%`;
-      params.push(like, like, like, like, like, like);
+      params.push(like, like, like, like, like, like, like);
     }
     if (status === 'Available') {
       clauses.push('ot.id IS NULL');
@@ -734,6 +756,7 @@ export function registerDirectoryRoutes(
       let body: {
         full_name?: string;
         licence_number?: string | null;
+        licence_code?: string | null;
         phone?: string;
         address?: string;
         licence_expiry?: string | null;
@@ -754,6 +777,9 @@ export function registerDirectoryRoutes(
       const fullName = (body.full_name || '').trim();
       const rawLicence = normalizeDriverLicenceNumber(body.licence_number);
       const licenceNumber = rawLicence ? rawLicence.toUpperCase() : null;
+      const licCodeCheck = validateDriverLicenceCode(body.licence_code);
+      if (!licCodeCheck.ok) return c.json({ error: licCodeCheck.error }, 400);
+      const licenceCode = licCodeCheck.value;
       const phone = (body.phone || '').trim();
       const address = (body.address || '').trim();
       const licenceExpiry = body.licence_expiry ? String(body.licence_expiry).trim() : null;
@@ -804,17 +830,18 @@ export function registerDirectoryRoutes(
       const insertDriver = async (licVal: string | null) =>
         c.env.DB.prepare(
           `INSERT INTO drivers (
-             full_name, licence_number, phone, address, licence_expiry,
+             full_name, licence_number, licence_code, phone, address, licence_expiry,
              licence_document, ddc_number, ddc_document,
              retest_cert_number, retest_document,
              medical_cert_number, medical_document,
              active, created_by
            )
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)`
         )
           .bind(
             fullName,
             licVal,
+            licenceCode,
             phone,
             address,
             licenceExpiry,
@@ -859,6 +886,7 @@ export function registerDirectoryRoutes(
         newValue: {
           full_name: created.full_name,
           licence_number: created.licence_number,
+          licence_code: created.licence_code,
           phone: created.phone,
           address: created.address,
           licence_expiry: created.licence_expiry,
@@ -918,6 +946,7 @@ export function registerDirectoryRoutes(
       let body: {
         full_name?: string;
         licence_number?: string | null;
+        licence_code?: string | null;
         phone?: string;
         address?: string;
         licence_expiry?: string | null;
@@ -942,6 +971,12 @@ export function registerDirectoryRoutes(
           ? normalizeDriverLicenceNumber(body.licence_number)
           : oldDriver.licence_number;
       const nextLicence = parsedPatchLicence ? parsedPatchLicence.toUpperCase() : null;
+      let nextLicenceCode = oldDriver.licence_code ?? null;
+      if (body.licence_code !== undefined) {
+        const licCodeCheck = validateDriverLicenceCode(body.licence_code);
+        if (!licCodeCheck.ok) return c.json({ error: licCodeCheck.error }, 400);
+        nextLicenceCode = licCodeCheck.value;
+      }
       const nextPhone = body.phone !== undefined ? body.phone.trim() : oldDriver.phone;
       const nextAddress = body.address !== undefined ? body.address.trim() : oldDriver.address;
       const nextExpiry =
@@ -1030,6 +1065,7 @@ export function registerDirectoryRoutes(
       const setFragments = [
         'full_name = ?',
         'licence_number = ?',
+        'licence_code = ?',
         'phone = ?',
         'address = ?',
         'licence_expiry = ?',
@@ -1045,6 +1081,7 @@ export function registerDirectoryRoutes(
           .bind(
             nextName,
             licVal,
+            nextLicenceCode,
             nextPhone,
             nextAddress,
             nextExpiry,
@@ -1085,6 +1122,7 @@ export function registerDirectoryRoutes(
         oldValue: {
           full_name: oldDriver.full_name,
           licence_number: oldDriver.licence_number,
+          licence_code: oldDriver.licence_code,
           phone: oldDriver.phone,
           address: oldDriver.address,
           licence_expiry: oldDriver.licence_expiry,
@@ -1100,6 +1138,7 @@ export function registerDirectoryRoutes(
         newValue: {
           full_name: updated.full_name,
           licence_number: updated.licence_number,
+          licence_code: updated.licence_code,
           phone: updated.phone,
           address: updated.address,
           licence_expiry: updated.licence_expiry,

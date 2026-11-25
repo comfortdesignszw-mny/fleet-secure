@@ -6,7 +6,13 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
-import { OFFLINE_SYNCED_EVENT } from '../lib/offlineQueue';
+import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
 import {
   formatHarareTime,
   type DashboardData,
@@ -49,6 +55,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const [toDate, setToDate] = useState(today);
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [sortKey, setSortKey] = useState<SortKey>('total_mileage');
@@ -57,26 +65,49 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   const loadDashboard = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
     try {
       const res = await api.getDashboard({ from: fromDate, to: toDate });
       setData(res);
+      writeCachedEntry<DashboardData>(CACHE_KEYS.dashboardRange(fromDate, toDate), res);
+      if (fromDate === monthStart && toDate === today) {
+        writeCachedEntry<DashboardData>(CACHE_KEYS.dashboardDefault, res);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load dashboard.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cached =
+          readCachedEntry<DashboardData>(CACHE_KEYS.dashboardRange(fromDate, toDate)) ??
+          readCachedEntry<DashboardData>(CACHE_KEYS.dashboardDefault);
+        if (cached) {
+          setData(cached.data);
+          setUsingCache(true);
+          setCacheUpdatedAt(cached.updatedAt);
+        } else {
+          setError('Offline mode — no cached dashboard stats saved yet.');
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load dashboard.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [fromDate, toDate]);
+  }, [fromDate, toDate, monthStart, today]);
 
   useEffect(() => {
     loadDashboard();
   }, [loadDashboard]);
 
   useEffect(() => {
-    const handleSynced = () => {
-      loadDashboard();
+    const handleReconnectOrSync = () => {
+      void loadDashboard();
     };
-    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
-    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleReconnectOrSync);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, handleReconnectOrSync);
+    return () => {
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleReconnectOrSync);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, handleReconnectOrSync);
+    };
   }, [loadDashboard]);
 
   const applyPreset = (preset: 'month' | '7d' | '30d' | 'year') => {
@@ -156,6 +187,16 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           <span>Refresh</span>
         </button>
       </div>
+
+      {usingCache && (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+        >
+          Offline mode — showing cached Fleet Dashboard stats
+          {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Ready to sync &amp; update instantly on active connection.
+        </div>
+      )}
 
       {error && (
         <div
@@ -461,11 +502,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                         </div>
                         <span
                           className={`text-xs font-mono tabular-nums font-semibold shrink-0 ${
-                            t.is_overdue || t.is_return_due ? 'text-red-700' : 'text-amber-700'
+                            t.is_overdue || t.is_return_due || t.is_return_overdue
+                              ? 'text-red-700'
+                              : 'text-amber-700'
                           }`}
                         >
                           {formatDuration(t.out_at)}
-                          {t.is_return_due ? ' (Return Due)' : t.is_overdue ? ' (Overdue)' : ''}
+                          {t.is_return_overdue
+                            ? ' (Return Overdue)'
+                            : t.is_return_due
+                              ? ' (Return Due)'
+                              : t.is_overdue
+                                ? ' (Overdue)'
+                                : ''}
                         </span>
                       </button>
                     ))}

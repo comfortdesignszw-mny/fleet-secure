@@ -29,6 +29,7 @@ export interface InTripPayload {
 export interface OfflineCreateDriverPayload {
   full_name: string;
   licence_number?: string | null;
+  licence_code?: string | null;
   phone: string;
   address?: string;
   licence_expiry?: string | null;

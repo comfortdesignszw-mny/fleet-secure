@@ -1,7 +1,41 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Bell, KeyRound, Plus, Search, ShieldAlert, Trash2, UserCheck, UserX, X } from 'lucide-react';
+import {
+  ArrowLeft,
+  Bell,
+  BellRing,
+  KeyRound,
+  Plus,
+  Search,
+  ShieldAlert,
+  Trash2,
+  UserCheck,
+  UserX,
+  Volume2,
+  VolumeX,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import { en } from '../i18n/en';
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, getCachedSettings } from '../lib/api';
+import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+  type CachedRecipientsPayload,
+  type CachedUsersPayload,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
+import {
+  PUSH_PREFS_EVENT,
+  getNotificationPermissionState,
+  getPushPreferences,
+  requestBrowserNotificationPermission,
+  setPushPreferences,
+  testNotificationAndSound,
+  unlockNotificationAudio,
+  type PushPreferences,
+} from '../lib/pushNotifications';
 import { ChangePinView } from './ChangePinView';
 import {
   DEFAULT_SETTINGS,
@@ -47,12 +81,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [tab, setTab] = useState<SettingsTab>(() => resolveDefaultTab(initialTab));
   const [pinSavedSuccess, setPinSavedSuccess] = useState(false);
 
+  // Device push & sound preferences (works offline, default ON)
+  const [pushPrefs, setPushPrefsState] = useState<PushPreferences>(() => getPushPreferences());
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>(() =>
+    getNotificationPermissionState()
+  );
+  const [testingPush, setTestingPush] = useState(false);
+  const [pushTestNotice, setPushTestNotice] = useState<string | null>(null);
+
   // Settings state
   const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
   const [loadingSettings, setLoadingSettings] = useState(true);
   const [savingSettings, setSavingSettings] = useState(false);
   const [settingsMsg, setSettingsMsg] = useState<string | null>(null);
   const [settingsErr, setSettingsErr] = useState<string | null>(null);
+  const [settingsOfflineUpdatedAt, setSettingsOfflineUpdatedAt] = useState<string | null>(null);
 
   // Users state
   const [users, setUsers] = useState<UserPublic[]>([]);
@@ -60,6 +103,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [loadingUsers, setLoadingUsers] = useState(true);
   const [usersErr, setUsersErr] = useState<string | null>(null);
   const [usersMsg, setUsersMsg] = useState<string | null>(null);
+  const [usersOfflineUpdatedAt, setUsersOfflineUpdatedAt] = useState<string | null>(null);
 
   // Notification recipients state
   const [recipients, setRecipients] = useState<NotificationRecipient[]>([]);
@@ -70,6 +114,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [loadingRecipients, setLoadingRecipients] = useState(false);
   const [recipientsErr, setRecipientsErr] = useState<string | null>(null);
   const [recipientsMsg, setRecipientsMsg] = useState<string | null>(null);
+  const [recipientsOfflineUpdatedAt, setRecipientsOfflineUpdatedAt] = useState<string | null>(null);
   const [recUserId, setRecUserId] = useState<number>(0);
   const [recChannel, setRecChannel] = useState<NotificationChannel>('EMAIL');
   const [recDestination, setRecDestination] = useState('');
@@ -96,37 +141,87 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   }, [initialTab, resolveDefaultTab]);
 
   useEffect(() => {
+    const syncPrefs = () => {
+      setPushPrefsState(getPushPreferences());
+      setNotifPerm(getNotificationPermissionState());
+    };
+    window.addEventListener(PUSH_PREFS_EVENT, syncPrefs);
+    return () => window.removeEventListener(PUSH_PREFS_EVENT, syncPrefs);
+  }, []);
+
+  const loadGeneralSettings = useCallback(async () => {
     if (!canLoadAdminData) {
       setLoadingSettings(false);
       return;
     }
-    let active = true;
     setLoadingSettings(true);
     setSettingsErr(null);
-    api
-      .getSettings()
-      .then((res) => {
-        if (active) setSettings(res.settings);
-      })
-      .catch((err) => {
-        if (active) setSettingsErr(err instanceof ApiError ? err.message : 'Failed to load settings.');
-      })
-      .finally(() => {
-        if (active) setLoadingSettings(false);
-      });
-    return () => {
-      active = false;
-    };
+    try {
+      const res = await api.getSettings();
+      setSettings(res.settings);
+      setSettingsOfflineUpdatedAt(null);
+      writeCachedEntry<AppSettings>('settings_general', res.settings);
+    } catch (err) {
+      const offline =
+        (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        isLikelyNetworkError(err);
+      if (offline) {
+        const cachedEntry = readCachedEntry<AppSettings>('settings_general');
+        const fallbackSettings = cachedEntry?.data ?? getCachedSettings();
+        if (fallbackSettings) {
+          setSettings(fallbackSettings);
+          setSettingsOfflineUpdatedAt(cachedEntry?.updatedAt ?? 'cached');
+          setSettingsErr(null);
+          return;
+        }
+      }
+      setSettingsErr(err instanceof ApiError ? err.message : 'Failed to load settings.');
+    } finally {
+      setLoadingSettings(false);
+    }
   }, [canLoadAdminData]);
+
+  useEffect(() => {
+    void loadGeneralSettings();
+  }, [loadGeneralSettings]);
 
   const loadUsers = useCallback(async () => {
     if (!canLoadAdminData) return;
     setLoadingUsers(true);
     setUsersErr(null);
+    const trimmedQuery = userQuery.trim();
     try {
-      const res = await api.listUsers({ q: userQuery.trim(), limit: 50 });
+      const res = await api.listUsers({ q: trimmedQuery, limit: 50 });
       setUsers(res.items);
+      setUsersOfflineUpdatedAt(null);
+      if (!trimmedQuery) {
+        writeCachedEntry<CachedUsersPayload>(CACHE_KEYS.staffUsers, {
+          items: res.items,
+          total: res.total,
+        });
+      }
     } catch (err) {
+      const offline =
+        (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        isLikelyNetworkError(err);
+      if (offline) {
+        const cached = readCachedEntry<CachedUsersPayload>(CACHE_KEYS.staffUsers);
+        if (cached) {
+          const needle = trimmedQuery.toLowerCase();
+          const filtered = needle
+            ? cached.data.items.filter(
+                (u) =>
+                  u.full_name.toLowerCase().includes(needle) ||
+                  u.username.toLowerCase().includes(needle) ||
+                  ROLE_LABELS[u.role].toLowerCase().includes(needle)
+              )
+            : cached.data.items;
+          setUsers(filtered);
+          setUsersOfflineUpdatedAt(cached.updatedAt);
+          setUsersErr(null);
+          return;
+        }
+      }
       setUsersErr(err instanceof ApiError ? err.message : 'Failed to load staff accounts.');
     } finally {
       setLoadingUsers(false);
@@ -135,7 +230,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
   useEffect(() => {
     if (tab === 'users' && canLoadAdminData) {
-      loadUsers();
+      void loadUsers();
     }
   }, [tab, canLoadAdminData, loadUsers]);
 
@@ -149,7 +244,24 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       setManagers(res.managers);
       setEmailConfigured(res.emailConfigured);
       setRecUserId((prev) => prev || res.managers[0]?.id || 0);
+      setRecipientsOfflineUpdatedAt(null);
+      writeCachedEntry<CachedRecipientsPayload>(CACHE_KEYS.notificationRecipients, res);
     } catch (err) {
+      const offline =
+        (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        isLikelyNetworkError(err);
+      if (offline) {
+        const cached = readCachedEntry<CachedRecipientsPayload>(CACHE_KEYS.notificationRecipients);
+        if (cached) {
+          setRecipients(cached.data.items);
+          setManagers(cached.data.managers);
+          setEmailConfigured(cached.data.emailConfigured);
+          setRecUserId((prev) => prev || cached.data.managers[0]?.id || 0);
+          setRecipientsOfflineUpdatedAt(cached.updatedAt);
+          setRecipientsErr(null);
+          return;
+        }
+      }
       setRecipientsErr(err instanceof ApiError ? err.message : 'Failed to load recipients.');
     } finally {
       setLoadingRecipients(false);
@@ -161,6 +273,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
       void loadRecipients();
     }
   }, [tab, canLoadAdminData, loadRecipients]);
+
+  useEffect(() => {
+    if (!canLoadAdminData) return;
+    const handleReconnect = () => {
+      void loadGeneralSettings();
+      if (tab === 'users') void loadUsers();
+      if (tab === 'recipients') void loadRecipients();
+    };
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, handleReconnect);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleReconnect);
+    return () => {
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, handleReconnect);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleReconnect);
+    };
+  }, [canLoadAdminData, tab, loadGeneralSettings, loadUsers, loadRecipients]);
 
   const handleAddRecipient = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -205,6 +332,170 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     }
   };
 
+  const handleTogglePushEnabled = async (enabled: boolean) => {
+    unlockNotificationAudio();
+    const updated = setPushPreferences({ pushEnabled: enabled });
+    setPushPrefsState(updated);
+    setPushTestNotice(null);
+    if (enabled && notifPerm === 'default') {
+      const perm = await requestBrowserNotificationPermission();
+      setNotifPerm(perm);
+    }
+  };
+
+  const handleToggleSoundEnabled = (enabled: boolean) => {
+    unlockNotificationAudio();
+    const updated = setPushPreferences({ soundEnabled: enabled });
+    setPushPrefsState(updated);
+    setPushTestNotice(null);
+  };
+
+  const handleAllowDeviceNotifications = async () => {
+    unlockNotificationAudio();
+    const perm = await requestBrowserNotificationPermission();
+    setNotifPerm(perm);
+    if (perm === 'granted') {
+      setPushTestNotice('Device notifications allowed — alerts will appear in your notification area.');
+    } else if (perm === 'denied') {
+      setPushTestNotice('Device notifications are blocked in browser settings. Sound chime remains active while open.');
+    }
+  };
+
+  const handleTestPushAndSound = async () => {
+    setTestingPush(true);
+    setPushTestNotice(null);
+    try {
+      unlockNotificationAudio();
+      const result = await testNotificationAndSound();
+      setNotifPerm(result.permission);
+      if (result.notificationShown) {
+        setPushTestNotice('Test chime played and notification sent to your device notification area.');
+      } else if (result.permission === 'denied') {
+        setPushTestNotice('Test chime played. Enable notifications in browser site settings to show tray alerts.');
+      } else {
+        setPushTestNotice('Test sound chime played.');
+      }
+    } finally {
+      setTestingPush(false);
+    }
+  };
+
+  const renderDevicePushCard = () => (
+    <div className="rounded-2xl border border-blue-200/80 bg-white p-5 space-y-4 shadow-xs">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <img
+            src="/pwa-192x192.png"
+            alt="Fleet Secure notification icon"
+            className="h-11 w-11 rounded-xl border border-blue-200 bg-blue-50 object-cover shrink-0"
+          />
+          <div>
+            <h2 className="text-base font-semibold text-blue-950">
+              Device Push &amp; Sound Notifications
+            </h2>
+            <p className="mt-0.5 text-sm text-blue-900/75">
+              Plays a sound chime and places an alert with the Fleet Secure icon in your device notification area for due/overdue hires and flagged alerts.
+            </p>
+          </div>
+        </div>
+
+        <span
+          className={`self-start sm:self-center rounded-lg px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${
+            notifPerm === 'granted'
+              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+              : notifPerm === 'denied'
+                ? 'bg-red-50 text-red-800 border border-red-200'
+                : 'bg-amber-50 text-amber-900 border border-amber-200'
+          }`}
+        >
+          {notifPerm === 'granted'
+            ? 'Device Alerts: Allowed'
+            : notifPerm === 'denied'
+              ? 'Device Alerts: Blocked'
+              : notifPerm === 'default'
+                ? 'Device Alerts: Needs Permission'
+                : 'Device Alerts: Browser Only'}
+        </span>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-3.5">
+          <div className="flex items-start gap-2.5">
+            <BellRing className="h-4 w-4 text-cyan-600 mt-0.5 shrink-0" aria-hidden="true" />
+            <div>
+              <div className="text-sm font-semibold text-blue-950">Push Notifications (Default ON)</div>
+              <div className="text-xs text-blue-800/75">
+                Show system notifications with the Fleet Secure tray icon
+              </div>
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={pushPrefs.pushEnabled}
+            onChange={(e) => void handleTogglePushEnabled(e.target.checked)}
+            aria-label="Enable push notifications"
+            className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600 focus:ring-cyan-500 shrink-0"
+          />
+        </label>
+
+        <label className="flex cursor-pointer items-center justify-between gap-3 rounded-xl border border-blue-200/80 bg-blue-50/40 p-3.5">
+          <div className="flex items-start gap-2.5">
+            {pushPrefs.soundEnabled ? (
+              <Volume2 className="h-4 w-4 text-cyan-600 mt-0.5 shrink-0" aria-hidden="true" />
+            ) : (
+              <VolumeX className="h-4 w-4 text-slate-500 mt-0.5 shrink-0" aria-hidden="true" />
+            )}
+            <div>
+              <div className="text-sm font-semibold text-blue-950">Sound Alert Chime (Default ON)</div>
+              <div className="text-xs text-blue-800/75">
+                Draw attention with an audio chime when new alerts arrive
+              </div>
+            </div>
+          </div>
+          <input
+            type="checkbox"
+            checked={pushPrefs.soundEnabled}
+            onChange={(e) => handleToggleSoundEnabled(e.target.checked)}
+            aria-label="Enable sound alert chime"
+            className="h-5 w-5 rounded border-blue-300 text-cyan-600 accent-cyan-600 focus:ring-cyan-500 shrink-0"
+          />
+        </label>
+      </div>
+
+      {pushTestNotice && (
+        <div
+          role="status"
+          className="rounded-xl border border-cyan-200 bg-cyan-50 px-3.5 py-2.5 text-xs font-medium text-cyan-950"
+        >
+          {pushTestNotice}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2.5">
+        {notifPerm === 'default' && (
+          <button
+            type="button"
+            onClick={() => void handleAllowDeviceNotifications()}
+            className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
+          >
+            <BellRing className="h-4 w-4" aria-hidden="true" />
+            <span>Allow Device Notifications</span>
+          </button>
+        )}
+
+        <button
+          type="button"
+          onClick={() => void handleTestPushAndSound()}
+          disabled={testingPush}
+          className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900 disabled:opacity-60"
+        >
+          <Volume2 className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+          <span>{testingPush ? 'Testing...' : 'Test Sound & Push Alert'}</span>
+        </button>
+      </div>
+    </div>
+  );
+
   const handleSaveSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSavingSettings(true);
@@ -213,6 +504,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
     try {
       const res = await api.updateSettings(settings);
       setSettings(res.settings);
+      setSettingsOfflineUpdatedAt(null);
+      writeCachedEntry<AppSettings>('settings_general', res.settings);
       setSettingsMsg('System settings saved and logged to the audit trail.');
       onSettingsChanged?.(res.settings);
     } catch (err) {
@@ -426,6 +719,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
             </div>
           )}
 
+          {renderDevicePushCard()}
+
           <ChangePinView
             user={currentUser}
             forced={false}
@@ -439,6 +734,21 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {tab === 'general' && canLoadAdminData && (
         <form onSubmit={handleSaveSettings} className="space-y-6">
+          {settingsOfflineUpdatedAt && (
+            <div
+              role="status"
+              className="flex items-center gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950"
+            >
+              <WifiOff className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
+              <span>
+                Offline mode — showing cached settings
+                {settingsOfflineUpdatedAt !== 'cached'
+                  ? ` (last updated ${formatHarareTime(settingsOfflineUpdatedAt)})`
+                  : ''}
+                . Changes save when back online.
+              </span>
+            </div>
+          )}
           {settingsErr && (
             <div
               role="alert"
@@ -620,6 +930,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {tab === 'users' && canLoadAdminData && (
         <div className="space-y-4">
+          {usersOfflineUpdatedAt && (
+            <div
+              role="status"
+              className="flex items-center gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950"
+            >
+              <WifiOff className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
+              <span>
+                Offline mode — showing cached staff accounts (last updated{' '}
+                {formatHarareTime(usersOfflineUpdatedAt)}). Will refresh instantly when connected.
+              </span>
+            </div>
+          )}
           {usersErr && (
             <div
               role="alert"
@@ -735,6 +1057,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
 
       {tab === 'recipients' && canLoadAdminData && (
         <div className="space-y-5">
+          {recipientsOfflineUpdatedAt && (
+            <div
+              role="status"
+              className="flex items-center gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950"
+            >
+              <WifiOff className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
+              <span>
+                Offline mode — showing cached notification recipients (last updated{' '}
+                {formatHarareTime(recipientsOfflineUpdatedAt)}).
+              </span>
+            </div>
+          )}
           {recipientsErr && (
             <div
               role="alert"
@@ -751,6 +1085,8 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               {recipientsMsg}
             </div>
           )}
+
+          {renderDevicePushCard()}
 
           <div className="rounded-2xl border border-blue-200/80 bg-white p-5 space-y-4 shadow-xs">
             <div className="flex items-start gap-3">

@@ -20,6 +20,7 @@ const SCHEMA_STATEMENTS = [
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     full_name TEXT NOT NULL,
     licence_number TEXT,
+    licence_code TEXT,
     phone TEXT NOT NULL,
     address TEXT NOT NULL DEFAULT '',
     licence_expiry TEXT,
@@ -198,6 +199,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     // Step 1: Always add missing nullable columns individually first.
     // On Cloudflare D1, ALTER TABLE ADD COLUMN succeeds even when trips holds FK references to drivers.
     const extraCols: Array<[string, string]> = [
+      ['licence_code', 'TEXT'],
       ['licence_document', 'TEXT'],
       ['ddc_number', 'TEXT'],
       ['ddc_document', 'TEXT'],
@@ -228,6 +230,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             full_name TEXT NOT NULL,
             licence_number TEXT,
+            licence_code TEXT,
             phone TEXT NOT NULL,
             address TEXT NOT NULL DEFAULT '',
             licence_expiry TEXT,
@@ -243,14 +246,14 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
             created_by INTEGER REFERENCES users(id)
           );
           INSERT INTO drivers_migrated (
-            id, full_name, licence_number, phone, address, licence_expiry,
+            id, full_name, licence_number, licence_code, phone, address, licence_expiry,
             licence_document, ddc_number, ddc_document,
             retest_cert_number, retest_document,
             medical_cert_number, medical_document,
             active, created_at, created_by
           )
           SELECT
-            id, full_name, NULLIF(TRIM(licence_number), ''), phone, address, licence_expiry,
+            id, full_name, NULLIF(TRIM(licence_number), ''), licence_code, phone, address, licence_expiry,
             licence_document, ddc_number, ddc_document,
             retest_cert_number, retest_document,
             medical_cert_number, medical_document,

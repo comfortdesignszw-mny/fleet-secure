@@ -16,8 +16,14 @@ import {
   Zap,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
-import { enqueueOfflineEntry, isLikelyNetworkError } from '../lib/offlineQueue';
+import { ONLINE_RECONNECTED_EVENT } from '../lib/offlineCache';
 import {
+  OFFLINE_SYNCED_EVENT,
+  enqueueOfflineEntry,
+  isLikelyNetworkError,
+} from '../lib/offlineQueue';
+import {
+  DRIVER_LICENCE_CODES,
   VEHICLE_CONDITIONS,
   VEHICLE_TYPES,
   VEHICLE_TYPE_TO_CLASS,
@@ -110,6 +116,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
   const [showNewDriverForm, setShowNewDriverForm] = useState(false);
   const [newDriverFullName, setNewDriverFullName] = useState('');
   const [newDriverLicence, setNewDriverLicence] = useState('');
+  const [newDriverLicenceCode, setNewDriverLicenceCode] = useState('');
   const [newDriverPhone, setNewDriverPhone] = useState('');
   const [newDriverAddress, setNewDriverAddress] = useState('');
   const [newDriverExpiry, setNewDriverExpiry] = useState('');
@@ -212,54 +219,63 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
 
   useEffect(() => {
     let active = true;
-    setLoadingLists(true);
-    Promise.all([
-      api.listVehicles({ limit: 500 }),
-      api.listDrivers({ limit: 500 }),
-    ])
-      .then(([vRes, dRes]) => {
-        if (!active) return;
-        const activeVehicles = vRes.items.filter((v) => v.active);
-        const activeDrivers = dRes.items.filter((d) => d.active);
-        setVehicles(activeVehicles);
-        setDrivers(activeDrivers);
-        try {
-          localStorage.setItem(
-            'fleet_secure_cache_bookable_vehicles',
-            JSON.stringify(activeVehicles)
-          );
-          localStorage.setItem(
-            'fleet_secure_cache_bookable_drivers',
-            JSON.stringify(activeDrivers)
-          );
-        } catch {
-          // Ignore cache write errors
-        }
-      })
-      .catch((err) => {
-        if (!active) return;
-        try {
-          const cachedV = localStorage.getItem('fleet_secure_cache_bookable_vehicles');
-          const cachedD = localStorage.getItem('fleet_secure_cache_bookable_drivers');
-          if (cachedV && cachedD) {
-            setVehicles(JSON.parse(cachedV) as Vehicle[]);
-            setDrivers(JSON.parse(cachedD) as Driver[]);
-            return;
+    const loadLists = (showSpinner: boolean) => {
+      if (showSpinner) setLoadingLists(true);
+      Promise.all([
+        api.listVehicles({ limit: 500 }),
+        api.listDrivers({ limit: 500 }),
+      ])
+        .then(([vRes, dRes]) => {
+          if (!active) return;
+          const activeVehicles = vRes.items.filter((v) => v.active);
+          const activeDrivers = dRes.items.filter((d) => d.active);
+          setVehicles(activeVehicles);
+          setDrivers(activeDrivers);
+          try {
+            localStorage.setItem(
+              'fleet_secure_cache_bookable_vehicles',
+              JSON.stringify(activeVehicles)
+            );
+            localStorage.setItem(
+              'fleet_secure_cache_bookable_drivers',
+              JSON.stringify(activeDrivers)
+            );
+          } catch {
+            // Ignore cache write errors
           }
-        } catch {
-          // Ignore cache parse error
-        }
-        setError(
-          err instanceof ApiError
-            ? err.message
-            : 'Could not load vehicles and drivers from directory.'
-        );
-      })
-      .finally(() => {
-        if (active) setLoadingLists(false);
-      });
+        })
+        .catch((err) => {
+          if (!active) return;
+          try {
+            const cachedV = localStorage.getItem('fleet_secure_cache_bookable_vehicles');
+            const cachedD = localStorage.getItem('fleet_secure_cache_bookable_drivers');
+            if (cachedV && cachedD) {
+              setVehicles(JSON.parse(cachedV) as Vehicle[]);
+              setDrivers(JSON.parse(cachedD) as Driver[]);
+              return;
+            }
+          } catch {
+            // Ignore cache parse error
+          }
+          setError(
+            err instanceof ApiError
+              ? err.message
+              : 'Could not load vehicles and drivers from directory.'
+          );
+        })
+        .finally(() => {
+          if (active) setLoadingLists(false);
+        });
+    };
+
+    loadLists(true);
+    const onRefresh = () => loadLists(false);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, onRefresh);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, onRefresh);
     return () => {
       active = false;
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, onRefresh);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, onRefresh);
     };
   }, []);
 
@@ -339,6 +355,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     if (prefill) {
       setNewDriverFullName(prefill.full_name);
       setNewDriverLicence(prefill.licence_number ?? '');
+      setNewDriverLicenceCode(prefill.licence_code ?? '');
       setNewDriverPhone(prefill.phone);
       setNewDriverAddress(prefill.address ?? '');
       setNewDriverExpiry(prefill.licence_expiry ?? '');
@@ -353,6 +370,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     } else {
       setNewDriverFullName('');
       setNewDriverLicence('');
+      setNewDriverLicenceCode('');
       setNewDriverPhone('');
       setNewDriverAddress('');
       setNewDriverExpiry('');
@@ -372,6 +390,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     setNewDriverErr(null);
     const fullName = newDriverFullName.trim();
     const licenceNumber = newDriverLicence.trim().toUpperCase() || null;
+    const licenceCode = newDriverLicenceCode.trim() || null;
     const phone = newDriverPhone.trim();
     const address = newDriverAddress.trim();
     const licenceExpiry = newDriverExpiry.trim() || null;
@@ -410,6 +429,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     setPendingDriver({
       full_name: fullName,
       licence_number: licenceNumber,
+      licence_code: licenceCode,
       phone,
       address,
       licence_expiry: licenceExpiry,
@@ -695,6 +715,11 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
               <dt className="text-slate-500">Driver</dt>
               <dd className="font-semibold text-blue-950 text-right">
                 <div>{effectiveDriverLabel}</div>
+                {(pendingDriver?.licence_code || selectedDriver?.licence_code) && (
+                  <div className="text-xs font-medium text-cyan-700">
+                    {pendingDriver?.licence_code || selectedDriver?.licence_code}
+                  </div>
+                )}
                 {pendingDriver && (
                   <span
                     className={`mt-1 inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${
@@ -982,6 +1007,23 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                         className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
                       />
                     </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-semibold text-blue-950">
+                        Driver&apos;s Licence Code/Class (optional)
+                      </label>
+                      <select
+                        value={newDriverLicenceCode}
+                        onChange={(e) => setNewDriverLicenceCode(e.target.value)}
+                        className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
+                      >
+                        <option value="">Not specified (optional)</option>
+                        {DRIVER_LICENCE_CODES.map((code) => (
+                          <option key={code} value={code}>
+                            {code}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
                     <div>
                       <label className="block text-xs font-semibold text-blue-950">
                         DDC Number (optional)
@@ -1137,6 +1179,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                       <span className="font-bold text-blue-950">{pendingDriver.full_name}</span>
                       <span className="ml-2 font-mono text-xs text-slate-600">
                         {pendingDriver.licence_number ?? 'No licence recorded'}
+                        {pendingDriver.licence_code ? ` · ${pendingDriver.licence_code}` : ''}
                       </span>
                     </div>
                     <span
@@ -1223,6 +1266,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                       </span>
                       <span className="font-mono text-slate-600">
                         Licence: {selectedDriver.licence_number ?? 'Not recorded'}
+                        {selectedDriver.licence_code ? ` · ${selectedDriver.licence_code}` : ''}
                       </span>
                       <span>Phone: {selectedDriver.phone}</span>
                     </div>

@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS drivers (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   full_name TEXT NOT NULL,
   licence_number TEXT,
+  licence_code TEXT,
   phone TEXT NOT NULL,
   address TEXT NOT NULL DEFAULT '',
   licence_expiry TEXT,

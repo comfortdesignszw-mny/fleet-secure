@@ -21,6 +21,16 @@ import {
   isLikelyNetworkError,
 } from '../lib/offlineQueue';
 import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  stripHeavyDriverDocuments,
+  writeCachedEntry,
+  type CachedDriverDetail,
+  type CachedDriversPayload,
+} from '../lib/offlineCache';
+import {
+  DRIVER_LICENCE_CODES,
   formatDriverMissingDocsWarning,
   formatHarareTime,
   getDriverMissingDocuments,
@@ -37,7 +47,7 @@ interface DriversViewProps {
   onOpenTrip?: (tripId: number) => void;
 }
 
-const CACHE_KEY = 'fleet_secure_cache_drivers';
+const LEGACY_CACHE_KEY = 'fleet_secure_cache_drivers';
 
 function DriverStatusText({ status }: { status: DerivedStatus }) {
   if (status === 'Available') {
@@ -113,6 +123,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
 
   const [loading, setLoading] = useState(true);
   const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -142,6 +153,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
   const [editingDriver, setEditingDriver] = useState<Driver | null>(null);
   const [formName, setFormName] = useState('');
   const [formLicence, setFormLicence] = useState('');
+  const [formLicenceCode, setFormLicenceCode] = useState('');
   const [formPhone, setFormPhone] = useState('');
   const [formAddress, setFormAddress] = useState('');
   const [formExpiry, setFormExpiry] = useState('');
@@ -163,10 +175,67 @@ export const DriversView: React.FC<DriversViewProps> = ({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const applyOfflineDriverFilters = useCallback(
+    (rawList: Driver[]): {
+      paged: Driver[];
+      total: number;
+      expiringCount: number;
+      missingDocsCount: number;
+    } => {
+      const q = query.trim().toLowerCase();
+      const filtered = rawList.filter((d) => {
+        if (!includeInactive && !d.active) return false;
+        if (statusFilter && d.derived_status !== statusFilter) return false;
+        if (expiringOnly && d.licence_status !== 'EXPIRING_SOON' && d.licence_status !== 'EXPIRED') {
+          return false;
+        }
+        if (
+          missingDocsOnly &&
+          canSeeMissingDocWarnings &&
+          (d.missing_documents ?? getDriverMissingDocuments(d)).length === 0
+        ) {
+          return false;
+        }
+        if (q) {
+          const hay = [
+            d.full_name,
+            d.licence_number ?? '',
+            d.licence_code ?? '',
+            d.ddc_number ?? '',
+            d.retest_cert_number ?? '',
+            d.medical_cert_number ?? '',
+            d.phone,
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const activeList = rawList.filter((d) => d.active);
+      const expCount = activeList.filter(
+        (d) => d.licence_status === 'EXPIRING_SOON' || d.licence_status === 'EXPIRED'
+      ).length;
+      const missCount = canSeeMissingDocWarnings
+        ? activeList.filter((d) => (d.missing_documents ?? getDriverMissingDocuments(d)).length > 0)
+            .length
+        : 0;
+      const offset = (page - 1) * limit;
+      return {
+        paged: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+        expiringCount: expCount,
+        missingDocsCount: missCount,
+      };
+    },
+    [query, statusFilter, expiringOnly, missingDocsOnly, canSeeMissingDocWarnings, includeInactive, page]
+  );
+
   const fetchDrivers = useCallback(async () => {
     setLoading(true);
     setError(null);
     setUsingCache(false);
+    setCacheUpdatedAt(null);
     try {
       const res = await api.listDrivers({
         q: query,
@@ -176,32 +245,64 @@ export const DriversView: React.FC<DriversViewProps> = ({
         page,
         limit,
       });
-      const list = missingDocsOnly && canSeeMissingDocWarnings
-        ? res.items.filter((d) => (d.missing_documents?.length ?? 0) > 0)
-        : res.items;
+      const list =
+        missingDocsOnly && canSeeMissingDocWarnings
+          ? res.items.filter((d) => (d.missing_documents?.length ?? 0) > 0)
+          : res.items;
       setItems(list);
       setTotal(missingDocsOnly && canSeeMissingDocWarnings ? list.length : res.total);
       setExpiringCount(res.expiringCount);
       setMissingDocsCount(res.missingDocsCount ?? 0);
+
+      // Update unified offline cache snapshot when viewing the unfiltered first page
+      if (!query && !statusFilter && !expiringOnly && !missingDocsOnly && page === 1) {
+        const existingCache = readCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll);
+        const existingInactive =
+          !includeInactive && existingCache
+            ? existingCache.data.items.filter((d) => !d.active)
+            : [];
+        const merged = [
+          ...res.items.map(stripHeavyDriverDocuments),
+          ...existingInactive.filter((old) => !res.items.some((r) => r.id === old.id)),
+        ];
+        writeCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll, {
+          items: merged,
+          total: includeInactive ? res.total : merged.length,
+          expiringCount: res.expiringCount,
+          missingDocsCount: res.missingDocsCount,
+        });
+      }
       try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify(res.items));
+        localStorage.setItem(
+          LEGACY_CACHE_KEY,
+          JSON.stringify(res.items.map(stripHeavyDriverDocuments))
+        );
       } catch {
         // Ignore quota errors
       }
     } catch (err) {
-      if (isLikelyNetworkError(err)) {
-        try {
-          const cached = localStorage.getItem(CACHE_KEY);
-          if (cached) {
-            const parsed = JSON.parse(cached) as Driver[];
-            setItems(parsed);
-            setTotal(parsed.length);
-            setUsingCache(true);
-          } else {
-            setError('You appear to be offline and no cached driver list is available.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedV2 = readCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll);
+        let rawList: Driver[] | null = cachedV2?.data.items ?? null;
+        let updatedAt = cachedV2?.updatedAt ?? null;
+        if (!rawList) {
+          try {
+            const legacy = localStorage.getItem(LEGACY_CACHE_KEY);
+            if (legacy) rawList = JSON.parse(legacy) as Driver[];
+          } catch {
+            // Ignore parse error
           }
-        } catch {
-          setError('You appear to be offline and could not read cached drivers.');
+        }
+        if (rawList) {
+          const applied = applyOfflineDriverFilters(rawList);
+          setItems(applied.paged);
+          setTotal(applied.total);
+          setExpiringCount(applied.expiringCount);
+          setMissingDocsCount(applied.missingDocsCount);
+          setUsingCache(true);
+          setCacheUpdatedAt(updatedAt);
+        } else {
+          setError('You appear to be offline and no cached driver list is available.');
         }
       } else {
         setError(err instanceof ApiError ? err.message : 'Could not load drivers.');
@@ -209,34 +310,77 @@ export const DriversView: React.FC<DriversViewProps> = ({
     } finally {
       setLoading(false);
     }
-  }, [query, statusFilter, expiringOnly, missingDocsOnly, canSeeMissingDocWarnings, includeInactive, page]);
+  }, [
+    query,
+    statusFilter,
+    expiringOnly,
+    missingDocsOnly,
+    canSeeMissingDocWarnings,
+    includeInactive,
+    page,
+    applyOfflineDriverFilters,
+  ]);
+
+  const loadDriverDetail = useCallback(async (id: number) => {
+    setSelectedId(id);
+    setDetailLoading(true);
+    setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
+    try {
+      const res = await api.getDriver(id);
+      setDetailDriver(res.driver);
+      setDetailTrips(res.trips);
+      writeCachedEntry<CachedDriverDetail>(CACHE_KEYS.driverDetail(id), {
+        driver: res.driver,
+        trips: res.trips,
+      });
+    } catch (err) {
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedDetail = readCachedEntry<CachedDriverDetail>(CACHE_KEYS.driverDetail(id));
+        if (cachedDetail) {
+          setDetailDriver(cachedDetail.data.driver);
+          setDetailTrips(cachedDetail.data.trips);
+          setUsingCache(true);
+          setCacheUpdatedAt(cachedDetail.updatedAt);
+        } else {
+          const cachedList = readCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll);
+          const listMatch = cachedList?.data.items.find((d) => d.id === id);
+          if (listMatch) {
+            setDetailDriver(listMatch);
+            setDetailTrips([]);
+            setUsingCache(true);
+            setCacheUpdatedAt(cachedList?.updatedAt ?? null);
+          } else {
+            setError('You are offline and this driver’s details have not been cached yet.');
+          }
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load driver details.');
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchDrivers();
   }, [fetchDrivers]);
 
   useEffect(() => {
-    const onSynced = () => {
+    const refreshOnReconnect = () => {
       void fetchDrivers();
+      if (selectedId !== null && selectedId > 0) {
+        void loadDriverDetail(selectedId);
+      }
     };
-    window.addEventListener(OFFLINE_SYNCED_EVENT, onSynced);
-    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, onSynced);
-  }, [fetchDrivers]);
-
-  const loadDriverDetail = useCallback(async (id: number) => {
-    setSelectedId(id);
-    setDetailLoading(true);
-    setError(null);
-    try {
-      const res = await api.getDriver(id);
-      setDetailDriver(res.driver);
-      setDetailTrips(res.trips);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load driver details.');
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    return () => {
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    };
+  }, [fetchDrivers, loadDriverDetail, selectedId]);
 
   useEffect(() => {
     if (initialDriverId) {
@@ -248,6 +392,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     setEditingDriver(null);
     setFormName('');
     setFormLicence('');
+    setFormLicenceCode('');
     setFormPhone('');
     setFormAddress('');
     setFormExpiry('');
@@ -268,6 +413,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     setEditingDriver(d);
     setFormName(d.full_name);
     setFormLicence(d.licence_number ?? '');
+    setFormLicenceCode(d.licence_code ?? '');
     setFormPhone(d.phone);
     setFormAddress(d.address);
     setFormExpiry(d.licence_expiry ?? '');
@@ -314,6 +460,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
     try {
       const cleanName = formName.trim();
       const cleanLicence = formLicence.trim().toUpperCase() || null;
+      const cleanLicenceCode = formLicenceCode.trim() || null;
       const cleanPhone = formPhone.trim();
       const cleanAddress = formAddress.trim();
       const cleanExpiry = formExpiry.trim() ? formExpiry.trim() : null;
@@ -325,6 +472,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
         const res = await api.updateDriver(editingDriver.id, {
           full_name: cleanName,
           licence_number: cleanLicence,
+          licence_code: cleanLicenceCode,
           phone: cleanPhone,
           address: cleanAddress,
           licence_expiry: cleanExpiry,
@@ -347,6 +495,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
         const payload = {
           full_name: cleanName,
           licence_number: cleanLicence,
+          licence_code: cleanLicenceCode,
           phone: cleanPhone,
           address: cleanAddress,
           licence_expiry: cleanExpiry,
@@ -374,6 +523,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
               id: -Date.now(),
               full_name: cleanName,
               licence_number: cleanLicence,
+              licence_code: cleanLicenceCode,
               phone: cleanPhone,
               address: cleanAddress,
               licence_expiry: cleanExpiry,
@@ -404,11 +554,22 @@ export const DriversView: React.FC<DriversViewProps> = ({
               licence_status: 'NONE',
               days_to_expiry: null,
             };
+            const cachedV2 = readCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll);
+            const nextCachedList = [
+              optimisticDriver,
+              ...(cachedV2?.data.items ?? items.map(stripHeavyDriverDocuments)),
+            ];
+            writeCachedEntry<CachedDriversPayload>(CACHE_KEYS.driversAll, {
+              items: nextCachedList,
+              total: nextCachedList.length,
+              expiringCount: cachedV2?.data.expiringCount ?? expiringCount,
+              missingDocsCount: cachedV2?.data.missingDocsCount ?? missingDocsCount,
+            });
             const nextList = [optimisticDriver, ...items];
             setItems(nextList);
             setTotal(nextList.length);
             try {
-              localStorage.setItem(CACHE_KEY, JSON.stringify(nextList));
+              localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(nextList));
             } catch {
               // Ignore quota errors
             }
@@ -463,6 +624,15 @@ export const DriversView: React.FC<DriversViewProps> = ({
           )}
         </div>
 
+        {usingCache && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+          >
+            Offline mode — showing cached driver details
+            {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Will refresh automatically when connection returns.
+          </div>
+        )}
         {notice && (
           <div
             role="status"
@@ -506,6 +676,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
                 <div>
                   <div className="text-sm font-mono text-cyan-700 font-medium">
                     Licence: {detailDriver.licence_number ?? 'Not recorded'}
+                    {detailDriver.licence_code ? ` · ${detailDriver.licence_code}` : ''}
                     {!detailDriver.active && ' · Inactive'}
                   </div>
                   <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
@@ -728,7 +899,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
           role="status"
           className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
         >
-          Showing your last saved driver list because you are offline.
+          Offline mode — showing cached drivers directory
+          {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Ready to sync &amp; update automatically on active connection.
         </div>
       )}
 
@@ -891,7 +1063,14 @@ export const DriversView: React.FC<DriversViewProps> = ({
                           )}
                         </td>
                         <td className="py-3.5 px-4 font-mono text-slate-700">
-                          {d.licence_number ?? <span className="text-slate-400 font-sans">Not recorded</span>}
+                          <div>
+                            {d.licence_number ?? <span className="text-slate-400 font-sans">Not recorded</span>}
+                          </div>
+                          {d.licence_code && (
+                            <div className="text-xs font-sans font-medium text-cyan-700">
+                              {d.licence_code}
+                            </div>
+                          )}
                         </td>
                         <td className="py-3.5 px-4 text-xs font-mono text-slate-600 space-y-0.5">
                           <div>DDC: {d.ddc_number ?? '—'}</div>
@@ -958,7 +1137,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
                           )}
                         </div>
                         <div className="text-xs font-mono text-slate-500">
-                          {d.licence_number ?? 'No licence'} · {d.phone}
+                          {d.licence_number ?? 'No licence'}
+                          {d.licence_code ? ` · ${d.licence_code}` : ''} · {d.phone}
                         </div>
                         {(d.ddc_number || d.retest_cert_number || d.medical_cert_number) && (
                           <div className="text-[11px] font-mono text-slate-500 mt-0.5">
@@ -1155,6 +1335,25 @@ export const DriversView: React.FC<DriversViewProps> = ({
                       className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 font-mono text-base text-blue-950"
                     />
                   </div>
+                </div>
+
+                <div>
+                  <label htmlFor="d-licence-code" className="block text-sm font-semibold text-blue-950">
+                    Driver&apos;s Licence Code/Class (optional)
+                  </label>
+                  <select
+                    id="d-licence-code"
+                    value={formLicenceCode}
+                    onChange={(e) => setFormLicenceCode(e.target.value)}
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
+                  >
+                    <option value="">Not specified (optional)</option>
+                    {DRIVER_LICENCE_CODES.map((code) => (
+                      <option key={code} value={code}>
+                        {code}
+                      </option>
+                    ))}
+                  </select>
                 </div>
 
                 <DocumentUploadField

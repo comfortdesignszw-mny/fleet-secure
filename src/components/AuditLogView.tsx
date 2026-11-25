@@ -12,6 +12,14 @@ import {
 import { en } from '../i18n/en';
 import { api, ApiError } from '../lib/api';
 import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+  type CachedAuditPayload,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
+import {
   formatHarareTime,
   type AuditLogEntry,
   type AuditVerifyResult,
@@ -28,15 +36,48 @@ export const AuditLogView: React.FC = () => {
   const [entityFilter, setEntityFilter] = useState('');
 
   const [loading, setLoading] = useState(true);
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<AuditVerifyResult | null>(null);
 
+  const applyOfflineAuditFilters = useCallback(
+    (rawList: AuditLogEntry[]): { paged: AuditLogEntry[]; total: number } => {
+      const q = query.trim().toLowerCase();
+      const filtered = rawList.filter((row) => {
+        if (entityFilter && row.entity !== entityFilter) return false;
+        if (q) {
+          const hay = [
+            row.username,
+            row.action,
+            row.entity,
+            row.entity_id,
+            row.new_json ?? '',
+            row.old_json ?? '',
+          ]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const offset = (page - 1) * limit;
+      return {
+        paged: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+      };
+    },
+    [query, entityFilter, page]
+  );
+
   const fetchLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
     try {
       const data = await api.listAuditLog({
         q: query,
@@ -46,15 +87,46 @@ export const AuditLogView: React.FC = () => {
       });
       setItems(data.items);
       setTotal(data.total);
+      if (!query && !entityFilter && page === 1) {
+        writeCachedEntry<CachedAuditPayload>(CACHE_KEYS.auditLogs, {
+          items: data.items,
+          total: data.total,
+        });
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load audit records.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cached = readCachedEntry<CachedAuditPayload>(CACHE_KEYS.auditLogs);
+        if (cached) {
+          const applied = applyOfflineAuditFilters(cached.data.items);
+          setItems(applied.paged);
+          setTotal(applied.total);
+          setUsingCache(true);
+          setCacheUpdatedAt(cached.updatedAt);
+        } else {
+          setError('Offline mode — no cached audit log entries saved yet.');
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load audit records.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [query, entityFilter, page]);
+  }, [query, entityFilter, page, applyOfflineAuditFilters]);
 
   useEffect(() => {
     fetchLogs();
+  }, [fetchLogs]);
+
+  useEffect(() => {
+    const refreshOnReconnect = () => {
+      void fetchLogs();
+    };
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    return () => {
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    };
   }, [fetchLogs]);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -64,6 +136,10 @@ export const AuditLogView: React.FC = () => {
   };
 
   const handleVerifyChain = async () => {
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      setError('Cryptographic chain verification runs on the server and requires an active connection.');
+      return;
+    }
     setVerifying(true);
     setError(null);
     try {
@@ -71,7 +147,13 @@ export const AuditLogView: React.FC = () => {
       setVerifyResult(result);
       await fetchLogs();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Failed to verify audit trail.');
+      setError(
+        isLikelyNetworkError(err)
+          ? 'Offline mode — chain verification will be available as soon as your connection returns.'
+          : err instanceof ApiError
+            ? err.message
+            : 'Failed to verify audit trail.'
+      );
     } finally {
       setVerifying(false);
     }
@@ -123,6 +205,16 @@ export const AuditLogView: React.FC = () => {
               <div className="mt-1 font-medium">{verifyResult.reason}</div>
             )}
           </div>
+        </div>
+      )}
+
+      {usingCache && (
+        <div
+          role="status"
+          className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+        >
+          Offline mode — showing cached audit log snapshot
+          {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Will sync &amp; refresh instantly on active connection.
         </div>
       )}
 

@@ -31,10 +31,21 @@ import {
 import { useOnlineStatus } from './hooks/useOnlineStatus';
 import {
   OFFLINE_QUEUE_EVENT,
+  OFFLINE_SYNCED_EVENT,
   flushOfflineQueue,
   getOfflineQueue,
   isLikelyNetworkError,
 } from './lib/offlineQueue';
+import { ONLINE_RECONNECTED_EVENT, warmOfflineCaches } from './lib/offlineCache';
+import {
+  PUSH_PREFS_EVENT,
+  getNotificationPermissionState,
+  getPushPreferences,
+  installAudioUnlockListeners,
+  processIncomingNotifications,
+  requestBrowserNotificationPermission,
+  unlockNotificationAudio,
+} from './lib/pushNotifications';
 import { DEFAULT_SETTINGS, ROLE_LABELS, type AppSettings, type UserPublic } from './shared/types';
 import { AppFooter } from './components/AppFooter';
 import { AuditLogView } from './components/AuditLogView';
@@ -75,6 +86,15 @@ export default function App() {
     tone: 'ok' | 'warn';
     text: string;
   } | null>(null);
+  const [pushPrefs, setPushPrefs] = useState(() => getPushPreferences());
+  const [notifPerm, setNotifPerm] = useState(() => getNotificationPermissionState());
+  const [permBannerDismissed, setPermBannerDismissed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('fleet_secure_notif_banner_dismissed') === '1';
+    } catch {
+      return false;
+    }
+  });
 
   const verifySession = useCallback(async () => {
     try {
@@ -162,14 +182,42 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [syncFeedback]);
 
-  // Immediate auto-sync and silent session re-verification as soon as active connection returns
+  // Unlock Web Audio on first user interaction and keep push preferences in sync
+  useEffect(() => {
+    const cleanupAudio = installAudioUnlockListeners();
+    const onPrefs = () => setPushPrefs(getPushPreferences());
+    window.addEventListener(PUSH_PREFS_EVENT, onPrefs);
+    return () => {
+      cleanupAudio();
+      window.removeEventListener(PUSH_PREFS_EVENT, onPrefs);
+    };
+  }, []);
+
+  // Immediate auto-sync, session verification, and offline cache warming on connection
   useEffect(() => {
     if (!user || !isOnline) return;
     void verifySession();
+    if (!user.must_change_pin) {
+      void warmOfflineCaches(user.role);
+    }
     if (getOfflineQueue().length > 0) {
       void triggerSync(false);
     }
-  }, [isOnline, user?.id]);
+  }, [isOnline, user?.id, user?.must_change_pin, user?.role]);
+
+  // Force refresh all offline snapshots when network reconnects or offline queue finishes syncing
+  useEffect(() => {
+    if (!user || user.must_change_pin) return;
+    const onReconnected = () => {
+      void warmOfflineCaches(user.role, { force: true });
+    };
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, onReconnected);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, onReconnected);
+    return () => {
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, onReconnected);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, onReconnected);
+    };
+  }, [user?.id, user?.role, user?.must_change_pin]);
 
   useEffect(() => {
     if (!user || user.must_change_pin) return;
@@ -190,25 +238,37 @@ export default function App() {
     }
 
     let cancelled = false;
-    const refreshCount = () => {
-      api
-        .getUnreadNotificationsCount()
-        .then((res) => {
-          if (!cancelled) {
+    const refreshCount = (checkOverdue = false) => {
+      const preCheck = checkOverdue
+        ? api.checkOverdueHires().catch(() => undefined)
+        : Promise.resolve();
+      void preCheck.then(() =>
+        api
+          .getUnreadNotificationsCount()
+          .then((res) => {
+            if (cancelled) return;
             setUnreadNotifications(res.unreadCount);
             setHighUnreadNotifications(res.highUnreadCount);
-          }
-        })
-        .catch(() => {
-          // Ignore transient offline errors
-        });
+            if (res.latestUnread && res.latestUnread.length > 0) {
+              void processIncomingNotifications(res.latestUnread);
+            }
+          })
+          .catch(() => {
+            // Ignore transient offline errors
+          })
+      );
     };
 
-    refreshCount();
-    const timer = window.setInterval(refreshCount, 30_000);
+    refreshCount(true);
+    const timer = window.setInterval(() => refreshCount(true), 30_000);
+    const onReconnect = () => refreshCount(true);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, onReconnect);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, onReconnect);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, onReconnect);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, onReconnect);
     };
   }, [user, section, isOnline]);
 
@@ -515,6 +575,54 @@ export default function App() {
             </div>
           </div>
         )}
+
+        {isSupervisorOrAdmin &&
+          !user.must_change_pin &&
+          pushPrefs.pushEnabled &&
+          notifPerm === 'default' &&
+          !permBannerDismissed && (
+            <div className="px-4 sm:px-6 pt-3 max-w-6xl w-full mx-auto">
+              <div
+                role="region"
+                aria-label="Enable device push notifications"
+                className="flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between rounded-xl border border-cyan-300 bg-cyan-50/90 px-4 py-3 text-sm text-blue-950 shadow-xs"
+              >
+                <div className="flex items-center gap-2.5">
+                  <Bell className="h-4 w-4 shrink-0 text-cyan-700" aria-hidden="true" />
+                  <span>
+                    Allow device notifications so overdue hire returns and flagged trips alert your notification tray with sound.
+                  </span>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      unlockNotificationAudio();
+                      const res = await requestBrowserNotificationPermission();
+                      setNotifPerm(res);
+                    }}
+                    className="cyan-glow-btn min-h-[38px] rounded-lg px-3.5 text-xs font-semibold whitespace-nowrap"
+                  >
+                    Enable Sound &amp; Alerts
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setPermBannerDismissed(true);
+                      try {
+                        localStorage.setItem('fleet_secure_notif_banner_dismissed', '1');
+                      } catch {
+                        // Ignore
+                      }
+                    }}
+                    className="min-h-[38px] rounded-lg px-2.5 text-xs font-medium text-blue-800 hover:bg-cyan-100"
+                  >
+                    Not now
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
         {/* Mobile Drawer */}
         {mobileMenuOpen && (

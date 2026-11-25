@@ -427,6 +427,7 @@ export const api = {
   createDriver: (payload: {
     full_name: string;
     licence_number?: string | null;
+    licence_code?: string | null;
     phone: string;
     address?: string;
     licence_expiry?: string | null;
@@ -448,6 +449,7 @@ export const api = {
     payload: {
       full_name?: string;
       licence_number?: string | null;
+      licence_code?: string | null;
       phone?: string;
       address?: string;
       licence_expiry?: string | null;
@@ -541,7 +543,11 @@ export const api = {
   },
 
   getUnreadNotificationsCount: () =>
-    request<{ unreadCount: number; highUnreadCount: number }>('/notifications/unread-count'),
+    request<{
+      unreadCount: number;
+      highUnreadCount: number;
+      latestUnread?: NotificationRecord[];
+    }>('/notifications/unread-count'),
 
   listNotifications: (
     params: { unreadOnly?: boolean; priority?: 'HIGH' | 'NORMAL' | ''; page?: number; limit?: number } = {}

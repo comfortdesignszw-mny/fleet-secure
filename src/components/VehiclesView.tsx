@@ -15,6 +15,14 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+  type CachedVehicleDetail,
+  type CachedVehiclesPayload,
+} from '../lib/offlineCache';
+import {
   OFFLINE_SYNCED_EVENT,
   enqueueOfflineEntry,
   isLikelyNetworkError,
@@ -37,7 +45,7 @@ interface VehiclesViewProps {
   onOpenTrip?: (tripId: number) => void;
 }
 
-const CACHE_KEY = 'fleet_secure_cache_vehicles';
+const LEGACY_CACHE_KEY = 'fleet_secure_cache_vehicles';
 
 function StatusIndicator({ status }: { status: DerivedStatus }) {
   if (status === 'Available') {
@@ -97,6 +105,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
 
   const [loading, setLoading] = useState(true);
   const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
@@ -135,10 +144,36 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const applyOfflineVehicleFilters = useCallback(
+    (rawList: Vehicle[]): { paged: Vehicle[]; total: number } => {
+      const q = query.trim().toLowerCase();
+      const filtered = rawList.filter((v) => {
+        if (!includeInactive && !v.active) return false;
+        if (statusFilter && v.derived_status !== statusFilter) return false;
+        if (conditionFilter && v.condition !== conditionFilter) return false;
+        if (classFilter && v.vehicle_class !== classFilter) return false;
+        if (q) {
+          const hay = [v.reg_number, v.make_model, v.vehicle_type, v.vehicle_class]
+            .join(' ')
+            .toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const offset = (page - 1) * limit;
+      return {
+        paged: filtered.slice(offset, offset + limit),
+        total: filtered.length,
+      };
+    },
+    [query, statusFilter, conditionFilter, classFilter, includeInactive, page]
+  );
+
   const fetchVehicles = useCallback(async () => {
     setLoading(true);
     setError(null);
     setUsingCache(false);
+    setCacheUpdatedAt(null);
     try {
       const res = await api.listVehicles({
         q: query,
@@ -151,57 +186,129 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       });
       setItems(res.items);
       setTotal(res.total);
+
+      if (!query && !statusFilter && !conditionFilter && !classFilter && page === 1) {
+        const existingCache = readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll);
+        const existingInactive =
+          !includeInactive && existingCache
+            ? existingCache.data.items.filter((v) => !v.active)
+            : [];
+        const merged = [
+          ...res.items,
+          ...existingInactive.filter((old) => !res.items.some((r) => r.id === old.id)),
+        ];
+        writeCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll, {
+          items: merged,
+          total: includeInactive ? res.total : merged.length,
+        });
+      }
       try {
-        localStorage.setItem(CACHE_KEY, JSON.stringify(res.items));
+        localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(res.items));
       } catch {
         // Ignore storage quota errors
       }
     } catch (err) {
-      try {
-        const cached = localStorage.getItem(CACHE_KEY);
-        if (cached) {
-          const parsed = JSON.parse(cached) as Vehicle[];
-          setItems(parsed);
-          setTotal(parsed.length);
-          setUsingCache(true);
-        } else {
-          setError(err instanceof ApiError ? err.message : 'Could not load vehicles.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedV2 = readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll);
+        let rawList: Vehicle[] | null = cachedV2?.data.items ?? null;
+        const updatedAt = cachedV2?.updatedAt ?? null;
+        if (!rawList) {
+          try {
+            const legacy = localStorage.getItem(LEGACY_CACHE_KEY);
+            if (legacy) rawList = JSON.parse(legacy) as Vehicle[];
+          } catch {
+            // Ignore
+          }
         }
-      } catch {
+        if (rawList) {
+          const applied = applyOfflineVehicleFilters(rawList);
+          setItems(applied.paged);
+          setTotal(applied.total);
+          setUsingCache(true);
+          setCacheUpdatedAt(updatedAt);
+        } else {
+          setError('Offline mode — no cached vehicle list saved yet.');
+        }
+      } else {
         setError(err instanceof ApiError ? err.message : 'Could not load vehicles.');
       }
     } finally {
       setLoading(false);
     }
-  }, [query, statusFilter, conditionFilter, classFilter, includeInactive, page]);
+  }, [
+    query,
+    statusFilter,
+    conditionFilter,
+    classFilter,
+    includeInactive,
+    page,
+    applyOfflineVehicleFilters,
+  ]);
+
+  const loadVehicleDetail = useCallback(async (id: number) => {
+    setSelectedId(id);
+    setDetailLoading(true);
+    setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
+    try {
+      const res = await api.getVehicle(id);
+      setDetailVehicle(res.vehicle);
+      setDetailTrips(res.trips);
+      setConditionHistory(res.conditionHistory);
+      writeCachedEntry<CachedVehicleDetail>(CACHE_KEYS.vehicleDetail(id), {
+        vehicle: res.vehicle,
+        trips: res.trips,
+        conditionHistory: res.conditionHistory,
+      });
+    } catch (err) {
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cachedDetail = readCachedEntry<CachedVehicleDetail>(CACHE_KEYS.vehicleDetail(id));
+        if (cachedDetail) {
+          setDetailVehicle(cachedDetail.data.vehicle);
+          setDetailTrips(cachedDetail.data.trips);
+          setConditionHistory(cachedDetail.data.conditionHistory);
+          setUsingCache(true);
+          setCacheUpdatedAt(cachedDetail.updatedAt);
+        } else {
+          const cachedAll = readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll);
+          const listMatch = cachedAll?.data.items.find((v) => v.id === id);
+          if (listMatch) {
+            setDetailVehicle(listMatch);
+            setDetailTrips([]);
+            setConditionHistory([]);
+            setUsingCache(true);
+            setCacheUpdatedAt(cachedAll?.updatedAt ?? null);
+          } else {
+            setError('You are offline and this vehicle’s details have not been cached yet.');
+          }
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load vehicle details.');
+      }
+    } finally {
+      setDetailLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchVehicles();
   }, [fetchVehicles]);
 
   useEffect(() => {
-    const onSynced = () => {
+    const refreshOnReconnect = () => {
       void fetchVehicles();
+      if (selectedId !== null && selectedId > 0) {
+        void loadVehicleDetail(selectedId);
+      }
     };
-    window.addEventListener(OFFLINE_SYNCED_EVENT, onSynced);
-    return () => window.removeEventListener(OFFLINE_SYNCED_EVENT, onSynced);
-  }, [fetchVehicles]);
-
-  const loadVehicleDetail = useCallback(async (id: number) => {
-    setSelectedId(id);
-    setDetailLoading(true);
-    setError(null);
-    try {
-      const res = await api.getVehicle(id);
-      setDetailVehicle(res.vehicle);
-      setDetailTrips(res.trips);
-      setConditionHistory(res.conditionHistory);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load vehicle details.');
-    } finally {
-      setDetailLoading(false);
-    }
-  }, []);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    return () => {
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    };
+  }, [fetchVehicles, loadVehicleDetail, selectedId]);
 
   useEffect(() => {
     if (initialVehicleId) {
@@ -293,11 +400,17 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               derived_status: 'Available',
               open_trip_id: null,
             };
+            const cachedV2 = readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll);
+            const nextCachedList = [optimisticVehicle, ...(cachedV2?.data.items ?? items)];
+            writeCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll, {
+              items: nextCachedList,
+              total: nextCachedList.length,
+            });
             const nextList = [optimisticVehicle, ...items];
             setItems(nextList);
             setTotal(nextList.length);
             try {
-              localStorage.setItem(CACHE_KEY, JSON.stringify(nextList));
+              localStorage.setItem(LEGACY_CACHE_KEY, JSON.stringify(nextList));
             } catch {
               // Ignore quota errors
             }
@@ -364,6 +477,15 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           )}
         </div>
 
+        {usingCache && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+          >
+            Offline mode — showing cached vehicle details
+            {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Will refresh automatically when connected.
+          </div>
+        )}
         {notice && (
           <div
             role="status"
@@ -549,7 +671,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           role="status"
           className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
         >
-          Showing your last saved vehicle list because you are offline.
+          Offline mode — showing cached vehicles database
+          {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. Ready to refresh instantly on active connection.
         </div>
       )}
 

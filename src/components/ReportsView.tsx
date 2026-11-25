@@ -12,7 +12,20 @@ import {
   Users,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
-import type { ExportFormat, ReportPreviewData, ReportType } from '../shared/types';
+import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  exportCachedReportOffline,
+  readCachedEntry,
+  writeCachedEntry,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
+import {
+  formatHarareTime,
+  type ExportFormat,
+  type ReportPreviewData,
+  type ReportType,
+} from '../shared/types';
 
 function toHarareInputDate(date: Date): string {
   return new Intl.DateTimeFormat('en-CA', {
@@ -90,6 +103,8 @@ export const ReportsView: React.FC = () => {
   const [toDate, setToDate] = useState(todayStr);
   const [preview, setPreview] = useState<ReportPreviewData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [usingCache, setUsingCache] = useState(false);
+  const [cacheUpdatedAt, setCacheUpdatedAt] = useState<string | null>(null);
   const [downloading, setDownloading] = useState<ExportFormat | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -99,22 +114,60 @@ export const ReportsView: React.FC = () => {
   const loadPreview = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setUsingCache(false);
+    setCacheUpdatedAt(null);
+    const fromParam = selectedMeta.usesDateRange ? fromDate : '';
+    const toParam = selectedMeta.usesDateRange ? toDate : '';
     try {
       const data = await api.getReportPreview({
         type: reportType,
-        from: selectedMeta.usesDateRange ? fromDate : undefined,
-        to: selectedMeta.usesDateRange ? toDate : undefined,
+        from: fromParam || undefined,
+        to: toParam || undefined,
       });
       setPreview(data);
+      writeCachedEntry<ReportPreviewData>(
+        CACHE_KEYS.reportPreview(reportType, fromParam, toParam),
+        data
+      );
+      if (!selectedMeta.usesDateRange || (fromDate === monthStartStr && toDate === todayStr)) {
+        writeCachedEntry<ReportPreviewData>(CACHE_KEYS.reportDefault(reportType), data);
+      }
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not load report preview.');
+      if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
+        const cached =
+          readCachedEntry<ReportPreviewData>(
+            CACHE_KEYS.reportPreview(reportType, fromParam, toParam)
+          ) ?? readCachedEntry<ReportPreviewData>(CACHE_KEYS.reportDefault(reportType));
+        if (cached) {
+          setPreview(cached.data);
+          setUsingCache(true);
+          setCacheUpdatedAt(cached.updatedAt);
+        } else {
+          setPreview(null);
+          setError('Offline mode — this report snapshot has not been cached yet.');
+        }
+      } else {
+        setError(err instanceof ApiError ? err.message : 'Could not load report preview.');
+      }
     } finally {
       setLoading(false);
     }
-  }, [reportType, fromDate, toDate, selectedMeta.usesDateRange]);
+  }, [reportType, fromDate, toDate, selectedMeta.usesDateRange, monthStartStr, todayStr]);
 
   useEffect(() => {
     void loadPreview();
+  }, [loadPreview]);
+
+  useEffect(() => {
+    const refreshOnReconnect = () => {
+      void loadPreview();
+    };
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    return () => {
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, refreshOnReconnect);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, refreshOnReconnect);
+    };
   }, [loadPreview]);
 
   const applyPreset = (preset: 'today' | '7d' | 'month' | 'all') => {
@@ -140,6 +193,30 @@ export const ReportsView: React.FC = () => {
     setDownloading(format);
     setError(null);
     setNotice(null);
+
+    const tryOfflineExport = () => {
+      if (format === 'pdf') {
+        setError(
+          'Printable PDF generation requires an active connection. Export CSV, JSON, or Markdown from your cached snapshot while offline.'
+        );
+        return true;
+      }
+      if (preview) {
+        exportCachedReportOffline(preview, format);
+        setNotice(`Exported offline cached snapshot (${format.toUpperCase()}).`);
+        return true;
+      }
+      return false;
+    };
+
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (!tryOfflineExport()) {
+        setError('Offline mode — no cached report data available to export.');
+      }
+      setDownloading(null);
+      return;
+    }
+
     try {
       const url = api.getReportExportUrl({
         type: reportType,
@@ -177,6 +254,9 @@ export const ReportsView: React.FC = () => {
 
       setNotice(`Downloaded ${filename} and recorded export in the audit log.`);
     } catch (err) {
+      if (isLikelyNetworkError(err) && tryOfflineExport()) {
+        return;
+      }
       setError(err instanceof Error ? err.message : 'Download failed.');
     } finally {
       setDownloading(null);
@@ -330,6 +410,16 @@ export const ReportsView: React.FC = () => {
             </div>
           )}
         </div>
+
+        {usingCache && (
+          <div
+            role="status"
+            className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm font-medium text-amber-900"
+          >
+            Offline mode — showing cached report preview
+            {cacheUpdatedAt ? ` (last updated ${formatHarareTime(cacheUpdatedAt)} CAT)` : ''}. CSV, JSON, and Markdown exports work offline; live server data refreshes on reconnect.
+          </div>
+        )}
 
         {error && (
           <div

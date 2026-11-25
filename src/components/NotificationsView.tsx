@@ -3,11 +3,34 @@ import {
   AlertTriangle,
   ArrowRight,
   Bell,
+  BellRing,
   Check,
   CheckCheck,
   RefreshCw,
+  Volume2,
+  VolumeX,
+  WifiOff,
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
+import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  writeCachedEntry,
+  type CachedNotificationsPayload,
+} from '../lib/offlineCache';
+import { OFFLINE_SYNCED_EVENT, isLikelyNetworkError } from '../lib/offlineQueue';
+import {
+  PUSH_PREFS_EVENT,
+  getNotificationPermissionState,
+  getPushPreferences,
+  processIncomingNotifications,
+  requestBrowserNotificationPermission,
+  setPushPreferences,
+  testNotificationAndSound,
+  unlockNotificationAudio,
+  type PushPreferences,
+} from '../lib/pushNotifications';
 import { formatHarareTime, type NotificationRecord } from '../shared/types';
 
 interface NotificationsViewProps {
@@ -29,6 +52,21 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
   const [markingAll, setMarkingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [offlineUpdatedAt, setOfflineUpdatedAt] = useState<string | null>(null);
+  const [pushPrefs, setPushPrefsState] = useState<PushPreferences>(() => getPushPreferences());
+  const [notifPerm, setNotifPerm] = useState<NotificationPermission | 'unsupported'>(() =>
+    getNotificationPermissionState()
+  );
+  const [testingPush, setTestingPush] = useState(false);
+
+  useEffect(() => {
+    const syncPrefs = () => {
+      setPushPrefsState(getPushPreferences());
+      setNotifPerm(getNotificationPermissionState());
+    };
+    window.addEventListener(PUSH_PREFS_EVENT, syncPrefs);
+    return () => window.removeEventListener(PUSH_PREFS_EVENT, syncPrefs);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -42,8 +80,40 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
       setItems(res.items);
       setTotal(res.total);
       setUnreadCount(res.unreadCount);
+      setOfflineUpdatedAt(null);
       onUnreadCountChanged?.(res.unreadCount);
+
+      if (!filterUnread && !filterHigh) {
+        writeCachedEntry<CachedNotificationsPayload>(CACHE_KEYS.notifications, {
+          items: res.items,
+          total: res.total,
+          unreadCount: res.unreadCount,
+        });
+      }
+      void processIncomingNotifications(res.items);
     } catch (err) {
+      const offline =
+        (typeof navigator !== 'undefined' && navigator.onLine === false) ||
+        isLikelyNetworkError(err);
+      if (offline) {
+        const cached = readCachedEntry<CachedNotificationsPayload>(CACHE_KEYS.notifications);
+        if (cached) {
+          const allCached = cached.data.items;
+          const unreadCached = allCached.filter((n) => !n.read_at).length;
+          const filtered = allCached.filter((n) => {
+            if (filterUnread && n.read_at) return false;
+            if (filterHigh && n.priority !== 'HIGH') return false;
+            return true;
+          });
+          setItems(filtered);
+          setTotal(filtered.length);
+          setUnreadCount(unreadCached);
+          onUnreadCountChanged?.(unreadCached);
+          setOfflineUpdatedAt(cached.updatedAt);
+          setError(null);
+          return;
+        }
+      }
       setError(err instanceof ApiError ? err.message : 'Could not load notifications.');
     } finally {
       setLoading(false);
@@ -53,6 +123,50 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const handleReconnect = () => {
+      void load();
+    };
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, handleReconnect);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleReconnect);
+    return () => {
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, handleReconnect);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleReconnect);
+    };
+  }, [load]);
+
+  const handleTogglePush = async (enabled: boolean) => {
+    unlockNotificationAudio();
+    const updated = setPushPreferences({ pushEnabled: enabled });
+    setPushPrefsState(updated);
+    if (enabled && notifPerm === 'default') {
+      const perm = await requestBrowserNotificationPermission();
+      setNotifPerm(perm);
+    }
+  };
+
+  const handleToggleSound = (enabled: boolean) => {
+    unlockNotificationAudio();
+    const updated = setPushPreferences({ soundEnabled: enabled });
+    setPushPrefsState(updated);
+  };
+
+  const handleTestPush = async () => {
+    setTestingPush(true);
+    try {
+      unlockNotificationAudio();
+      const res = await testNotificationAndSound();
+      setNotifPerm(res.permission);
+      setNotice(
+        res.notificationShown
+          ? 'Test chime played and alert sent to your device notification area.'
+          : 'Test sound chime played.'
+      );
+    } finally {
+      setTestingPush(false);
+    }
+  };
 
   const handleMarkRead = async (item: NotificationRecord) => {
     if (item.read_at) return;
@@ -145,6 +259,67 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
         </div>
       </div>
 
+      {/* Quick Sound & Device Push Bar */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-cyan-200/80 bg-cyan-50/50 px-4 py-3">
+        <div className="flex items-center gap-3 min-w-0">
+          <img
+            src="/pwa-192x192.png"
+            alt="Fleet Secure tray icon"
+            className="h-9 w-9 rounded-lg border border-blue-200 bg-white object-cover shrink-0"
+          />
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">
+            <label className="inline-flex cursor-pointer items-center gap-2 font-semibold text-blue-950">
+              <input
+                type="checkbox"
+                checked={pushPrefs.pushEnabled}
+                onChange={(e) => void handleTogglePush(e.target.checked)}
+                className="h-4 w-4 rounded border-blue-300 text-cyan-600 accent-cyan-600"
+              />
+              <BellRing className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+              <span>Device Push Alerts</span>
+            </label>
+            <label className="inline-flex cursor-pointer items-center gap-2 font-semibold text-blue-950">
+              <input
+                type="checkbox"
+                checked={pushPrefs.soundEnabled}
+                onChange={(e) => handleToggleSound(e.target.checked)}
+                className="h-4 w-4 rounded border-blue-300 text-cyan-600 accent-cyan-600"
+              />
+              {pushPrefs.soundEnabled ? (
+                <Volume2 className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+              ) : (
+                <VolumeX className="h-4 w-4 text-slate-500" aria-hidden="true" />
+              )}
+              <span>Sound Chime</span>
+            </label>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {notifPerm === 'default' && (
+            <button
+              type="button"
+              onClick={async () => {
+                unlockNotificationAudio();
+                const perm = await requestBrowserNotificationPermission();
+                setNotifPerm(perm);
+              }}
+              className="cyan-glow-btn min-h-[38px] rounded-xl px-3.5 text-xs font-semibold whitespace-nowrap"
+            >
+              Allow Device Alerts
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void handleTestPush()}
+            disabled={testingPush}
+            className="cyan-glow-outline min-h-[38px] rounded-xl border border-blue-200 bg-white px-3.5 text-xs font-semibold text-blue-900 whitespace-nowrap disabled:opacity-60"
+          >
+            {testingPush ? 'Testing...' : 'Test Sound & Alert'}
+          </button>
+        </div>
+      </div>
+
       {/* Filters */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-blue-200/80 bg-white p-4">
         <div className="flex flex-wrap items-center gap-2">
@@ -188,6 +363,19 @@ export const NotificationsView: React.FC<NotificationsViewProps> = ({
           {total} {total === 1 ? 'alert' : 'alerts'}
         </span>
       </div>
+
+      {offlineUpdatedAt && (
+        <div
+          role="status"
+          className="flex items-center gap-2.5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950"
+        >
+          <WifiOff className="h-4 w-4 text-amber-700 shrink-0" aria-hidden="true" />
+          <span>
+            Offline mode — showing cached notifications (last updated{' '}
+            {formatHarareTime(offlineUpdatedAt)}). Will refresh instantly when connected.
+          </span>
+        </div>
+      )}
 
       {error && (
         <div

@@ -20,6 +20,15 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../lib/api';
 import {
+  CACHE_KEYS,
+  ONLINE_RECONNECTED_EVENT,
+  readCachedEntry,
+  warmOfflineCaches,
+  writeCachedEntry,
+  type CachedTripsPayload,
+} from '../lib/offlineCache';
+import { notifyDueHiresLocally } from '../lib/pushNotifications';
+import {
   OFFLINE_QUEUE_EVENT,
   OFFLINE_SYNCED_EVENT,
   flushOfflineQueue,
@@ -98,6 +107,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
   const [mode, setMode] = useState<ActiveYardMode>(null);
   const [ongoing, setOngoing] = useState<TripSummary[]>([]);
   const [loadingOngoing, setLoadingOngoing] = useState(true);
+  const [usingOngoingCache, setUsingOngoingCache] = useState(false);
+  const [ongoingCacheUpdatedAt, setOngoingCacheUpdatedAt] = useState<string | null>(null);
   const [queuedEntries, setQueuedEntries] = useState<QueuedTripEntry[]>(() => getOfflineQueue());
   const [syncingQueue, setSyncingQueue] = useState(false);
   const [showSandboxSeed, setShowSandboxSeed] = useState(false);
@@ -116,26 +127,52 @@ export const HomeView: React.FC<HomeViewProps> = ({
     return ongoing.filter(
       (t) =>
         t.trip_type === 'HIRE' &&
-        (t.is_return_due || (t.expected_return_date !== null && t.expected_return_date <= todayHarare))
+        (t.is_return_overdue ||
+          t.is_return_due ||
+          (t.expected_return_date !== null && t.expected_return_date <= todayHarare))
     );
   }, [ongoing]);
 
   const loadOngoing = useCallback(async () => {
     setLoadingOngoing(true);
+    setUsingOngoingCache(false);
+    setOngoingCacheUpdatedAt(null);
     try {
       const res = await api.listTrips({ status: 'OPEN', limit: 50 });
       setOngoing(res.items);
+      writeCachedEntry<TripSummary[]>('home_ongoing', res.items);
       try {
         localStorage.setItem('fleet_secure_cache_home_ongoing', JSON.stringify(res.items));
       } catch {
         // Ignore
       }
+      void notifyDueHiresLocally(res.items);
     } catch {
-      try {
-        const cached = localStorage.getItem('fleet_secure_cache_home_ongoing');
-        if (cached) setOngoing(JSON.parse(cached) as TripSummary[]);
-      } catch {
-        // Ignore
+      const cachedV2 = readCachedEntry<TripSummary[]>('home_ongoing');
+      const cachedTripsAll = !cachedV2
+        ? readCachedEntry<CachedTripsPayload>(CACHE_KEYS.tripsAll)
+        : null;
+      let items: TripSummary[] | null = cachedV2?.data ?? null;
+      let updatedAt: string | null = cachedV2?.updatedAt ?? null;
+
+      if (!items && cachedTripsAll) {
+        items = cachedTripsAll.data.items.filter((t) => t.status === 'OPEN');
+        updatedAt = cachedTripsAll.updatedAt;
+      }
+      if (!items) {
+        try {
+          const legacy = localStorage.getItem('fleet_secure_cache_home_ongoing');
+          if (legacy) items = JSON.parse(legacy) as TripSummary[];
+        } catch {
+          // Ignore
+        }
+      }
+
+      if (items) {
+        setOngoing(items);
+        setUsingOngoingCache(true);
+        setOngoingCacheUpdatedAt(updatedAt);
+        void notifyDueHiresLocally(items);
       }
     } finally {
       setLoadingOngoing(false);
@@ -184,15 +221,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
 
   useEffect(() => {
     const refresh = () => setQueuedEntries(getOfflineQueue());
-    const handleSynced = () => {
+    const handleSyncedOrReconnected = () => {
       setQueuedEntries(getOfflineQueue());
-      loadOngoing();
+      void loadOngoing();
     };
     window.addEventListener(OFFLINE_QUEUE_EVENT, refresh);
-    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+    window.addEventListener(OFFLINE_SYNCED_EVENT, handleSyncedOrReconnected);
+    window.addEventListener(ONLINE_RECONNECTED_EVENT, handleSyncedOrReconnected);
     return () => {
       window.removeEventListener(OFFLINE_QUEUE_EVENT, refresh);
-      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSynced);
+      window.removeEventListener(OFFLINE_SYNCED_EVENT, handleSyncedOrReconnected);
+      window.removeEventListener(ONLINE_RECONNECTED_EVENT, handleSyncedOrReconnected);
     };
   }, [loadOngoing]);
 
@@ -297,7 +336,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             flags,
             tripId: trip.id,
           });
-          loadOngoing();
+          void loadOngoing();
+          void warmOfflineCaches(user.role, { force: true });
         }}
         onQueued={(summaryLabel) => {
           setMode(null);
@@ -326,7 +366,8 @@ export const HomeView: React.FC<HomeViewProps> = ({
             flags,
             tripId: trip.id,
           });
-          loadOngoing();
+          void loadOngoing();
+          void warmOfflineCaches(user.role, { force: true });
         }}
         onQueued={(summaryLabel) => {
           setMode(null);
@@ -482,29 +523,46 @@ export const HomeView: React.FC<HomeViewProps> = ({
           <div className="flex items-center gap-2.5 text-red-900">
             <AlertTriangle className="h-5 w-5 shrink-0 text-red-700" aria-hidden="true" />
             <h2 className="text-base font-bold">
-              Vehicle Return Due Reminder ({dueReturns.length})
+              Vehicle Return Due &amp; Overdue Alerts ({dueReturns.length})
             </h2>
           </div>
           <div className="divide-y divide-red-200 rounded-xl border border-red-200 bg-white">
-            {dueReturns.map((t) => (
-              <div
-                key={t.id}
-                className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="text-sm text-blue-950">
-                  <strong className="font-mono">{t.reg_number}</strong> ({t.make_model}) hired to{' '}
-                  <strong>{t.client_name}</strong> is due to return on{' '}
-                  <strong className="font-mono text-red-700">{t.expected_return_date}</strong>.
-                </div>
-                <button
-                  type="button"
-                  onClick={() => openYardAction({ kind: 'IN', tripType: 'HIRE', tripId: t.id })}
-                  className="cyan-glow-btn min-h-[40px] self-start sm:self-center rounded-xl px-3.5 text-xs font-semibold whitespace-nowrap shrink-0"
+            {dueReturns.map((t) => {
+              const todayHarare = getHarareTodayDateStr();
+              const isPastDue =
+                t.is_return_overdue ||
+                (t.expected_return_date !== null && t.expected_return_date < todayHarare);
+              return (
+                <div
+                  key={t.id}
+                  className="flex flex-col gap-2 p-3 sm:flex-row sm:items-center sm:justify-between"
                 >
-                  Record Return
-                </button>
-              </div>
-            ))}
+                  <div className="text-sm text-blue-950">
+                    <span
+                      className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide ${
+                        isPastDue
+                          ? 'bg-red-700 text-white'
+                          : 'bg-amber-200 text-amber-950'
+                      }`}
+                    >
+                      {isPastDue ? 'Overdue' : 'Due Today'}
+                    </span>
+                    <strong className="font-mono">{t.reg_number}</strong> ({t.make_model}) hired to{' '}
+                    <strong>{t.client_name}</strong>{' '}
+                    {isPastDue ? 'was due to return on' : 'is due to return on'}{' '}
+                    <strong className="font-mono text-red-700">{t.expected_return_date}</strong>
+                    {isPastDue ? ' and has not been closed.' : '.'}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openYardAction({ kind: 'IN', tripType: 'HIRE', tripId: t.id })}
+                    className="cyan-glow-btn min-h-[40px] self-start sm:self-center rounded-xl px-3.5 text-xs font-semibold whitespace-nowrap shrink-0"
+                  >
+                    Record Return
+                  </button>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -719,9 +777,17 @@ export const HomeView: React.FC<HomeViewProps> = ({
       {/* Ongoing Trips (Live) */}
       <section aria-labelledby="ongoing-heading" className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden shadow-sm shadow-blue-900/5">
         <div className="flex items-center justify-between gap-4 border-b border-blue-100 bg-gradient-to-r from-white to-blue-50/60 px-5 py-4">
-          <h2 id="ongoing-heading" className="text-base font-semibold text-blue-950">
-            Ongoing Trips ({ongoing.length})
-          </h2>
+          <div>
+            <h2 id="ongoing-heading" className="text-base font-semibold text-blue-950">
+              Ongoing Trips ({ongoing.length})
+            </h2>
+            {usingOngoingCache && (
+              <p className="text-xs font-medium text-amber-800 mt-0.5">
+                Offline cached snapshot
+                {ongoingCacheUpdatedAt ? ` · updated ${formatHarareTime(ongoingCacheUpdatedAt)} CAT` : ''}
+              </p>
+            )}
+          </div>
           <button
             type="button"
             onClick={() => onNavigate('trips')}
@@ -757,13 +823,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     <span aria-hidden="true" className="text-cyan-500">·</span>
                     <span
                       className={`inline-flex items-center gap-1 text-sm font-semibold ${
-                        t.is_overdue ? 'text-red-700' : 'text-amber-700'
+                        t.is_overdue || t.is_return_due || t.is_return_overdue
+                          ? 'text-red-700'
+                          : 'text-amber-700'
                       }`}
                     >
                       <Clock className="h-4 w-4" aria-hidden="true" />
                       <span>
                         {formatElapsed(t.out_at)}
-                        {t.is_return_due ? ' (Return Due)' : t.is_overdue ? ' (Overdue)' : ''}
+                        {t.is_return_overdue
+                          ? ' (Return Overdue)'
+                          : t.is_return_due
+                            ? ' (Return Due)'
+                            : t.is_overdue
+                              ? ' (Overdue)'
+                              : ''}
                       </span>
                     </span>
                   </div>

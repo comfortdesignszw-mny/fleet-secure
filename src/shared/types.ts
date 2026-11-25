@@ -149,10 +149,20 @@ export interface Vehicle {
   total_trip_mileage?: number;
 }
 
+export const DRIVER_LICENCE_CODES = [
+  'Code A, A1/Class 3',
+  'Code B, BE/Class 4',
+  'Code C,CE/Class 2',
+  'Code D, DE/Class 1',
+] as const;
+
+export type DriverLicenceCode = (typeof DRIVER_LICENCE_CODES)[number];
+
 export interface Driver {
   id: number;
   full_name: string;
   licence_number: string | null;
+  licence_code?: string | null;
   phone: string;
   address: string;
   licence_expiry: string | null;
@@ -241,6 +251,7 @@ export interface TripSummary {
   days_hired: number | null;
   expected_return_date: string | null;
   is_return_due?: boolean;
+  is_return_overdue?: boolean;
   created_at: string;
   reg_number: string;
   make_model: string;
@@ -265,6 +276,7 @@ export interface TripSummary {
 export interface NewDriverInput {
   full_name: string;
   licence_number?: string | null;
+  licence_code?: string | null;
   phone: string;
   address?: string;
   licence_expiry?: string | null;

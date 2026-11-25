@@ -144,14 +144,21 @@ async function buildReportDataset(
       const inFlags = parseFlags(r.in_flags);
       const combinedFlags = [...outFlags, ...inFlags];
       const elapsedHours = (nowMs - new Date(outAt).getTime()) / 3_600_000;
+      const todayHarare = toHarareDateStr(new Date(nowMs).toISOString());
+      const expectedRet = r.expected_return_date ? String(r.expected_return_date) : null;
+      const isReturnOverdue =
+        r.status === 'OPEN' && r.trip_type === 'HIRE' && Boolean(expectedRet) && expectedRet! < todayHarare;
       const isOverdue =
-        r.status === 'OPEN' && r.trip_type === 'HIRE' && elapsedHours > overdueHours;
+        (r.status === 'OPEN' && r.trip_type === 'HIRE' && elapsedHours > overdueHours) ||
+        isReturnOverdue;
 
       if (isOverdue && !combinedFlags.some((f) => f.code === 'OVERDUE')) {
         combinedFlags.push({
           code: 'OVERDUE',
           severity: 'HIGH',
-          message: `Overdue (${Math.floor(elapsedHours)}h)`,
+          message: isReturnOverdue
+            ? `Return overdue (due ${expectedRet})`
+            : `Overdue (${Math.floor(elapsedHours)}h)`,
         });
       }
 
@@ -305,6 +312,7 @@ async function buildReportDataset(
       rows.push({
         full_name: String(d.full_name),
         licence_number: normalizeDriverLicenceNumber(d.licence_number) ?? 'Not recorded',
+        licence_code: d.licence_code ? String(d.licence_code) : 'Not recorded',
         phone: String(d.phone),
         address: String(d.address ?? ''),
         licence_expiry: d.licence_expiry ? String(d.licence_expiry) : 'Not set',
@@ -316,14 +324,15 @@ async function buildReportDataset(
     }
 
     columnDefs = [
-      { key: 'full_name', label: 'Driver Name', width: 18 },
-      { key: 'licence_number', label: 'Licence No.', width: 14 },
-      { key: 'phone', label: 'Phone', width: 14 },
-      { key: 'address', label: 'Address', width: 18 },
-      { key: 'licence_expiry', label: 'Expiry Date', width: 11 },
-      { key: 'licence_status', label: 'Licence', width: 13 },
-      { key: 'status', label: 'Status', width: 12 },
-      { key: 'trips', label: 'Trips', width: 7 },
+      { key: 'full_name', label: 'Driver Name', width: 16 },
+      { key: 'licence_number', label: 'Licence No.', width: 12 },
+      { key: 'licence_code', label: 'Class / Code', width: 14 },
+      { key: 'phone', label: 'Phone', width: 13 },
+      { key: 'address', label: 'Address', width: 16 },
+      { key: 'licence_expiry', label: 'Expiry Date', width: 10 },
+      { key: 'licence_status', label: 'Licence', width: 12 },
+      { key: 'status', label: 'Status', width: 11 },
+      { key: 'trips', label: 'Trips', width: 6 },
     ];
 
     summary['Total Drivers'] = rows.length;
