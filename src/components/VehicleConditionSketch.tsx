@@ -1,21 +1,24 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Check, Eraser, MapPin, PenTool, RotateCcw, Trash2 } from 'lucide-react';
-import type {
-  ChecklistSignatureEntry,
-  ChecklistSignatures,
-  ChecklistSketchData,
-  DamagePinType,
-  SketchDamagePin,
-  SketchPanelView,
-  SketchStroke,
-  SketchVehicleKind,
+import {
+  getCachedSketchImageSync,
+  resolveCachedSketchImageSrc,
+  warmVehicleSketchImages,
+} from '../lib/offlineCache';
+import {
+  SKETCH_3D_MEDIA_BY_KIND,
+  type ChecklistSignatureEntry,
+  type ChecklistSignatures,
+  type ChecklistSketchData,
+  type DamagePinType,
+  type SketchDamagePin,
+  type SketchPanelView,
+  type SketchStroke,
+  type SketchVehicleKind,
 } from '../shared/types';
 
 export const SKETCH_WIDTH = 800;
 export const SKETCH_HEIGHT = 380;
-
-export const LEFT_SIDE_3D_IMAGE = '/src/assets/images/vehicle_left_3d_1795721974462.jpg';
-export const RIGHT_SIDE_3D_IMAGE = '/src/assets/images/vehicle_right_3d_1795721974156.jpg';
 
 export const PIN_TYPE_LABELS: Record<DamagePinType, string> = {
   S: 'Scratch',
@@ -35,19 +38,41 @@ export const SKETCH_KINDS: Array<{ id: SketchVehicleKind; label: string }> = [
   { id: 'sedan', label: 'Sedan' },
   { id: 'suv', label: 'SUV' },
   { id: 'doublecab', label: 'Double Cab' },
-  { id: 'kombi', label: 'Kombi / Van' },
+  { id: 'kombi', label: 'Kombi / Quantum' },
 ];
 
-export function inferSketchKind(vehicleType?: string | null, makeModel?: string | null): SketchVehicleKind {
-  const hay = `${vehicleType ?? ''} ${makeModel ?? ''}`.toLowerCase();
-  if (/(kombi|bus|hiace|quantum|sprinter|van|minibus|mpv)/.test(hay)) return 'kombi';
-  if (/(double|cab|pickup|hilux|ranger|amarok|triton|navara|d-max|dmax|bakkie|single cab)/.test(hay)) {
+export function matchSketchKindFromText(text?: string | null): SketchVehicleKind | null {
+  const hay = (text ?? '').toLowerCase().trim();
+  if (!hay) return null;
+  if (
+    /(double\s*cab|doublecab|single\s*cab|pickup|bakkie|hilux|ranger|amarok|triton|navara|d-?max|bt-?50|np\s?300|truck)/.test(
+      hay
+    )
+  ) {
     return 'doublecab';
   }
-  if (/(suv|4x4|fortuner|prado|cruiser|pajero|rav4|everest|trailblazer|x-trail|sportage)/.test(hay)) {
+  if (/(kombi|quantum|hiace|minibus|sprinter|\bvan\b|mpv|urvan|caravan|nv350|coaster|\bbus\b)/.test(hay)) {
+    return 'kombi';
+  }
+  if (
+    /(mini\s*suv|\bsuv\b|4x4|fortuner|prado|cruiser|pajero|rav4|everest|trailblazer|x-?trail|sportage|cr-?v|cx-?5|harrier|tucson|tiguan|forester|outlander|qashqai|vanguard)/.test(
+      hay
+    )
+  ) {
     return 'suv';
   }
-  return 'sedan';
+  if (
+    /(sedan|hatchback|executive\s*sedan|corolla|camry|civic|accord|fit|vitz|demio|polo|golf|belta|axio|allion|premio|runx)/.test(
+      hay
+    )
+  ) {
+    return 'sedan';
+  }
+  return null;
+}
+
+export function inferSketchKind(vehicleType?: string | null, makeModel?: string | null): SketchVehicleKind {
+  return matchSketchKindFromText(vehicleType) ?? matchSketchKindFromText(makeModel) ?? 'sedan';
 }
 
 export function createEmptySketch(vehicleKind: SketchVehicleKind = 'sedan'): ChecklistSketchData {
@@ -160,13 +185,14 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
   );
 }
 
-function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+async function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+  const resolvedSrc = await resolveCachedSketchImageSrc(src);
   return new Promise((resolve) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => resolve(null);
-    img.src = src;
+    img.src = resolvedSrc;
   });
 }
 
@@ -191,15 +217,20 @@ export async function exportSketchPngDataUrl(sketch: ChecklistSketchData): Promi
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, totalW, totalH);
 
+    const media = SKETCH_3D_MEDIA_BY_KIND[sketch.vehicle_kind] ?? SKETCH_3D_MEDIA_BY_KIND.sedan;
     const [leftImg, rightImg] = await Promise.all([
-      loadImageElement(LEFT_SIDE_3D_IMAGE),
-      loadImageElement(RIGHT_SIDE_3D_IMAGE),
+      loadImageElement(media.left),
+      loadImageElement(media.right),
     ]);
 
+    const kindLabel =
+      SKETCH_KINDS.find((k) => k.id === sketch.vehicle_kind)?.label.toUpperCase() ??
+      sketch.vehicle_kind.toUpperCase();
+
     const panels: Array<{ view: SketchPanelView; title: string; x: number }> = [
-      { view: 'left', title: 'LEFT SIDE (3D)', x: gap },
-      { view: 'right', title: 'RIGHT SIDE (3D)', x: gap * 2 + panelW },
-      { view: 'top', title: `TOP VIEW (2D · ${sketch.vehicle_kind.toUpperCase()})`, x: gap * 3 + panelW * 2 },
+      { view: 'left', title: `LEFT SIDE (3D · ${kindLabel})`, x: gap },
+      { view: 'right', title: `RIGHT SIDE (3D · ${kindLabel})`, x: gap * 2 + panelW },
+      { view: 'top', title: `TOP VIEW (2D · ${kindLabel})`, x: gap * 3 + panelW * 2 },
     ];
 
     for (const panel of panels) {
@@ -218,11 +249,15 @@ export async function exportSketchPngDataUrl(sketch: ChecklistSketchData): Promi
       if (panel.view === 'left' && leftImg) {
         ctx.drawImage(leftImg, panel.x + 2, y + 2, panelW - 4, panelH - 4);
       } else if (panel.view === 'right' && rightImg) {
-        ctx.save();
-        ctx.translate(panel.x + panelW - 2, y + 2);
-        ctx.scale(-1, 1);
-        ctx.drawImage(rightImg, 0, 0, panelW - 4, panelH - 4);
-        ctx.restore();
+        if (media.flipRight) {
+          ctx.save();
+          ctx.translate(panel.x + panelW - 2, y + 2);
+          ctx.scale(-1, 1);
+          ctx.drawImage(rightImg, 0, 0, panelW - 4, panelH - 4);
+          ctx.restore();
+        } else {
+          ctx.drawImage(rightImg, panel.x + 2, y + 2, panelW - 4, panelH - 4);
+        }
       } else {
         // Draw compact 2D top-down schematic inside panel 3
         const sx = panelW / SKETCH_WIDTH;
@@ -329,6 +364,29 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
   const [pinType, setPinType] = useState<DamagePinType>('S');
   const [activeStroke, setActiveStroke] = useState<SketchStroke | null>(null);
   const [selectedPinId, setSelectedPinId] = useState<string | null>(null);
+
+  const media = SKETCH_3D_MEDIA_BY_KIND[value.vehicle_kind] ?? SKETCH_3D_MEDIA_BY_KIND.sedan;
+  const [leftSrc, setLeftSrc] = useState<string>(() => getCachedSketchImageSync(media.left));
+  const [rightSrc, setRightSrc] = useState<string>(() => getCachedSketchImageSync(media.right));
+
+  useEffect(() => {
+    void warmVehicleSketchImages();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLeftSrc(getCachedSketchImageSync(media.left));
+    setRightSrc(getCachedSketchImageSync(media.right));
+    void resolveCachedSketchImageSrc(media.left).then((resolved) => {
+      if (!cancelled) setLeftSrc(resolved);
+    });
+    void resolveCachedSketchImageSrc(media.right).then((resolved) => {
+      if (!cancelled) setRightSrc(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [media.left, media.right]);
 
   const strokesKey = activeLayer === 'out' ? 'strokes_out' : 'strokes_in';
   const pinsKey = activeLayer === 'out' ? 'pins_out' : 'pins_in';
@@ -589,7 +647,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         <div className="flex flex-wrap items-center gap-2">
           {canChangeKind && !readOnly && onChange ? (
             <select
-              aria-label="Vehicle silhouette type"
+              aria-label="Vehicle model 3D and 2D diagram"
               value={value.vehicle_kind}
               onChange={(e) =>
                 onChange({ ...value, vehicle_kind: e.target.value as SketchVehicleKind })
@@ -598,13 +656,13 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
             >
               {SKETCH_KINDS.map((k) => (
                 <option key={k.id} value={k.id}>
-                  2D Diagram: {k.label}
+                  Model View: {k.label}
                 </option>
               ))}
             </select>
           ) : (
             <span className="rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-1.5 text-xs font-semibold text-blue-900">
-              2D Diagram: {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? value.vehicle_kind}
+              Model View: {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? value.vehicle_kind}
             </span>
           )}
         </div>
@@ -704,9 +762,10 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
           </div>
           <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
             <img
-              src={LEFT_SIDE_3D_IMAGE}
-              alt="Left side 3D vehicle inspection view"
+              src={leftSrc}
+              alt={`Left side 3D ${value.vehicle_kind} inspection view`}
               referrerPolicy="no-referrer"
+              decoding="async"
               draggable={false}
               className="h-full w-full object-contain pointer-events-none select-none"
             />
@@ -738,11 +797,14 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
           </div>
           <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
             <img
-              src={RIGHT_SIDE_3D_IMAGE}
-              alt="Right side 3D vehicle inspection view"
+              src={rightSrc}
+              alt={`Right side 3D ${value.vehicle_kind} inspection view`}
               referrerPolicy="no-referrer"
+              decoding="async"
               draggable={false}
-              className="h-full w-full object-contain -scale-x-100 pointer-events-none select-none"
+              className={`h-full w-full object-contain pointer-events-none select-none ${
+                media.flipRight ? '-scale-x-100' : ''
+              }`}
             />
             <svg
               ref={(el) => {

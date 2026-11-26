@@ -1,23 +1,78 @@
 import { api } from './api';
-import type {
-  AppSettings,
-  AuditLogEntry,
-  ChecklistItemTemplate,
-  ChecklistSummary,
-  DashboardData,
-  Driver,
-  FleetMaintenanceOverview,
-  FuelLevel,
-  NotificationRecipient,
-  NotificationRecord,
-  ReportPreviewData,
-  ReportType,
-  Role,
-  TripDetail,
-  TripSummary,
-  UserPublic,
-  Vehicle,
+import {
+  ALL_SKETCH_3D_IMAGE_URLS,
+  type AppSettings,
+  type AuditLogEntry,
+  type ChecklistItemTemplate,
+  type ChecklistSummary,
+  type DashboardData,
+  type Driver,
+  type FleetMaintenanceOverview,
+  type FuelLevel,
+  type NotificationRecipient,
+  type NotificationRecord,
+  type ReportPreviewData,
+  type ReportType,
+  type Role,
+  type TripDetail,
+  type TripSummary,
+  type UserPublic,
+  type Vehicle,
 } from '../shared/types';
+
+export const VEHICLE_IMAGE_CACHE_NAME = 'fleet-secure-vehicle-images-v1';
+const sketchObjectUrlMap = new Map<string, string>();
+const sketchInFlightMap = new Map<string, Promise<string>>();
+
+export function getCachedSketchImageSync(url: string): string {
+  return sketchObjectUrlMap.get(url) ?? url;
+}
+
+export async function resolveCachedSketchImageSrc(url: string): Promise<string> {
+  const existing = sketchObjectUrlMap.get(url);
+  if (existing) return existing;
+
+  const inflight = sketchInFlightMap.get(url);
+  if (inflight) return inflight;
+
+  const task = (async () => {
+    try {
+      if (typeof window === 'undefined' || typeof caches === 'undefined') {
+        return url;
+      }
+      const cache = await caches.open(VEHICLE_IMAGE_CACHE_NAME);
+      let response = await cache.match(url);
+      if (!response && (typeof navigator === 'undefined' || navigator.onLine !== false)) {
+        const fetched = await fetch(url, { cache: 'force-cache' });
+        if (fetched.ok) {
+          await cache.put(url, fetched.clone());
+          response = fetched;
+        }
+      }
+      if (response) {
+        const blob = await response.blob();
+        if (blob.size > 0 && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
+          const objectUrl = URL.createObjectURL(blob);
+          sketchObjectUrlMap.set(url, objectUrl);
+          return objectUrl;
+        }
+      }
+      return url;
+    } catch {
+      return url;
+    } finally {
+      sketchInFlightMap.delete(url);
+    }
+  })();
+
+  sketchInFlightMap.set(url, task);
+  return task;
+}
+
+export async function warmVehicleSketchImages(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  await Promise.allSettled(ALL_SKETCH_3D_IMAGE_URLS.map((u) => resolveCachedSketchImageSrc(u)));
+}
 
 export const ONLINE_RECONNECTED_EVENT = 'fleet-secure-online-reconnected';
 
@@ -270,6 +325,7 @@ export async function warmOfflineCaches(
           writeCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates, res.items);
         })
         .catch(() => undefined),
+      warmVehicleSketchImages().catch(() => undefined),
     ];
 
     if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {

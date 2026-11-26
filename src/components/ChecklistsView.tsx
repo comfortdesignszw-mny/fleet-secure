@@ -58,6 +58,7 @@ import {
   createEmptySketch,
   exportSketchPngDataUrl,
   inferSketchKind,
+  matchSketchKindFromText,
 } from './VehicleConditionSketch';
 
 export interface ChecklistPrefill {
@@ -1689,10 +1690,13 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     required
                     value={cNewMakeModel}
                     onChange={(e) => {
-                      setCNewMakeModel(e.target.value);
+                      const nextModel = e.target.value;
+                      setCNewMakeModel(nextModel);
                       setCSketch((prev) => ({
                         ...prev,
-                        vehicle_kind: inferSketchKind(cNewType, e.target.value),
+                        vehicle_kind:
+                          matchSketchKindFromText(nextModel) ??
+                          inferSketchKind(cNewType, nextModel),
                       }));
                     }}
                     placeholder="e.g. Toyota Fortuner"

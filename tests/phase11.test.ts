@@ -6,15 +6,16 @@ import { createApp } from '../src/server/app';
 import { LocalD1Adapter } from '../src/server/local-d1';
 import { ensureInitialSeed, resetSeedCacheForTests } from '../src/server/seed';
 import type { AppEnv } from '../src/server/types';
-import type {
-  ChecklistDetail,
-  ChecklistItemTemplate,
-  Driver,
-  DriverTempCredentials,
-  ReportPreviewData,
-  Vehicle,
+import {
+  SKETCH_3D_MEDIA_BY_KIND,
+  type ChecklistDetail,
+  type ChecklistItemTemplate,
+  type Driver,
+  type DriverTempCredentials,
+  type ReportPreviewData,
+  type Vehicle,
 } from '../src/shared/types';
-import { createEmptySketch } from '../src/components/VehicleConditionSketch';
+import { createEmptySketch, inferSketchKind } from '../src/components/VehicleConditionSketch';
 
 const TINY_PNG_DATA_URL =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==';
@@ -477,4 +478,28 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
     env
   );
   assert.equal(adminDelete.status, 200);
+});
+
+test('Checklist 3D sketch selects model-specific left/right assets for sedan, suv, doublecab, and kombi', () => {
+  assert.equal(inferSketchKind('Sedan', 'Toyota Corolla'), 'sedan');
+  assert.equal(inferSketchKind('SUV', 'Toyota Fortuner'), 'suv');
+  assert.equal(inferSketchKind('Double Cab', 'Toyota Hilux'), 'doublecab');
+  assert.equal(inferSketchKind('Kombi', 'Toyota Quantum'), 'kombi');
+  assert.equal(inferSketchKind('Quantum', 'HiAce'), 'kombi');
+
+  const seenLeft = new Set<string>();
+  const seenRight = new Set<string>();
+  for (const kind of ['sedan', 'suv', 'doublecab', 'kombi'] as const) {
+    const media = SKETCH_3D_MEDIA_BY_KIND[kind];
+    assert.ok(media.left.startsWith('/src/assets/images/'));
+    assert.ok(media.right.startsWith('/src/assets/images/'));
+    const leftDiskPath = path.resolve(process.cwd(), media.left.slice(1));
+    const rightDiskPath = path.resolve(process.cwd(), media.right.slice(1));
+    assert.ok(fs.existsSync(leftDiskPath), `Missing 3D left asset: ${leftDiskPath}`);
+    assert.ok(fs.existsSync(rightDiskPath), `Missing 3D right asset: ${rightDiskPath}`);
+    seenLeft.add(media.left);
+    seenRight.add(media.right);
+  }
+  assert.equal(seenLeft.size, 4);
+  assert.equal(seenRight.size, 4);
 });

@@ -647,6 +647,39 @@ export type SketchVehicleKind = 'sedan' | 'suv' | 'doublecab' | 'kombi';
 export type SketchPanelView = 'left' | 'right' | 'top';
 export type DamagePinType = 'S' | 'D' | 'C' | 'M' | 'O';
 
+export interface SketchVehicleMedia {
+  left: string;
+  right: string;
+  flipRight?: boolean;
+}
+
+export const SKETCH_3D_MEDIA_BY_KIND: Record<SketchVehicleKind, SketchVehicleMedia> = {
+  sedan: {
+    left: '/src/assets/images/sedan_left_3d_1795723683091.jpg',
+    right: '/src/assets/images/sedan_right_3d_1795723683783.jpg',
+    flipRight: false,
+  },
+  suv: {
+    left: '/src/assets/images/vehicle_left_3d_1795721974462.jpg',
+    right: '/src/assets/images/vehicle_right_3d_1795721974156.jpg',
+    flipRight: true,
+  },
+  doublecab: {
+    left: '/src/assets/images/doublecab_left_3d_1795723685048.jpg',
+    right: '/src/assets/images/doublecab_right_3d_1795723685317.jpg',
+    flipRight: false,
+  },
+  kombi: {
+    left: '/src/assets/images/kombi_left_3d_1795723686440.jpg',
+    right: '/src/assets/images/kombi_right_3d_1795723686552.jpg',
+    flipRight: false,
+  },
+};
+
+export const ALL_SKETCH_3D_IMAGE_URLS: readonly string[] = Object.values(SKETCH_3D_MEDIA_BY_KIND).flatMap(
+  (m) => [m.left, m.right]
+);
+
 export interface SketchStroke {
   id: string;
   view?: SketchPanelView;
