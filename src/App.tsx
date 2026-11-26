@@ -131,8 +131,8 @@ export default function App() {
 
   const verifySession = useCallback(async () => {
     try {
-      const res = await api.me();
-      setUser(res.user);
+      const res = await api.session();
+      setUser(res.authenticated ? res.user : null);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         clearCachedSession();

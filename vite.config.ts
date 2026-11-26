@@ -91,8 +91,7 @@ export default defineConfig(() => {
           ],
         },
         devOptions: {
-          enabled: true,
-          type: 'module',
+          enabled: false,
         },
       }),
       {
@@ -118,8 +117,9 @@ export default defineConfig(() => {
     },
     server: {
       allowedHosts: true as const,
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      hmr: process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true',
+      watch:
+        process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true' ? {} : null,
     },
   };
 });

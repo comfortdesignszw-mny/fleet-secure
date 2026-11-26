@@ -195,6 +195,16 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 export const api = {
+  session: async () => {
+    const res = await request<{ authenticated: boolean; user: UserPublic | null }>('/auth/session');
+    if (res.authenticated && res.user) {
+      setCachedUser(res.user);
+    } else {
+      clearCachedSession();
+    }
+    return res;
+  },
+
   me: async () => {
     const res = await request<{ user: UserPublic }>('/auth/me');
     setCachedUser(res.user);

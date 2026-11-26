@@ -591,6 +591,26 @@ export function createApp() {
     return c.json({ ok: true });
   });
 
+  app.get('/auth/session', async (c) => {
+    const token = getRequestSessionToken(c);
+    const payload = await verifySession(token, getSessionSecret(c.env));
+    if (!payload) {
+      return c.json({ authenticated: false, user: null });
+    }
+    const row = await c.env.DB.prepare(
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
+    )
+      .bind(payload.uid)
+      .first<Record<string, unknown>>();
+
+    if (!row || Number(row.active) !== 1) {
+      deleteCookie(c, SESSION_COOKIE, getSessionCookieOptions(c));
+      return c.json({ authenticated: false, user: null });
+    }
+
+    return c.json({ authenticated: true, user: mapUserRow(row) });
+  });
+
   app.get('/auth/me', requireAuth, async (c) => {
     const user = c.get('user')!;
     return c.json({ user });

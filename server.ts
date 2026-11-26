@@ -101,10 +101,12 @@ async function startServer() {
       res.sendFile(path.join(distDir, 'index.html'));
     });
   } else {
+    const hmrEnabled = process.env.ENABLE_HMR === 'true' && process.env.DISABLE_HMR !== 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        ws: { server: httpServer },
+        ws: hmrEnabled ? { server: httpServer } : false,
+        hmr: hmrEnabled ? { server: httpServer } : false,
         allowedHosts: true,
       },
       appType: 'spa',
