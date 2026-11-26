@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -63,7 +63,9 @@ import {
 export interface ChecklistPrefill {
   trip_id?: number | null;
   vehicle_id?: number;
+  hirer_type?: ChecklistHirerType;
   hirer_name?: string;
+  representative?: string;
   hire_date?: string;
   days?: number;
   mileage_out?: number;
@@ -107,6 +109,19 @@ function addDaysToIsoDate(isoDate: string, days: number): string {
   const dt = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
   dt.setUTCDate(dt.getUTCDate() + Math.max(0, days));
   return dt.toISOString().slice(0, 10);
+}
+
+function formatChecklistPrintTitle(regNumber: string, hireDateYmd: string): string {
+  const cleanReg = regNumber.trim().toUpperCase().replace(/[^A-Z0-9]+/g, '') || 'VEHICLE';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(hireDateYmd.trim());
+  const datePart = match
+    ? `${match[3]}-${match[2]}-${match[1].slice(-2)}`
+    : (() => {
+        const today = getHarareTodayStr();
+        const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(today);
+        return m ? `${m[3]}-${m[2]}-${m[1].slice(-2)}` : today;
+      })();
+  return `Checklist_${cleanReg}_${datePart}`;
 }
 
 function getExpiryState(expiryDate: string, todayStr: string): 'EXPIRED' | 'SOON' | 'OK' | null {
@@ -233,9 +248,16 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  // Reference data
-  const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [templates, setTemplates] = useState<ChecklistItemTemplate[]>([]);
+  // Reference data (seed synchronously from offline cache when available so prefills load Section F immediately)
+  const [vehicles, setVehicles] = useState<Vehicle[]>(
+    () => readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll)?.data.items ?? []
+  );
+  const [templates, setTemplates] = useState<ChecklistItemTemplate[]>(
+    () => readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates)?.data ?? []
+  );
+  const [referenceLoaded, setReferenceLoaded] = useState(false);
+  const [printA4OnSave, setPrintA4OnSave] = useState(true);
+  const pendingAutoPrintRef = useRef<{ reg: string; date: string } | null>(null);
 
   // Detail state
   const [detail, setDetail] = useState<ChecklistDetail | null>(null);
@@ -343,6 +365,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       if (cachedVehicles) setVehicles(cachedVehicles.data.items);
       const cachedTemplates = readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates);
       if (cachedTemplates) setTemplates(cachedTemplates.data);
+    } finally {
+      setReferenceLoaded(true);
     }
   }, []);
 
@@ -429,15 +453,48 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     []
   );
 
+  const printChecklistA4 = useCallback((regNumber: string, hireDateYmd: string) => {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    const prevTitle = document.title;
+    document.title = formatChecklistPrintTitle(regNumber, hireDateYmd);
+    let restored = false;
+    const restore = () => {
+      if (restored) return;
+      restored = true;
+      document.title = prevTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    window.print();
+    window.setTimeout(restore, 1500);
+  }, []);
+
+  const buildDraftItemsFromTemplates = useCallback(
+    (tplList: ChecklistItemTemplate[]): DraftChecklistRow[] =>
+      tplList.map((t, idx) => ({
+        localKey: `tpl_${t.id}_${idx}`,
+        template_id: t.id,
+        custom_label: t.label,
+        input_type: t.input_type,
+        options: t.options ?? [],
+        sort_order: t.sort_order ?? idx + 1,
+        value_out: makeDefaultValue(t.input_type, t.options ?? []),
+        value_in: null,
+        note: '',
+        photo_data_url: null,
+      })),
+    []
+  );
+
   const startNewChecklist = useCallback(
     (prefill?: ChecklistPrefill | null) => {
       setError(null);
       setNotice(null);
       const today = getHarareTodayStr();
       setCTripId(prefill?.trip_id ?? null);
-      setCHirerType('renter');
+      setCHirerType(prefill?.hirer_type ?? 'renter');
       setCHirerName(prefill?.hirer_name ?? '');
-      setCRepresentative('');
+      setCRepresentative(prefill?.representative ?? '');
       setCCell('');
       setCHireDate(prefill?.hire_date ?? today);
       setCDays(String(prefill?.days && prefill.days >= 1 ? prefill.days : 1));
@@ -445,7 +502,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       setShowAddRow(false);
       setExpandedRowExtras({});
       setCOutRenter({
-        name: prefill?.hirer_name ?? '',
+        name: prefill?.hirer_name || prefill?.representative || '',
         id_number: '',
         signature_data_url: '',
       });
@@ -455,26 +512,21 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         signature_data_url: '',
       });
 
-      const activeTpls = templates.length > 0 ? templates : [];
-      setCItems(
-        activeTpls.map((t, idx) => ({
-          localKey: `tpl_${t.id}_${idx}`,
-          template_id: t.id,
-          custom_label: t.label,
-          input_type: t.input_type,
-          options: t.options ?? [],
-          sort_order: t.sort_order ?? idx + 1,
-          value_out: makeDefaultValue(t.input_type, t.options ?? []),
-          value_in: null,
-          note: '',
-          photo_data_url: null,
-        }))
-      );
+      const activeTpls =
+        templates.length > 0
+          ? templates
+          : readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates)?.data ?? [];
+      setCItems(buildDraftItemsFromTemplates(activeTpls));
+
+      const availableVehicles =
+        vehicles.length > 0
+          ? vehicles
+          : readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll)?.data.items ?? [];
 
       const matchedVehicle =
-        (prefill?.vehicle_id ? vehicles.find((v) => v.id === prefill.vehicle_id) : null) ??
-        vehicles.find((v) => v.active) ??
-        vehicles[0] ??
+        (prefill?.vehicle_id ? availableVehicles.find((v) => v.id === prefill.vehicle_id) : null) ??
+        availableVehicles.find((v) => v.active) ??
+        availableVehicles[0] ??
         null;
 
       if (matchedVehicle) {
@@ -493,14 +545,31 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
       setScreen('create');
     },
-    [templates, vehicles, currentUser.full_name, applyVehicleSelection]
+    [templates, vehicles, currentUser.full_name, applyVehicleSelection, buildDraftItemsFromTemplates]
   );
 
   useEffect(() => {
-    if (!initialPrefill) return;
+    if (!initialPrefill || !referenceLoaded) return;
     startNewChecklist(initialPrefill);
     onConsumePrefill?.();
-  }, [initialPrefill, startNewChecklist, onConsumePrefill]);
+  }, [initialPrefill, referenceLoaded, startNewChecklist, onConsumePrefill]);
+
+  useEffect(() => {
+    if (screen !== 'create') return;
+    if (cItems.length === 0 && templates.length > 0) {
+      setCItems(buildDraftItemsFromTemplates(templates));
+    }
+  }, [screen, cItems.length, templates, buildDraftItemsFromTemplates]);
+
+  useEffect(() => {
+    if (screen !== 'detail' || returnMode || !detail || !pendingAutoPrintRef.current) return;
+    const job = pendingAutoPrintRef.current;
+    pendingAutoPrintRef.current = null;
+    const timer = window.setTimeout(() => {
+      printChecklistA4(job.reg, job.date);
+    }, 150);
+    return () => window.clearTimeout(timer);
+  }, [screen, returnMode, detail, printChecklistA4]);
 
   const openDetail = async (id: number) => {
     if (id < 0) {
@@ -744,8 +813,15 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
       try {
         const res = await api.createChecklist(payload);
+        if (printA4OnSave) {
+          pendingAutoPrintRef.current = {
+            reg: res.checklist.reg_number,
+            date: res.checklist.hire_date,
+          };
+        }
         setNotice(`Checklist #${res.checklist.id} saved (${res.checklist.reg_number} — Out).`);
         setDetail(res.checklist);
+        setReturnMode(false);
         setScreen('detail');
         void fetchChecklists();
         void loadReferenceData();
@@ -863,6 +939,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
       try {
         const res = await api.completeChecklist(detail.id, payload);
+        if (printA4OnSave) {
+          pendingAutoPrintRef.current = {
+            reg: res.checklist.reg_number,
+            date: res.checklist.hire_date,
+          };
+        }
         setDetail(res.checklist);
         setReturnMode(false);
         setNotice(`Checklist #${res.checklist.id} completed and vehicle record updated.`);
@@ -1295,7 +1377,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       )}
 
       <div className="divide-y divide-blue-100 rounded-xl border border-blue-100 overflow-hidden">
-        {rows.map((row, idx) => {
+        {rows.length === 0 ? (
+          <div className="p-4 text-sm text-slate-600">
+            Loading 25-point vehicle inspection items...
+          </div>
+        ) : (
+          rows.map((row, idx) => {
           const hasExtras = Boolean(row.note || row.photo_data_url || expandedRowExtras[row.localKey]);
           return (
             <div key={row.localKey} className="p-3 sm:px-4 space-y-2 hover:bg-blue-50/20">
@@ -1396,7 +1483,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               )}
             </div>
           );
-        })}
+        })
+        )}
       </div>
     </div>
   );
@@ -1804,13 +1892,36 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             onChangeOutCompany={setCOutCompany}
           />
 
+          <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm font-medium text-blue-950">
+            <input
+              type="checkbox"
+              checked={printA4OnSave}
+              onChange={(e) => setPrintA4OnSave(e.target.checked)}
+              className="h-4 w-4 accent-cyan-600"
+            />
+            <span>
+              Print A4 by default on save (
+              <span className="font-mono font-semibold text-cyan-900">
+                {formatChecklistPrintTitle(
+                  cVehicleMode === 'existing' ? selectedVehicle?.reg_number ?? '' : cNewReg,
+                  isAdmin ? cHireDate : todayStr
+                )}
+              </span>
+              )
+            </span>
+          </label>
+
           <div className="flex flex-wrap gap-3">
             <button
               type="submit"
               disabled={submittingCreate}
               className="cyan-glow-btn min-h-[50px] flex-1 rounded-xl px-6 text-base font-bold disabled:opacity-60"
             >
-              {submittingCreate ? 'Saving Checklist...' : 'Save Check-Out Slip'}
+              {submittingCreate
+                ? 'Saving Checklist...'
+                : printA4OnSave
+                  ? 'Save & Print A4 Slip'
+                  : 'Save Check-Out Slip'}
             </button>
             <button
               type="button"
@@ -1866,10 +1977,20 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               </a>
               <button
                 type="button"
-                onClick={() => window.print()}
-                className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-3.5 text-sm font-semibold text-blue-900"
+                onClick={() => printChecklistA4(detail.reg_number, detail.hire_date)}
+                title={formatChecklistPrintTitle(detail.reg_number, detail.hire_date)}
+                className={`${
+                  detail.status === 'completed' || returnMode
+                    ? 'cyan-glow-btn'
+                    : 'cyan-glow-outline border border-blue-200 bg-white text-blue-900'
+                } inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold`}
               >
-                <Printer className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+                <Printer
+                  className={`h-4 w-4 ${
+                    detail.status === 'completed' || returnMode ? '' : 'text-cyan-600'
+                  }`}
+                  aria-hidden="true"
+                />
                 <span>Print A4</span>
               </button>
               {isAdmin && !returnMode && (
@@ -2018,12 +2139,32 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               onChangeInCompany={setRetInCompany}
             />
 
+            <label className="flex cursor-pointer items-center gap-2.5 rounded-xl border border-cyan-200 bg-cyan-50/70 px-4 py-3 text-sm font-medium text-blue-950">
+              <input
+                type="checkbox"
+                checked={printA4OnSave}
+                onChange={(e) => setPrintA4OnSave(e.target.checked)}
+                className="h-4 w-4 accent-cyan-600"
+              />
+              <span>
+                Print A4 by default on save (
+                <span className="font-mono font-semibold text-cyan-900">
+                  {formatChecklistPrintTitle(detail.reg_number, detail.hire_date)}
+                </span>
+                )
+              </span>
+            </label>
+
             <button
               type="submit"
               disabled={submittingReturn}
               className="cyan-glow-btn min-h-[50px] w-full rounded-xl px-6 text-base font-bold disabled:opacity-60"
             >
-              {submittingReturn ? 'Completing Return...' : 'Complete Return & Close Checklist'}
+              {submittingReturn
+                ? 'Completing Return...'
+                : printA4OnSave
+                  ? 'Complete Return & Print A4'
+                  : 'Complete Return & Close Checklist'}
             </button>
           </form>
         ) : (
@@ -2140,6 +2281,14 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                       {detail.mileage_in !== null ? `${detail.mileage_in.toLocaleString()} km` : 'Still out'}
                     </span>
                   </div>
+                  {detail.mileage_in !== null && detail.mileage_in >= detail.mileage_out && (
+                    <div>
+                      <span className="text-slate-500">Distance:</span>{' '}
+                      <span className="font-mono font-semibold text-blue-950">
+                        +{(detail.mileage_in - detail.mileage_out).toLocaleString()} km
+                      </span>
+                    </div>
+                  )}
                   {detail.mileage_out_diff_warning && (
                     <div className="text-[11px] font-semibold text-amber-800">
                       Out km differed from {detail.previous_closing_mileage?.toLocaleString()} km

@@ -534,7 +534,9 @@ export default function App() {
     setPendingChecklistPrefill({
       trip_id: trip.id,
       vehicle_id: trip.vehicle_id,
-      hirer_name: trip.client_name ?? '',
+      hirer_type: trip.trip_type === 'ERRAND' ? 'owner' : 'renter',
+      hirer_name: trip.client_name || trip.driver_name || '',
+      representative: trip.driver_name ?? '',
       hire_date: outDate,
       days: trip.days_hired ?? 1,
       mileage_out: trip.mileage_out,

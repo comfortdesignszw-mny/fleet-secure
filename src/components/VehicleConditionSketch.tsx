@@ -6,6 +6,7 @@ import type {
   ChecklistSketchData,
   DamagePinType,
   SketchDamagePin,
+  SketchPanelView,
   SketchStroke,
   SketchVehicleKind,
 } from '../shared/types';
@@ -13,12 +14,21 @@ import type {
 export const SKETCH_WIDTH = 800;
 export const SKETCH_HEIGHT = 380;
 
+export const LEFT_SIDE_3D_IMAGE = '/src/assets/images/vehicle_left_3d_1795721974462.jpg';
+export const RIGHT_SIDE_3D_IMAGE = '/src/assets/images/vehicle_right_3d_1795721974156.jpg';
+
 export const PIN_TYPE_LABELS: Record<DamagePinType, string> = {
   S: 'Scratch',
   D: 'Dent',
   C: 'Chip / Crack',
   M: 'Missing Part',
   O: 'Other Mark',
+};
+
+export const VIEW_PANEL_LABELS: Record<SketchPanelView, string> = {
+  left: 'Left Side (3D)',
+  right: 'Right Side (3D)',
+  top: 'Top 2D',
 };
 
 export const SKETCH_KINDS: Array<{ id: SketchVehicleKind; label: string }> = [
@@ -150,109 +160,144 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
   );
 }
 
+function loadImageElement(src: string): Promise<HTMLImageElement | null> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => resolve(img);
+    img.onerror = () => resolve(null);
+    img.src = src;
+  });
+}
+
 /**
- * Generates a composite PNG data URL matching the interactive Vehicle Condition Sketch.
+ * Generates a composite PNG data URL across all 3 views (Left 3D, Right 3D, and Top 2D).
  */
 export async function exportSketchPngDataUrl(sketch: ChecklistSketchData): Promise<string | null> {
   if (typeof document === 'undefined') return null;
   try {
+    const panelW = 380;
+    const panelH = 210;
+    const gap = 14;
+    const totalW = panelW * 3 + gap * 4;
+    const totalH = panelH + 40;
+
     const canvas = document.createElement('canvas');
-    canvas.width = SKETCH_WIDTH;
-    canvas.height = SKETCH_HEIGHT;
+    canvas.width = totalW;
+    canvas.height = totalH;
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
 
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, SKETCH_WIDTH, SKETCH_HEIGHT);
+    ctx.fillRect(0, 0, totalW, totalH);
 
-    // Subtle grid border
-    ctx.strokeStyle = '#cbd5e1';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(4, 4, SKETCH_WIDTH - 8, SKETCH_HEIGHT - 8);
+    const [leftImg, rightImg] = await Promise.all([
+      loadImageElement(LEFT_SIDE_3D_IMAGE),
+      loadImageElement(RIGHT_SIDE_3D_IMAGE),
+    ]);
 
-    // Orientation labels
-    ctx.fillStyle = '#64748b';
-    ctx.font = 'bold 12px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('LEFT / PASSENGER SIDE', SKETCH_WIDTH / 2, 26);
-    ctx.fillText('RIGHT / DRIVER SIDE', SKETCH_WIDTH / 2, SKETCH_HEIGHT - 16);
-    ctx.save();
-    ctx.translate(28, SKETCH_HEIGHT / 2);
-    ctx.rotate(-Math.PI / 2);
-    ctx.fillText('FRONT', 0, 0);
-    ctx.restore();
-    ctx.save();
-    ctx.translate(SKETCH_WIDTH - 24, SKETCH_HEIGHT / 2);
-    ctx.rotate(Math.PI / 2);
-    ctx.fillText('REAR', 0, 0);
-    ctx.restore();
+    const panels: Array<{ view: SketchPanelView; title: string; x: number }> = [
+      { view: 'left', title: 'LEFT SIDE (3D)', x: gap },
+      { view: 'right', title: 'RIGHT SIDE (3D)', x: gap * 2 + panelW },
+      { view: 'top', title: `TOP VIEW (2D · ${sketch.vehicle_kind.toUpperCase()})`, x: gap * 3 + panelW * 2 },
+    ];
 
-    // Draw basic body outline on canvas cleanly for offline/PDF embedding
-    ctx.strokeStyle = '#334155';
-    ctx.fillStyle = '#f8fafc';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.roundRect(115, 78, 575, 224, 30);
-    ctx.fill();
-    ctx.stroke();
+    for (const panel of panels) {
+      const y = 26;
+      ctx.fillStyle = '#1e3a8a';
+      ctx.font = 'bold 12px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.fillText(panel.title, panel.x, 18);
 
-    // Windshield & rear glass
-    ctx.fillStyle = '#dbeafe';
-    ctx.strokeStyle = '#475569';
-    ctx.lineWidth = 1.6;
-    if (sketch.vehicle_kind === 'kombi') {
-      ctx.fillRect(165, 96, 55, 188);
-      ctx.strokeRect(165, 96, 55, 188);
-      ctx.fillRect(630, 96, 35, 188);
-      ctx.strokeRect(630, 96, 35, 188);
-    } else {
-      ctx.fillRect(248, 102, 65, 176);
-      ctx.strokeRect(248, 102, 65, 176);
-      if (sketch.vehicle_kind === 'doublecab') {
-        ctx.fillRect(465, 106, 26, 168);
-        ctx.strokeRect(465, 106, 26, 168);
-        ctx.fillStyle = '#e2e8f0';
-        ctx.fillRect(502, 96, 174, 188);
-        ctx.strokeRect(502, 96, 174, 188);
+      ctx.strokeStyle = '#cbd5e1';
+      ctx.lineWidth = 1.5;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(panel.x, y, panelW, panelH);
+      ctx.strokeRect(panel.x, y, panelW, panelH);
+
+      if (panel.view === 'left' && leftImg) {
+        ctx.drawImage(leftImg, panel.x + 2, y + 2, panelW - 4, panelH - 4);
+      } else if (panel.view === 'right' && rightImg) {
+        ctx.save();
+        ctx.translate(panel.x + panelW - 2, y + 2);
+        ctx.scale(-1, 1);
+        ctx.drawImage(rightImg, 0, 0, panelW - 4, panelH - 4);
+        ctx.restore();
       } else {
-        const rx = sketch.vehicle_kind === 'suv' ? 580 : 500;
-        ctx.fillRect(rx, 102, 58, 176);
-        ctx.strokeRect(rx, 102, 58, 176);
-      }
-    }
-
-    const drawLayer = (strokes: SketchStroke[], pins: SketchDamagePin[], color: string) => {
-      ctx.strokeStyle = color;
-      ctx.lineCap = 'round';
-      ctx.lineJoin = 'round';
-      for (const s of strokes) {
-        if (s.points.length < 2) continue;
-        ctx.lineWidth = s.width || 4;
+        // Draw compact 2D top-down schematic inside panel 3
+        const sx = panelW / SKETCH_WIDTH;
+        const sy = panelH / SKETCH_HEIGHT;
+        ctx.save();
+        ctx.translate(panel.x, y);
+        ctx.scale(sx, sy);
+        ctx.strokeStyle = '#334155';
+        ctx.fillStyle = '#f8fafc';
+        ctx.lineWidth = 3;
         ctx.beginPath();
-        ctx.moveTo(s.points[0].x, s.points[0].y);
-        for (let i = 1; i < s.points.length; i += 1) {
-          ctx.lineTo(s.points[i].x, s.points[i].y);
-        }
-        ctx.stroke();
-      }
-      for (const p of pins) {
-        ctx.fillStyle = color;
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, 13, 0, Math.PI * 2);
+        ctx.roundRect(115, 78, 575, 224, 30);
         ctx.fill();
-        ctx.strokeStyle = '#ffffff';
-        ctx.lineWidth = 2;
         ctx.stroke();
-        ctx.fillStyle = '#ffffff';
-        ctx.font = 'bold 11px monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(`${p.type}${p.number}`, p.x, p.y + 0.5);
-      }
-    };
 
-    drawLayer(sketch.strokes_out, sketch.pins_out, '#d92d20');
-    drawLayer(sketch.strokes_in, sketch.pins_in, '#1d4ed8');
+        ctx.fillStyle = '#dbeafe';
+        ctx.strokeStyle = '#475569';
+        ctx.lineWidth = 2;
+        if (sketch.vehicle_kind === 'kombi') {
+          ctx.fillRect(165, 96, 55, 188);
+          ctx.strokeRect(165, 96, 55, 188);
+          ctx.fillRect(630, 96, 35, 188);
+          ctx.strokeRect(630, 96, 35, 188);
+        } else {
+          ctx.fillRect(248, 102, 65, 176);
+          ctx.strokeRect(248, 102, 65, 176);
+          const rx = sketch.vehicle_kind === 'doublecab' ? 465 : sketch.vehicle_kind === 'suv' ? 580 : 500;
+          ctx.fillRect(rx, 102, 50, 176);
+          ctx.strokeRect(rx, 102, 50, 176);
+        }
+        ctx.restore();
+      }
+
+      const drawMarks = (strokes: SketchStroke[], pins: SketchDamagePin[], color: string) => {
+        const sx = panelW / SKETCH_WIDTH;
+        const sy = panelH / SKETCH_HEIGHT;
+        ctx.save();
+        ctx.translate(panel.x, y);
+        ctx.strokeStyle = color;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+
+        for (const s of strokes) {
+          if ((s.view ?? 'top') !== panel.view || s.points.length < 2) continue;
+          ctx.lineWidth = Math.max(2, (s.width || 4) * sx);
+          ctx.beginPath();
+          ctx.moveTo(s.points[0].x * sx, s.points[0].y * sy);
+          for (let i = 1; i < s.points.length; i += 1) {
+            ctx.lineTo(s.points[i].x * sx, s.points[i].y * sy);
+          }
+          ctx.stroke();
+        }
+        for (const p of pins) {
+          if ((p.view ?? 'top') !== panel.view) continue;
+          const px = p.x * sx;
+          const py = p.y * sy;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.arc(px, py, 10, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.fillStyle = '#ffffff';
+          ctx.font = 'bold 9px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(`${p.type}${p.number}`, px, py + 0.5);
+        }
+        ctx.restore();
+      };
+
+      drawMarks(sketch.strokes_out, sketch.pins_out, '#d92d20');
+      drawMarks(sketch.strokes_in, sketch.pins_in, '#1d4ed8');
+    }
 
     return canvas.toDataURL('image/png');
   } catch {
@@ -275,7 +320,11 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
   readOnly = false,
   canChangeKind = false,
 }) => {
-  const svgRef = useRef<SVGSVGElement | null>(null);
+  const svgRefs = useRef<Record<SketchPanelView, SVGSVGElement | null>>({
+    left: null,
+    right: null,
+    top: null,
+  });
   const [tool, setTool] = useState<'pin' | 'draw' | 'erase'>('pin');
   const [pinType, setPinType] = useState<DamagePinType>('S');
   const [activeStroke, setActiveStroke] = useState<SketchStroke | null>(null);
@@ -290,8 +339,11 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
   const activePins = value[pinsKey];
   const noDamageChecked = value[noDamageKey];
 
-  const getSvgCoords = (e: React.PointerEvent<SVGSVGElement>): { x: number; y: number } => {
-    const svg = svgRef.current;
+  const getSvgCoords = (
+    e: React.PointerEvent<SVGSVGElement>,
+    panelView: SketchPanelView
+  ): { x: number; y: number } => {
+    const svg = svgRefs.current[panelView];
     if (!svg) return { x: 0, y: 0 };
     const rect = svg.getBoundingClientRect();
     const x = Math.max(0, Math.min(SKETCH_WIDTH, ((e.clientX - rect.left) / rect.width) * SKETCH_WIDTH));
@@ -299,15 +351,15 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
     return { x: Math.round(x * 10) / 10, y: Math.round(y * 10) / 10 };
   };
 
-  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+  const handlePointerDown = (e: React.PointerEvent<SVGSVGElement>, panelView: SketchPanelView) => {
     if (readOnly || !onChange) return;
-    const pt = getSvgCoords(e);
+    const pt = getSvgCoords(e, panelView);
 
     if (tool === 'pin') {
-      const nextNum =
-        activePins.reduce((max, p) => Math.max(max, p.number), 0) + 1;
+      const nextNum = activePins.reduce((max, p) => Math.max(max, p.number), 0) + 1;
       const newPin: SketchDamagePin = {
         id: `pin_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        view: panelView,
         number: nextNum,
         x: pt.x,
         y: pt.y,
@@ -327,15 +379,17 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
       e.currentTarget.setPointerCapture(e.pointerId);
       setActiveStroke({
         id: `str_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        view: panelView,
         points: [pt],
-        width: 4,
+        width: 5,
       });
       return;
     }
 
     if (tool === 'erase') {
-      // Check nearest pin within 22px
-      const hitPin = activePins.find((p) => Math.hypot(p.x - pt.x, p.y - pt.y) <= 22);
+      const hitPin = activePins.find(
+        (p) => (p.view ?? 'top') === panelView && Math.hypot(p.x - pt.x, p.y - pt.y) <= 28
+      );
       if (hitPin) {
         onChange({
           ...value,
@@ -343,9 +397,10 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         });
         return;
       }
-      // Check nearest stroke point within 20px
-      const hitStroke = activeStrokes.find((s) =>
-        s.points.some((sp) => Math.hypot(sp.x - pt.x, sp.y - pt.y) <= 20)
+      const hitStroke = activeStrokes.find(
+        (s) =>
+          (s.view ?? 'top') === panelView &&
+          s.points.some((sp) => Math.hypot(sp.x - pt.x, sp.y - pt.y) <= 26)
       );
       if (hitStroke) {
         onChange({
@@ -356,9 +411,9 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
     }
   };
 
-  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
-    if (!activeStroke || readOnly) return;
-    const pt = getSvgCoords(e);
+  const handlePointerMove = (e: React.PointerEvent<SVGSVGElement>, panelView: SketchPanelView) => {
+    if (!activeStroke || activeStroke.view !== panelView || readOnly) return;
+    const pt = getSvgCoords(e, panelView);
     const last = activeStroke.points[activeStroke.points.length - 1];
     if (last && Math.hypot(last.x - pt.x, last.y - pt.y) < 3) return;
     setActiveStroke({
@@ -381,7 +436,11 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
 
   const handleUndo = () => {
     if (readOnly || !onChange) return;
-    if (activePins.length > 0 && (activeStrokes.length === 0 || activePins[activePins.length - 1].id > activeStrokes[activeStrokes.length - 1].id)) {
+    if (
+      activePins.length > 0 &&
+      (activeStrokes.length === 0 ||
+        activePins[activePins.length - 1].id > activeStrokes[activeStrokes.length - 1].id)
+    ) {
       onChange({ ...value, [pinsKey]: activePins.slice(0, -1) });
     } else if (activeStrokes.length > 0) {
       onChange({ ...value, [strokesKey]: activeStrokes.slice(0, -1) });
@@ -416,14 +475,114 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
   const toPolylinePoints = (pts: { x: number; y: number }[]) =>
     pts.map((p) => `${p.x},${p.y}`).join(' ');
 
+  const renderPanelOverlayMarks = (panelView: SketchPanelView) => (
+    <>
+      {/* OUT Layer (#d92d20) */}
+      {value.strokes_out
+        .filter((s) => (s.view ?? 'top') === panelView)
+        .map((s) => (
+          <polyline
+            key={s.id}
+            fill="none"
+            stroke="#d92d20"
+            strokeWidth={s.width || 5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={toPolylinePoints(s.points)}
+          />
+        ))}
+      {value.pins_out
+        .filter((p) => (p.view ?? 'top') === panelView)
+        .map((p) => (
+          <g
+            key={p.id}
+            onClick={(e) => {
+              if (tool === 'erase' && activeLayer === 'out' && !readOnly) {
+                e.stopPropagation();
+                removePin(p.id);
+              } else {
+                setSelectedPinId(p.id);
+              }
+            }}
+            className="cursor-pointer"
+          >
+            <circle cx={p.x} cy={p.y} r="17" fill="#d92d20" stroke="#ffffff" strokeWidth="3" />
+            <text
+              x={p.x}
+              y={p.y + 4.5}
+              textAnchor="middle"
+              className="fill-white font-mono text-[13px] font-bold pointer-events-none"
+            >
+              {p.type}
+              {p.number}
+            </text>
+          </g>
+        ))}
+
+      {/* IN Layer (#1d4ed8) */}
+      {value.strokes_in
+        .filter((s) => (s.view ?? 'top') === panelView)
+        .map((s) => (
+          <polyline
+            key={s.id}
+            fill="none"
+            stroke="#1d4ed8"
+            strokeWidth={s.width || 5}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            points={toPolylinePoints(s.points)}
+          />
+        ))}
+      {value.pins_in
+        .filter((p) => (p.view ?? 'top') === panelView)
+        .map((p) => (
+          <g
+            key={p.id}
+            onClick={(e) => {
+              if (tool === 'erase' && activeLayer === 'in' && !readOnly) {
+                e.stopPropagation();
+                removePin(p.id);
+              } else {
+                setSelectedPinId(p.id);
+              }
+            }}
+            className="cursor-pointer"
+          >
+            <circle cx={p.x} cy={p.y} r="17" fill="#1d4ed8" stroke="#ffffff" strokeWidth="3" />
+            <text
+              x={p.x}
+              y={p.y + 4.5}
+              textAnchor="middle"
+              className="fill-white font-mono text-[13px] font-bold pointer-events-none"
+            >
+              {p.type}
+              {p.number}
+            </text>
+          </g>
+        ))}
+
+      {/* Active Stroke Preview */}
+      {activeStroke && (activeStroke.view ?? 'top') === panelView && (
+        <polyline
+          fill="none"
+          stroke={layerColor}
+          strokeWidth={activeStroke.width}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          points={toPolylinePoints(activeStroke.points)}
+        />
+      )}
+    </>
+  );
+
   return (
     <div className="space-y-3 rounded-2xl border border-blue-200 bg-white p-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h3 className="text-base font-bold text-blue-950">Vehicle Condition Sketch</h3>
+          <h3 className="text-base font-bold text-blue-950">Vehicle Condition Sketch (3-View Inspection)</h3>
           <p className="text-xs text-slate-600">
             OUT marks appear in <span className="font-semibold text-[#d92d20]">Red</span> · IN return marks appear in{' '}
-            <span className="font-semibold text-[#1d4ed8]">Blue</span>. Tap the diagram to pin damage or draw freehand.
+            <span className="font-semibold text-[#1d4ed8]">Blue</span>. Tap Left Side (3D), Right Side (3D), or Top (2D) to pin or draw scratches &amp; deformities.
           </p>
         </div>
 
@@ -435,28 +594,28 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
               onChange={(e) =>
                 onChange({ ...value, vehicle_kind: e.target.value as SketchVehicleKind })
               }
-              className="cyan-glow-input min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-950"
+              className="cyan-glow-input min-h-[38px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-950"
             >
               {SKETCH_KINDS.map((k) => (
                 <option key={k.id} value={k.id}>
-                  Diagram: {k.label}
+                  2D Diagram: {k.label}
                 </option>
               ))}
             </select>
           ) : (
             <span className="rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-1.5 text-xs font-semibold text-blue-900">
-              Diagram: {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? value.vehicle_kind}
+              2D Diagram: {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? value.vehicle_kind}
             </span>
           )}
         </div>
       </div>
 
       {!readOnly && onChange && (
-        <div className="flex flex-wrap items-center gap-2 border-y border-blue-100 py-2.5">
+        <div className="flex flex-wrap items-center gap-2 border-y border-blue-100 py-2">
           <button
             type="button"
             onClick={() => setTool('pin')}
-            className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
               tool === 'pin'
                 ? 'cyan-glow-active'
                 : 'border-blue-200 bg-white text-blue-900 hover:bg-blue-50'
@@ -468,7 +627,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
           <button
             type="button"
             onClick={() => setTool('draw')}
-            className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
               tool === 'draw'
                 ? 'cyan-glow-active'
                 : 'border-blue-200 bg-white text-blue-900 hover:bg-blue-50'
@@ -480,7 +639,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
           <button
             type="button"
             onClick={() => setTool('erase')}
-            className={`inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
+            className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold ${
               tool === 'erase'
                 ? 'cyan-glow-active'
                 : 'border-blue-200 bg-white text-blue-900 hover:bg-blue-50'
@@ -498,7 +657,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
                   type="button"
                   onClick={() => setPinType(pt)}
                   title={PIN_TYPE_LABELS[pt]}
-                  className={`min-h-[34px] rounded-md border px-2 text-xs font-mono font-bold ${
+                  className={`min-h-[32px] rounded-md border px-2 text-xs font-mono font-bold ${
                     pinType === pt
                       ? activeLayer === 'out'
                         ? 'border-red-600 bg-red-600 text-white'
@@ -517,7 +676,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
               type="button"
               onClick={handleUndo}
               disabled={activePins.length === 0 && activeStrokes.length === 0}
-              className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-blue-200 bg-white px-2.5 text-xs font-semibold text-blue-900 disabled:opacity-40"
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-blue-200 bg-white px-2.5 text-xs font-semibold text-blue-900 disabled:opacity-40"
             >
               <RotateCcw className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Undo</span>
@@ -526,7 +685,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
               type="button"
               onClick={handleClearLayer}
               disabled={activePins.length === 0 && activeStrokes.length === 0}
-              className="inline-flex min-h-[36px] items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-semibold text-red-800 disabled:opacity-40"
+              className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-red-200 bg-red-50 px-2.5 text-xs font-semibold text-red-800 disabled:opacity-40"
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
               <span>Clear {activeLayer.toUpperCase()}</span>
@@ -535,135 +694,130 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         </div>
       )}
 
-      {/* Diagram Canvas */}
-      <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50/40 touch-none">
-        <svg
-          ref={svgRef}
-          viewBox={`0 0 ${SKETCH_WIDTH} ${SKETCH_HEIGHT}`}
-          onPointerDown={handlePointerDown}
-          onPointerMove={handlePointerMove}
-          onPointerUp={handlePointerUp}
-          onPointerCancel={handlePointerUp}
-          className={`w-full h-auto select-none ${
-            readOnly ? 'cursor-default' : tool === 'erase' ? 'cursor-crosshair' : 'cursor-crosshair'
-          }`}
-          role="img"
-          aria-label={`Vehicle condition diagram (${value.vehicle_kind})`}
-        >
-          {/* Orientation Labels */}
-          <text x={SKETCH_WIDTH / 2} y="24" textAnchor="middle" className="fill-slate-500 text-[12px] font-bold tracking-wider">
-            LEFT / PASSENGER SIDE
-          </text>
-          <text x={SKETCH_WIDTH / 2} y={SKETCH_HEIGHT - 12} textAnchor="middle" className="fill-slate-500 text-[12px] font-bold tracking-wider">
-            RIGHT / DRIVER SIDE
-          </text>
-          <text
-            x="24"
-            y={SKETCH_HEIGHT / 2}
-            textAnchor="middle"
-            transform={`rotate(-90 24 ${SKETCH_HEIGHT / 2})`}
-            className="fill-slate-500 text-[12px] font-bold tracking-wider"
-          >
-            FRONT
-          </text>
-          <text
-            x={SKETCH_WIDTH - 24}
-            y={SKETCH_HEIGHT / 2}
-            textAnchor="middle"
-            transform={`rotate(90 ${SKETCH_WIDTH - 24} ${SKETCH_HEIGHT / 2})`}
-            className="fill-slate-500 text-[12px] font-bold tracking-wider"
-          >
-            REAR
-          </text>
-
-          {renderSilhouettePaths(value.vehicle_kind)}
-
-          {/* OUT Layer (#d92d20) */}
-          {value.strokes_out.map((s) => (
-            <polyline
-              key={s.id}
-              fill="none"
-              stroke="#d92d20"
-              strokeWidth={s.width || 4}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={toPolylinePoints(s.points)}
+      {/* Compact 3-Panel Inspection Grid: Left 3D, Right 3D, and Existing Top 2D */}
+      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3 print:grid-cols-3">
+        {/* Panel 1: Left Side (3D) */}
+        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+            <span>1. Left Side (3D)</span>
+            <span className="text-[10px] font-mono text-slate-500">FRONT &larr; &rarr; REAR</span>
+          </div>
+          <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
+            <img
+              src={LEFT_SIDE_3D_IMAGE}
+              alt="Left side 3D vehicle inspection view"
+              referrerPolicy="no-referrer"
+              draggable={false}
+              className="h-full w-full object-contain pointer-events-none select-none"
             />
-          ))}
-          {value.pins_out.map((p) => (
-            <g
-              key={p.id}
-              onClick={(e) => {
-                if (tool === 'erase' && activeLayer === 'out' && !readOnly) {
-                  e.stopPropagation();
-                  removePin(p.id);
-                } else {
-                  setSelectedPinId(p.id);
-                }
+            <svg
+              ref={(el) => {
+                svgRefs.current.left = el;
               }}
-              className="cursor-pointer"
+              viewBox={`0 0 ${SKETCH_WIDTH} ${SKETCH_HEIGHT}`}
+              onPointerDown={(e) => handlePointerDown(e, 'left')}
+              onPointerMove={(e) => handlePointerMove(e, 'left')}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              className={`absolute inset-0 h-full w-full select-none ${
+                readOnly ? 'cursor-default' : 'cursor-crosshair'
+              }`}
+              role="img"
+              aria-label="Left side 3D vehicle condition diagram"
             >
-              <circle cx={p.x} cy={p.y} r="13" fill="#d92d20" stroke="#ffffff" strokeWidth="2.5" />
-              <text
-                x={p.x}
-                y={p.y + 4}
-                textAnchor="middle"
-                className="fill-white font-mono text-[11px] font-bold pointer-events-none"
-              >
-                {p.type}{p.number}
-              </text>
-            </g>
-          ))}
+              {renderPanelOverlayMarks('left')}
+            </svg>
+          </div>
+        </div>
 
-          {/* IN Layer (#1d4ed8) */}
-          {value.strokes_in.map((s) => (
-            <polyline
-              key={s.id}
-              fill="none"
-              stroke="#1d4ed8"
-              strokeWidth={s.width || 4}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={toPolylinePoints(s.points)}
+        {/* Panel 2: Right Side (3D) */}
+        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+            <span>2. Right Side (3D)</span>
+            <span className="text-[10px] font-mono text-slate-500">REAR &larr; &rarr; FRONT</span>
+          </div>
+          <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
+            <img
+              src={RIGHT_SIDE_3D_IMAGE}
+              alt="Right side 3D vehicle inspection view"
+              referrerPolicy="no-referrer"
+              draggable={false}
+              className="h-full w-full object-contain -scale-x-100 pointer-events-none select-none"
             />
-          ))}
-          {value.pins_in.map((p) => (
-            <g
-              key={p.id}
-              onClick={(e) => {
-                if (tool === 'erase' && activeLayer === 'in' && !readOnly) {
-                  e.stopPropagation();
-                  removePin(p.id);
-                } else {
-                  setSelectedPinId(p.id);
-                }
+            <svg
+              ref={(el) => {
+                svgRefs.current.right = el;
               }}
-              className="cursor-pointer"
+              viewBox={`0 0 ${SKETCH_WIDTH} ${SKETCH_HEIGHT}`}
+              onPointerDown={(e) => handlePointerDown(e, 'right')}
+              onPointerMove={(e) => handlePointerMove(e, 'right')}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              className={`absolute inset-0 h-full w-full select-none ${
+                readOnly ? 'cursor-default' : 'cursor-crosshair'
+              }`}
+              role="img"
+              aria-label="Right side 3D vehicle condition diagram"
             >
-              <circle cx={p.x} cy={p.y} r="13" fill="#1d4ed8" stroke="#ffffff" strokeWidth="2.5" />
-              <text
-                x={p.x}
-                y={p.y + 4}
-                textAnchor="middle"
-                className="fill-white font-mono text-[11px] font-bold pointer-events-none"
-              >
-                {p.type}{p.number}
-              </text>
-            </g>
-          ))}
+              {renderPanelOverlayMarks('right')}
+            </svg>
+          </div>
+        </div>
 
-          {/* Active Stroke Preview */}
-          {activeStroke && (
-            <polyline
-              fill="none"
-              stroke={layerColor}
-              strokeWidth={activeStroke.width}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              points={toPolylinePoints(activeStroke.points)}
-            />
-          )}
-        </svg>
+        {/* Panel 3: Top-Down 2D Diagram */}
+        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+            <span>3. Top View (2D)</span>
+            <span className="text-[10px] font-mono text-slate-500">
+              {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? 'Sedan'}
+            </span>
+          </div>
+          <div className="relative aspect-[16/9] w-full bg-slate-50/40 touch-none overflow-hidden">
+            <svg
+              ref={(el) => {
+                svgRefs.current.top = el;
+              }}
+              viewBox={`0 0 ${SKETCH_WIDTH} ${SKETCH_HEIGHT}`}
+              onPointerDown={(e) => handlePointerDown(e, 'top')}
+              onPointerMove={(e) => handlePointerMove(e, 'top')}
+              onPointerUp={handlePointerUp}
+              onPointerCancel={handlePointerUp}
+              className={`h-full w-full select-none ${
+                readOnly ? 'cursor-default' : 'cursor-crosshair'
+              }`}
+              role="img"
+              aria-label={`Top-down 2D vehicle condition diagram (${value.vehicle_kind})`}
+            >
+              <text x={SKETCH_WIDTH / 2} y="24" textAnchor="middle" className="fill-slate-500 text-[13px] font-bold tracking-wider">
+                LEFT SIDE
+              </text>
+              <text x={SKETCH_WIDTH / 2} y={SKETCH_HEIGHT - 12} textAnchor="middle" className="fill-slate-500 text-[13px] font-bold tracking-wider">
+                RIGHT SIDE
+              </text>
+              <text
+                x="24"
+                y={SKETCH_HEIGHT / 2}
+                textAnchor="middle"
+                transform={`rotate(-90 24 ${SKETCH_HEIGHT / 2})`}
+                className="fill-slate-500 text-[13px] font-bold tracking-wider"
+              >
+                FRONT
+              </text>
+              <text
+                x={SKETCH_WIDTH - 24}
+                y={SKETCH_HEIGHT / 2}
+                textAnchor="middle"
+                transform={`rotate(90 ${SKETCH_WIDTH - 24} ${SKETCH_HEIGHT / 2})`}
+                className="fill-slate-500 text-[13px] font-bold tracking-wider"
+              >
+                REAR
+              </text>
+
+              {renderSilhouettePaths(value.vehicle_kind)}
+              {renderPanelOverlayMarks('top')}
+            </svg>
+          </div>
+        </div>
       </div>
 
       {/* No Damage Found Toggle + Pin Notes */}
@@ -716,6 +870,7 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
             ...value.pins_in.map((p) => ({ ...p, layer: 'in' as const })),
           ].map((pin) => {
             const editable = !readOnly && pin.layer === activeLayer;
+            const panelLabel = VIEW_PANEL_LABELS[pin.view ?? 'top'];
             return (
               <div
                 key={pin.id}
@@ -730,10 +885,11 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
                     pin.layer === 'out' ? 'bg-[#d92d20]' : 'bg-[#1d4ed8]'
                   }`}
                 >
-                  {pin.type}{pin.number}
+                  {pin.type}
+                  {pin.number}
                 </span>
                 <span className="font-semibold text-blue-950 shrink-0">
-                  {pin.layer.toUpperCase()} · {PIN_TYPE_LABELS[pin.type]}
+                  {pin.layer.toUpperCase()} · {panelLabel} · {PIN_TYPE_LABELS[pin.type]}
                 </span>
                 {editable ? (
                   <>

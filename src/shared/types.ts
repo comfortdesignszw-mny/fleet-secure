@@ -644,16 +644,19 @@ export type ChecklistInputType =
   | 'available_na';
 
 export type SketchVehicleKind = 'sedan' | 'suv' | 'doublecab' | 'kombi';
+export type SketchPanelView = 'left' | 'right' | 'top';
 export type DamagePinType = 'S' | 'D' | 'C' | 'M' | 'O';
 
 export interface SketchStroke {
   id: string;
+  view?: SketchPanelView;
   points: { x: number; y: number }[];
   width: number;
 }
 
 export interface SketchDamagePin {
   id: string;
+  view?: SketchPanelView;
   number: number;
   x: number;
   y: number;

@@ -282,7 +282,26 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
         next_service_mileage: 55000,
         fuel_type: 'diesel',
         fuel_out: '3/4',
-        sketch: { ...createEmptySketch('suv'), no_damage_out: true },
+        sketch: {
+          ...createEmptySketch('suv'),
+          no_damage_out: false,
+          pins_out: [
+            { id: 'p_left', view: 'left', number: 1, x: 220, y: 180, type: 'S', note: 'Left door scratch' },
+            { id: 'p_right', view: 'right', number: 2, x: 420, y: 190, type: 'D', note: 'Right fender dent' },
+            { id: 'p_top', view: 'top', number: 3, x: 320, y: 120, type: 'C', note: 'Roof stone chip' },
+          ],
+          strokes_out: [
+            {
+              id: 's_left',
+              view: 'left',
+              points: [
+                { x: 200, y: 170 },
+                { x: 260, y: 185 },
+              ],
+              width: 4,
+            },
+          ],
+        },
         sketch_png_data_url: TINY_PNG_DATA_URL,
         signatures: {
           outRenter: { name: 'Kudzai Chikwanha', id_number: '63-112233A44', signature_data_url: TINY_PNG_DATA_URL },
@@ -300,6 +319,10 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   assert.equal(checklist.colour, 'Pearl White');
   assert.equal(checklist.mileage_out_diff_warning, true);
   assert.equal(checklist.items.length, 25);
+  assert.equal(checklist.sketch.pins_out.length, 3);
+  assert.equal(checklist.sketch.pins_out[0]?.view, 'left');
+  assert.equal(checklist.sketch.pins_out[1]?.view, 'right');
+  assert.equal(checklist.sketch.pins_out[2]?.view, 'top');
 
   // Add a custom row to the open checklist
   const customRowRes = await app.fetch(
@@ -347,7 +370,7 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   );
   assert.equal(badReturnRes.status, 400);
 
-  // Valid return changes item #1 to 'cross' and custom row to 'No' -> computes Differences + updates Vehicle
+  // Valid return changes item #1 to 'cross' and custom row to 'No' -> computes Differences (NO odometer diff warning!) + updates Vehicle
   const completeRes = await app.fetch(
     new Request(`http://localhost/api/checklists/${checklist.id}/complete`, {
       method: 'POST',
@@ -378,6 +401,11 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   assert.equal(completed.mileage_in, 50680);
   assert.equal(completed.fuel_in, '1/2');
   assert.ok(completed.differences.length >= 2);
+  assert.equal(
+    completed.differences.some((d) => d.kind === 'mileage'),
+    false,
+    'Odometer distance between OUT and IN should never be flagged as a difference warning'
+  );
 
   // Verify Vehicle record received writeback (last_closing_mileage, last_fuel_level, and checklists history)
   const vehDetailRes = await app.fetch(
@@ -395,7 +423,7 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   assert.equal(vehDetail.vehicle.last_fuel_level, '1/2');
   assert.equal(vehDetail.checklists[0]?.id, checklist.id);
 
-  // Verify PDF export returns valid PDF header
+  // Verify PDF export returns valid PDF header & reg+date filename format
   const pdfRes = await app.fetch(
     new Request(`http://localhost/api/checklists/${checklist.id}/pdf`, {
       headers: { Cookie: staffCookie },
@@ -404,6 +432,8 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   );
   assert.equal(pdfRes.status, 200);
   assert.equal(pdfRes.headers.get('content-type'), 'application/pdf');
+  const contentDisp = pdfRes.headers.get('content-disposition') || '';
+  assert.match(contentDisp, /Checklist_CHK9012_\d{2}-\d{2}-\d{2}\.pdf/);
   const pdfBuf = Buffer.from(await pdfRes.arrayBuffer());
   assert.ok(pdfBuf.toString('utf8', 0, 8).startsWith('%PDF-1.4'));
 

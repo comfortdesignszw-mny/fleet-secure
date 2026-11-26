@@ -224,15 +224,7 @@ export function computeChecklistDifferences(
     });
   }
 
-  if (mileageIn !== null && mileageIn > mileageOut) {
-    diffs.push({
-      item_id: null,
-      label: 'Odometer Distance',
-      out_summary: `${mileageOut.toLocaleString()} km`,
-      in_summary: `${mileageIn.toLocaleString()} km (+${(mileageIn - mileageOut).toLocaleString()} km)`,
-      kind: 'mileage',
-    });
-  }
+  // Odometer increase between OUT and IN is normal trip distance and is not flagged as a discrepancy.
 
   if (fuelOut && fuelIn && fuelOut !== fuelIn) {
     diffs.push({
@@ -1509,7 +1501,10 @@ export function registerChecklistRoutes(
       generatedAt: formatHarareTime(new Date().toISOString()),
     });
 
-    const filename = `fleet-checklist-${detail.id}-${detail.reg_number.replace(/\s+/g, '_')}.pdf`;
+    const cleanReg = detail.reg_number.toUpperCase().replace(/[^A-Z0-9]+/g, '') || 'VEHICLE';
+    const [yy, mm, dd] = detail.hire_date.split('-');
+    const dateTag = yy && mm && dd ? `${dd}-${mm}-${yy.slice(-2)}` : detail.hire_date;
+    const filename = `Checklist_${cleanReg}_${dateTag}.pdf`;
     return new Response(pdfBytes.slice().buffer, {
       status: 200,
       headers: {
