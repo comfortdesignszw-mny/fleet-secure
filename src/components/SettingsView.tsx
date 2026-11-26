@@ -54,6 +54,8 @@ export type SettingsTab = 'general' | 'users' | 'recipients' | 'pin';
 interface SettingsViewProps {
   currentUser: UserPublic;
   initialTab?: SettingsTab;
+  pendingDriverLogin?: { driverId: number; fullName: string } | null;
+  onConsumePendingDriverLogin?: () => void;
   onSettingsChanged?: (settings: AppSettings) => void;
   onUserUpdated: (user: UserPublic) => void;
   onBackHome?: () => void;
@@ -62,6 +64,8 @@ interface SettingsViewProps {
 export const SettingsView: React.FC<SettingsViewProps> = ({
   currentUser,
   initialTab,
+  pendingDriverLogin = null,
+  onConsumePendingDriverLogin,
   onSettingsChanged,
   onUserUpdated,
   onBackHome,
@@ -126,6 +130,7 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   const [newFullName, setNewFullName] = useState('');
   const [newRole, setNewRole] = useState<Role>('DRIVER');
   const [newPin, setNewPin] = useState('');
+  const [newDriverId, setNewDriverId] = useState<number | null>(null);
   const [creatingUser, setCreatingUser] = useState(false);
 
   // Edit user modal
@@ -139,6 +144,20 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
   useEffect(() => {
     setTab(resolveDefaultTab(initialTab));
   }, [initialTab, resolveDefaultTab]);
+
+  useEffect(() => {
+    if (!pendingDriverLogin || !isAdmin || pinChangeRequired) return;
+    setTab('users');
+    setNewFullName(pendingDriverLogin.fullName);
+    setNewRole('DRIVER');
+    setNewDriverId(pendingDriverLogin.driverId);
+    setNewUsername('');
+    setNewPin('');
+    setUsersErr(null);
+    setUsersMsg(null);
+    setShowCreateUser(true);
+    onConsumePendingDriverLogin?.();
+  }, [pendingDriverLogin, isAdmin, pinChangeRequired, onConsumePendingDriverLogin]);
 
   useEffect(() => {
     const syncPrefs = () => {
@@ -526,14 +545,18 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
         full_name: newFullName.trim(),
         role: newRole,
         pin: newPin.trim(),
+        ...(newDriverId && newRole === 'DRIVER' ? { driver_id: newDriverId } : {}),
       });
       setShowCreateUser(false);
       setNewUsername('');
       setNewFullName('');
       setNewRole('DRIVER');
       setNewPin('');
+      setNewDriverId(null);
       setUsersMsg(
-        `Created account for ${res.user.full_name} (${res.user.username}). They will be asked to change their PIN on first sign-in.`
+        res.user.driver_id
+          ? `Created login credentials for driver ${res.user.full_name} (${res.user.username}). You can view and hand over their temporary credentials from the Drivers Directory until they change their PIN.`
+          : `Created account for ${res.user.full_name} (${res.user.username}). They will be asked to change their PIN on first sign-in.`
       );
       await loadUsers();
     } catch (err) {
@@ -1241,13 +1264,22 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
               <h2 className="font-display text-xl font-bold text-blue-950">Add Staff Account</h2>
               <button
                 type="button"
-                onClick={() => setShowCreateUser(false)}
+                onClick={() => {
+                  setShowCreateUser(false);
+                  setNewDriverId(null);
+                }}
                 aria-label="Close"
                 className="cyan-glow-outline flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-transparent text-blue-700"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
+
+            {newDriverId && (
+              <div className="mt-3 rounded-xl border border-cyan-300 bg-cyan-50 p-3 text-xs font-medium text-cyan-950">
+                Creating linked Driver login for <span className="font-bold">{newFullName}</span>. Enter a username and temporary PIN/password, then save.
+              </div>
+            )}
 
             <form onSubmit={handleCreateUser} className="mt-4 space-y-4">
               <div>
@@ -1327,7 +1359,10 @@ export const SettingsView: React.FC<SettingsViewProps> = ({
                 </button>
                 <button
                   type="button"
-                  onClick={() => setShowCreateUser(false)}
+                  onClick={() => {
+                    setShowCreateUser(false);
+                    setNewDriverId(null);
+                  }}
                   className="cyan-glow-outline min-h-[48px] rounded-xl border border-blue-200 px-4 text-base font-medium text-blue-900"
                 >
                   Cancel

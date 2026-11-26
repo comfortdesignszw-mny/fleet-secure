@@ -23,6 +23,7 @@ interface DashboardViewProps {
   onOpenVehicle: (vehicleId: number) => void;
   onOpenTrip: (tripId: number) => void;
   embedded?: boolean;
+  afterStatsSlot?: React.ReactNode;
 }
 
 type SortKey = 'reg_number' | 'trip_count' | 'total_mileage' | 'est_fuel_litres' | 'gauge_fuel_litres';
@@ -47,6 +48,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onOpenVehicle,
   onOpenTrip,
   embedded = false,
+  afterStatsSlot,
 }) => {
   const today = toHarareDate(new Date());
   const monthStart = `${today.slice(0, 7)}-01`;
@@ -312,6 +314,8 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
                 </div>
               </div>
             </section>
+
+            {afterStatsSlot}
 
             {/* Date Range Filter Bar */}
             <div className="rounded-2xl border border-blue-200/80 bg-white p-4 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between shadow-xs">

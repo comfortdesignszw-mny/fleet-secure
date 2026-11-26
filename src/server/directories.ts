@@ -14,8 +14,10 @@ import {
   type UserPublic,
   type Vehicle,
   type VehicleCondition,
+  type VehicleFuelType,
 } from '../shared/types';
 import { recordAudit } from './audit';
+import { decryptTempSecret } from './crypto';
 import { checkAndNotifyVehicleServiceDues, notifyManagersInApp } from './notifications';
 import type { AppEnv } from './types';
 
@@ -25,6 +27,7 @@ export interface RouteAuthDeps {
   requireRole: (allowed: Role[]) => MiddlewareHandler;
   getClientIp: (c: Context<{ Bindings: AppEnv; Variables: { user?: UserPublic } }>) => string;
   getUserAgent: (c: Context<{ Bindings: AppEnv; Variables: { user?: UserPublic } }>) => string;
+  getSessionSecret?: (env: AppEnv) => string;
 }
 
 function toDerivedStatus(openTripType: unknown): DerivedStatus {
@@ -66,12 +69,25 @@ export function mapVehicleRow(row: Record<string, unknown>): Vehicle {
     vehicle_type: String(row.vehicle_type),
     vehicle_class: row.vehicle_class as 'ECONOMY' | 'HEAVY',
     make_model: String(row.make_model),
+    colour: row.colour ? String(row.colour) : null,
+    fuel_type: (row.fuel_type as VehicleFuelType) || 'petrol',
     condition: row.condition as VehicleCondition,
     last_known_mileage: Number(row.last_known_mileage),
+    last_closing_mileage:
+      row.last_closing_mileage !== null && row.last_closing_mileage !== undefined
+        ? Number(row.last_closing_mileage)
+        : null,
+    last_fuel_level: (row.last_fuel_level as Vehicle['last_fuel_level']) ?? null,
     next_service_due_km:
       row.next_service_due_km !== null && row.next_service_due_km !== undefined
         ? Number(row.next_service_due_km)
         : null,
+    next_service_mileage:
+      row.next_service_mileage !== null && row.next_service_mileage !== undefined
+        ? Number(row.next_service_mileage)
+        : row.next_service_due_km !== null && row.next_service_due_km !== undefined
+          ? Number(row.next_service_due_km)
+          : null,
     active: Number(row.active) === 1,
     created_at: String(row.created_at),
     derived_status: toDerivedStatus(row.open_trip_type),
@@ -151,7 +167,11 @@ export function validateDriverLicenceCode(
 
 function mapDriverRow(
   row: Record<string, unknown>,
-  options: { includeDocuments?: boolean; includeMissingWarning?: boolean } = {}
+  options: {
+    includeDocuments?: boolean;
+    includeMissingWarning?: boolean;
+    includeCredentialFlag?: boolean;
+  } = {}
 ): Driver {
   const licenceExpiry = row.licence_expiry ? String(row.licence_expiry) : null;
   const { licence_status, days_to_expiry } = computeLicenceExpiryStatus(licenceExpiry);
@@ -187,11 +207,22 @@ function mapDriverRow(
     active: Number(row.active) === 1,
     created_at: String(row.created_at),
     created_by: row.created_by ? Number(row.created_by) : null,
+    linked_user_id:
+      row.linked_user_id !== null && row.linked_user_id !== undefined
+        ? Number(row.linked_user_id)
+        : row.user_id !== null && row.user_id !== undefined
+          ? Number(row.user_id)
+          : null,
+    linked_username: row.linked_username ? String(row.linked_username) : null,
     derived_status: toDerivedStatus(row.open_trip_type),
     open_trip_id: row.open_trip_id ? Number(row.open_trip_id) : null,
     licence_status,
     days_to_expiry,
   };
+
+  if (options.includeCredentialFlag) {
+    driver.has_pending_temp_credentials = Number(row.has_pending_temp_credentials ?? 0) === 1;
+  }
 
   if (options.includeDocuments) {
     driver.licence_document = row.licence_document ? String(row.licence_document) : null;
@@ -223,11 +254,24 @@ export const VEHICLE_SELECT_SQL = `
   LEFT JOIN trips ot ON ot.vehicle_id = v.id AND ot.status = 'OPEN'
 `;
 
+const DRIVER_LINKED_SUBQUERIES_SQL = `
+  COALESCE(d.user_id, (SELECT u.id FROM users u WHERE u.driver_id = d.id ORDER BY u.id DESC LIMIT 1)) AS linked_user_id,
+  (SELECT u.username FROM users u WHERE u.id = d.user_id OR u.driver_id = d.id ORDER BY u.id DESC LIMIT 1) AS linked_username,
+  CASE WHEN EXISTS (
+    SELECT 1 FROM users u
+    WHERE (u.id = d.user_id OR u.driver_id = d.id)
+      AND u.must_change_pin = 1
+      AND u.temp_pin_enc IS NOT NULL
+      AND u.temp_pin_enc != ''
+  ) THEN 1 ELSE 0 END AS has_pending_temp_credentials
+`;
+
 const DRIVER_LIST_SELECT_SQL = `
   SELECT
     d.id, d.full_name, d.licence_number, d.licence_code, d.phone, d.address, d.licence_expiry,
     d.ddc_number, d.retest_cert_number, d.medical_cert_number,
-    d.active, d.created_at, d.created_by,
+    d.active, d.user_id, d.created_at, d.created_by,
+    ${DRIVER_LINKED_SUBQUERIES_SQL},
     CASE WHEN d.licence_document IS NOT NULL AND d.licence_document != '' THEN 1 ELSE 0 END AS has_licence_document,
     CASE WHEN d.ddc_document IS NOT NULL AND d.ddc_document != '' THEN 1 ELSE 0 END AS has_ddc_document,
     CASE WHEN d.retest_document IS NOT NULL AND d.retest_document != '' THEN 1 ELSE 0 END AS has_retest_document,
@@ -241,6 +285,7 @@ const DRIVER_LIST_SELECT_SQL = `
 const DRIVER_DETAIL_SELECT_SQL = `
   SELECT
     d.*,
+    ${DRIVER_LINKED_SUBQUERIES_SQL},
     CASE WHEN d.licence_document IS NOT NULL AND d.licence_document != '' THEN 1 ELSE 0 END AS has_licence_document,
     CASE WHEN d.ddc_document IS NOT NULL AND d.ddc_document != '' THEN 1 ELSE 0 END AS has_ddc_document,
     CASE WHEN d.retest_document IS NOT NULL AND d.retest_document != '' THEN 1 ELSE 0 END AS has_retest_document,
@@ -366,10 +411,21 @@ export function registerDirectoryRoutes(
       .bind(String(id))
       .all<AuditLogEntry>();
 
+    const { results: checklists } = await c.env.DB.prepare(
+      `SELECT id, status, hirer_type, hirer_name, hire_date, return_date, mileage_out, mileage_in, fuel_out, fuel_in, created_at
+       FROM checklists
+       WHERE vehicle_id = ? AND deleted_at IS NULL
+       ORDER BY id DESC
+       LIMIT 20`
+    )
+      .bind(id)
+      .all<Record<string, unknown>>();
+
     return c.json({
       vehicle: mapVehicleRow(row),
       trips,
       conditionHistory,
+      checklists,
     });
   });
 
@@ -385,6 +441,8 @@ export function registerDirectoryRoutes(
         reg_number?: string;
         vehicle_type?: string;
         make_model?: string;
+        colour?: string | null;
+        fuel_type?: VehicleFuelType;
         condition?: VehicleCondition;
         last_known_mileage?: number;
         next_service_due_km?: number | null;
@@ -398,6 +456,11 @@ export function registerDirectoryRoutes(
       const regNumber = (body.reg_number || '').trim().toUpperCase().replace(/\s+/g, ' ');
       const vehicleType = (body.vehicle_type || '').trim();
       const makeModel = (body.make_model || '').trim();
+      const colour = body.colour ? String(body.colour).trim() : null;
+      const fuelType: VehicleFuelType =
+        body.fuel_type === 'diesel' || body.fuel_type === 'ev' || body.fuel_type === 'petrol'
+          ? body.fuel_type
+          : 'petrol';
       const condition = body.condition || 'Good';
       const mileage = Number(body.last_known_mileage ?? 0);
       const nextServiceDueKm =
@@ -455,10 +518,21 @@ export function registerDirectoryRoutes(
       }
 
       const res = await c.env.DB.prepare(
-        `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, condition, last_known_mileage, next_service_due_km, active)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 1)`
+        `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, colour, fuel_type, condition, last_known_mileage, next_service_due_km, next_service_mileage, active)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       )
-        .bind(regNumber, vehicleType, vehicleClass, makeModel, condition, mileage, nextServiceDueKm)
+        .bind(
+          regNumber,
+          vehicleType,
+          vehicleClass,
+          makeModel,
+          colour,
+          fuelType,
+          condition,
+          mileage,
+          nextServiceDueKm,
+          nextServiceDueKm
+        )
         .run();
 
       const newId = res.meta.last_row_id;
@@ -532,6 +606,8 @@ export function registerDirectoryRoutes(
         reg_number?: string;
         vehicle_type?: string;
         make_model?: string;
+        colour?: string | null;
+        fuel_type?: VehicleFuelType;
         condition?: VehicleCondition;
         last_known_mileage?: number;
         next_service_due_km?: number | null;
@@ -552,6 +628,16 @@ export function registerDirectoryRoutes(
       const nextClass = VEHICLE_TYPE_TO_CLASS[nextType];
       const nextMakeModel =
         body.make_model !== undefined ? body.make_model.trim() : oldVehicle.make_model;
+      const nextColour =
+        body.colour !== undefined
+          ? body.colour
+            ? String(body.colour).trim()
+            : null
+          : (oldVehicle.colour ?? null);
+      const nextFuelType: VehicleFuelType =
+        body.fuel_type === 'diesel' || body.fuel_type === 'ev' || body.fuel_type === 'petrol'
+          ? body.fuel_type
+          : (oldVehicle.fuel_type ?? 'petrol');
       const nextCondition =
         body.condition !== undefined ? body.condition : oldVehicle.condition;
       const nextActive = body.active !== undefined ? Boolean(body.active) : oldVehicle.active;
@@ -665,7 +751,7 @@ export function registerDirectoryRoutes(
 
       await c.env.DB.prepare(
         `UPDATE vehicles
-         SET reg_number = ?, vehicle_type = ?, vehicle_class = ?, make_model = ?, condition = ?, last_known_mileage = ?, next_service_due_km = ?, active = ?
+         SET reg_number = ?, vehicle_type = ?, vehicle_class = ?, make_model = ?, colour = ?, fuel_type = ?, condition = ?, last_known_mileage = ?, next_service_due_km = ?, next_service_mileage = ?, active = ?
          WHERE id = ?`
       )
         .bind(
@@ -673,8 +759,11 @@ export function registerDirectoryRoutes(
           nextType,
           nextClass,
           nextMakeModel,
+          nextColour,
+          nextFuelType,
           nextCondition,
           nextMileage,
+          nextServiceDueKm,
           nextServiceDueKm,
           nextActive ? 1 : 0,
           id
@@ -793,10 +882,12 @@ export function registerDirectoryRoutes(
       .bind(...params)
       .all<Record<string, unknown>>();
 
+    const isAdmin = actor.role === 'ADMIN';
     const allMapped = results.map((r) =>
       mapDriverRow(r, {
         includeDocuments: false,
         includeMissingWarning: canSeeMissingWarnings,
+        includeCredentialFlag: isAdmin,
       })
     );
     const expiringCount = allMapped.filter(
@@ -860,10 +951,96 @@ export function registerDirectoryRoutes(
       driver: mapDriverRow(row, {
         includeDocuments: true,
         includeMissingWarning: canSeeMissingWarnings,
+        includeCredentialFlag: actor.role === 'ADMIN',
       }),
       trips,
     });
   });
+
+  // ---------------- DRIVER TEMPORARY LOGIN CREDENTIALS HANDOFF (ADMIN ONLY) ----------------
+  app.get(
+    '/drivers/:id/credentials',
+    requireAuth,
+    requirePinChanged(),
+    requireRole(['ADMIN']),
+    async (c) => {
+      const actor = c.get('user')!;
+      const driverId = Number(c.req.param('id'));
+      if (!Number.isInteger(driverId) || driverId <= 0) {
+        return c.json({ error: 'Invalid driver ID.' }, 400);
+      }
+
+      const driverRow = await c.env.DB.prepare('SELECT id, full_name, user_id FROM drivers WHERE id = ?')
+        .bind(driverId)
+        .first<{ id: number; full_name: string; user_id: number | null }>();
+      if (!driverRow) {
+        return c.json({ error: 'Driver not found.' }, 404);
+      }
+
+      const userRow = await c.env.DB.prepare(
+        `SELECT id, username, full_name, must_change_pin, temp_pin_enc
+         FROM users
+         WHERE driver_id = ? OR id = ?
+         ORDER BY id DESC
+         LIMIT 1`
+      )
+        .bind(driverId, driverRow.user_id ?? -1)
+        .first<{
+          id: number;
+          username: string;
+          full_name: string;
+          must_change_pin: number;
+          temp_pin_enc: string | null;
+        }>();
+
+      if (!userRow) {
+        return c.json({ error: 'No login credential has been created for this driver yet.' }, 404);
+      }
+
+      if (Number(userRow.must_change_pin) !== 1 || !userRow.temp_pin_enc) {
+        return c.json(
+          {
+            error:
+              'Temporary credentials are no longer visible because this driver has already logged in and changed their personal PIN/password.',
+          },
+          410
+        );
+      }
+
+      const secret =
+        deps.getSessionSecret?.(c.env) ??
+        c.env.SESSION_SECRET ??
+        'dev-only-fleet-secure-secret-change-in-prod';
+      const tempPin = await decryptTempSecret(userRow.temp_pin_enc, secret);
+      if (!tempPin) {
+        return c.json(
+          { error: 'Temporary PIN is unavailable. Reset the driver account PIN in Settings if needed.' },
+          410
+        );
+      }
+
+      await recordAudit(c.env.DB, {
+        userId: actor.id,
+        username: actor.username,
+        userRole: actor.role,
+        action: 'DRIVER_TEMP_CREDENTIALS_VIEWED',
+        entity: 'drivers',
+        entityId: driverId,
+        newValue: { username: userRow.username, user_id: userRow.id },
+        ip: getClientIp(c),
+        userAgent: getUserAgent(c),
+      });
+
+      return c.json({
+        credentials: {
+          driver_id: driverId,
+          full_name: driverRow.full_name,
+          username: userRow.username,
+          temp_pin: tempPin,
+        },
+      });
+    }
+  );
 
   app.post(
     '/drivers',

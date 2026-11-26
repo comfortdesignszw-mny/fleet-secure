@@ -6,6 +6,7 @@ import path from 'node:path';
 import { createServer as createViteServer } from 'vite';
 import { createApp } from './src/server/app';
 import { createLocalDatabase } from './src/server/local-d1';
+import { ensureInitialSeed } from './src/server/seed';
 import type { AppEnv } from './src/server/types';
 
 dotenv.config();
@@ -28,6 +29,8 @@ async function startServer() {
     EMAIL_FROM: process.env.EMAIL_FROM,
     ALLOW_PREVIEW_SIGNUP: process.env.ALLOW_PREVIEW_SIGNUP ?? 'true',
   };
+
+  await ensureInitialSeed(db, appEnv);
 
   // Mount /api/* onto the shared Hono router using Web Standard Request/Response
   expressApp.use('/api', async (req, res) => {

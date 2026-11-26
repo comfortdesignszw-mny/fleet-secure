@@ -1,5 +1,8 @@
 import { api, ApiError } from './api';
 import type {
+  ChecklistDetail,
+  CompleteChecklistPayload,
+  CreateChecklistPayload,
   CreateTripOutPayload,
   Driver,
   FuelLevel,
@@ -82,6 +85,22 @@ export type QueuedTripEntry =
       createdAtDevice: string;
       payload: OfflineCreateVehiclePayload;
       lastError?: string | null;
+    }
+  | {
+      id: string;
+      kind: 'CHECKLIST_CREATE';
+      summaryLabel: string;
+      createdAtDevice: string;
+      payload: CreateChecklistPayload;
+      lastError?: string | null;
+    }
+  | {
+      id: string;
+      kind: 'CHECKLIST_COMPLETE';
+      summaryLabel: string;
+      createdAtDevice: string;
+      payload: { checklist_id: number; payload: CompleteChecklistPayload };
+      lastError?: string | null;
     };
 
 function notifyQueueChanged() {
@@ -162,6 +181,11 @@ export interface OfflineSyncHandlers {
   ) => Promise<{ trip: TripSummary; flags: TripFlag[] }>;
   createDriver?: (payload: OfflineCreateDriverPayload) => Promise<{ driver: Driver }>;
   createVehicle?: (payload: OfflineCreateVehiclePayload) => Promise<{ vehicle: Vehicle }>;
+  createChecklist?: (payload: CreateChecklistPayload) => Promise<{ checklist: ChecklistDetail }>;
+  completeChecklist?: (
+    checklistId: number,
+    payload: CompleteChecklistPayload
+  ) => Promise<{ checklist: ChecklistDetail }>;
 }
 
 const defaultHandlers: OfflineSyncHandlers = {
@@ -169,6 +193,8 @@ const defaultHandlers: OfflineSyncHandlers = {
   sendIn: (tripId, payload) => api.createTripIn(tripId, payload),
   createDriver: (payload) => api.createDriver(payload),
   createVehicle: (payload) => api.createVehicle(payload),
+  createChecklist: (payload) => api.createChecklist(payload),
+  completeChecklist: (checklistId, payload) => api.completeChecklist(checklistId, payload),
 };
 
 let inFlightFlushPromise: Promise<SyncFlushResult> | null = null;
@@ -205,6 +231,13 @@ async function runFlushOfflineQueue(
       } else if (item.kind === 'VEHICLE_CREATE') {
         const sendVehicle = handlers.createVehicle ?? ((p) => api.createVehicle(p));
         await sendVehicle(item.payload);
+      } else if (item.kind === 'CHECKLIST_CREATE') {
+        const sendChecklist = handlers.createChecklist ?? ((p) => api.createChecklist(p));
+        await sendChecklist(item.payload);
+      } else if (item.kind === 'CHECKLIST_COMPLETE') {
+        const sendComplete =
+          handlers.completeChecklist ?? ((id, p) => api.completeChecklist(id, p));
+        await sendComplete(item.payload.checklist_id, item.payload.payload);
       }
       syncedCount++;
     } catch (err) {

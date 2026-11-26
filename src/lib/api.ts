@@ -2,9 +2,18 @@ import type {
   AppSettings,
   AuditLogEntry,
   AuditVerifyResult,
+  ChecklistDetail,
+  ChecklistInputType,
+  ChecklistItem,
+  ChecklistItemTemplate,
+  ChecklistItemValue,
+  ChecklistSummary,
+  CompleteChecklistPayload,
+  CreateChecklistPayload,
   CreateTripOutPayload,
   DashboardData,
   Driver,
+  DriverTempCredentials,
   FleetMaintenanceOverview,
   FuelLevel,
   GarageVisit,
@@ -25,6 +34,7 @@ import type {
   UserPublic,
   Vehicle,
   VehicleCondition,
+  VehicleFuelType,
   VehicleMaintenanceLog,
   VehicleServiceDueSummary,
 } from '../shared/types';
@@ -279,7 +289,13 @@ export const api = {
     );
   },
 
-  createUser: (payload: { username: string; full_name: string; role: Role; pin: string }) =>
+  createUser: (payload: {
+    username: string;
+    full_name: string;
+    role: Role;
+    pin: string;
+    driver_id?: number | null;
+  }) =>
     request<{ user: UserPublic }>('/users', {
       method: 'POST',
       body: JSON.stringify(payload),
@@ -356,12 +372,27 @@ export const api = {
         total_mileage: number | null;
       }>;
       conditionHistory: AuditLogEntry[];
+      checklists?: Array<{
+        id: number;
+        status: 'out' | 'completed';
+        hirer_type: 'renter' | 'owner';
+        hirer_name: string;
+        hire_date: string;
+        return_date: string;
+        mileage_out: number;
+        mileage_in: number | null;
+        fuel_out: FuelLevel | null;
+        fuel_in: FuelLevel | null;
+        created_at: string;
+      }>;
     }>(`/vehicles/${id}`),
 
   createVehicle: async (payload: {
     reg_number: string;
     vehicle_type: string;
     make_model: string;
+    colour?: string | null;
+    fuel_type?: VehicleFuelType;
     condition: VehicleCondition;
     last_known_mileage: number;
     next_service_due_km?: number | null;
@@ -380,6 +411,8 @@ export const api = {
       reg_number?: string;
       vehicle_type?: string;
       make_model?: string;
+      colour?: string | null;
+      fuel_type?: VehicleFuelType;
       condition?: VehicleCondition;
       last_known_mileage?: number;
       next_service_due_km?: number | null;
@@ -439,6 +472,9 @@ export const api = {
         total_mileage: number | null;
       }>;
     }>(`/drivers/${id}`),
+
+  getDriverCredentials: (id: number) =>
+    request<{ credentials: DriverTempCredentials }>(`/drivers/${id}/credentials`),
 
   createDriver: (payload: {
     full_name: string;
@@ -797,4 +833,106 @@ export const api = {
     notifyMaintenanceUpdated();
     return res;
   },
+
+  // ---------------- DIGITAL VEHICLE CHECKLISTS ----------------
+  listChecklistTemplates: (includeInactive = false) =>
+    request<{ items: ChecklistItemTemplate[] }>(
+      `/checklist-templates${includeInactive ? '?includeInactive=1' : ''}`
+    ),
+
+  createChecklistTemplate: (payload: {
+    label: string;
+    category?: string;
+    input_type: ChecklistInputType;
+    options?: string[];
+    sort_order?: number;
+  }) =>
+    request<{ template: ChecklistItemTemplate }>('/checklist-templates', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  updateChecklistTemplate: (
+    id: number,
+    payload: { label?: string; active?: boolean; sort_order?: number; category?: string }
+  ) =>
+    request<{ template: ChecklistItemTemplate }>(`/checklist-templates/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  listChecklists: (
+    params: { status?: 'out' | 'completed' | ''; q?: string; vehicle_id?: number; trip_id?: number; limit?: number } = {}
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.q) qs.set('q', params.q);
+    if (params.vehicle_id) qs.set('vehicle_id', String(params.vehicle_id));
+    if (params.trip_id) qs.set('trip_id', String(params.trip_id));
+    if (params.limit) qs.set('limit', String(params.limit));
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return request<{ items: ChecklistSummary[] }>(`/checklists${suffix}`);
+  },
+
+  getChecklist: (id: number) => request<{ checklist: ChecklistDetail }>(`/checklists/${id}`),
+
+  createChecklist: async (payload: CreateChecklistPayload) => {
+    const res = await request<{ checklist: ChecklistDetail }>('/checklists', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    requestNotificationsRefresh();
+    notifyMaintenanceUpdated();
+    return res;
+  },
+
+  addChecklistItem: (
+    checklistId: number,
+    payload: {
+      custom_label: string;
+      input_type: ChecklistInputType;
+      options?: string[];
+      value_out?: ChecklistItemValue;
+      note?: string;
+    }
+  ) =>
+    request<{ item: ChecklistItem }>(`/checklists/${checklistId}/items`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  completeChecklist: async (checklistId: number, payload: CompleteChecklistPayload) => {
+    const res = await request<{ checklist: ChecklistDetail }>(`/checklists/${checklistId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    requestNotificationsRefresh();
+    notifyMaintenanceUpdated();
+    return res;
+  },
+
+  amendChecklist: (
+    checklistId: number,
+    payload: {
+      hirer_name?: string;
+      representative?: string;
+      cell?: string;
+      colour?: string | null;
+      hire_date?: string;
+      days?: number;
+      notes?: string;
+      reason: string;
+    }
+  ) =>
+    request<{ checklist: ChecklistDetail }>(`/checklists/${checklistId}/amend`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  deleteChecklist: (checklistId: number) =>
+    request<{ ok: boolean; id: number }>(`/checklists/${checklistId}`, {
+      method: 'DELETE',
+    }),
+
+  getChecklistPdfUrl: (checklistId: number) => `/api/checklists/${checklistId}/pdf`,
 };

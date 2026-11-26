@@ -83,6 +83,7 @@ export interface UserPublic {
   role: Role;
   active: boolean;
   must_change_pin: boolean;
+  driver_id?: number | null;
   created_at: string;
 }
 
@@ -139,15 +140,28 @@ export type DerivedStatus = 'Available' | 'Out on Hire' | 'Out on Errand';
 
 export type LicenceStatus = 'NONE' | 'OK' | 'EXPIRING_SOON' | 'EXPIRED';
 
+export type VehicleFuelType = 'diesel' | 'petrol' | 'ev';
+
+export const VEHICLE_FUEL_TYPES: readonly { value: VehicleFuelType; label: string }[] = [
+  { value: 'petrol', label: 'Petrol' },
+  { value: 'diesel', label: 'Diesel' },
+  { value: 'ev', label: 'Electric (EV)' },
+] as const;
+
 export interface Vehicle {
   id: number;
   reg_number: string;
   vehicle_type: string;
   vehicle_class: VehicleClass;
   make_model: string;
+  colour?: string | null;
+  fuel_type?: VehicleFuelType;
   condition: VehicleCondition;
   last_known_mileage: number;
+  last_closing_mileage?: number | null;
+  last_fuel_level?: FuelLevel | null;
   next_service_due_km?: number | null;
+  next_service_mileage?: number | null;
   active: boolean;
   created_at: string;
   derived_status: DerivedStatus;
@@ -188,10 +202,20 @@ export interface Driver {
   active: boolean;
   created_at: string;
   created_by: number | null;
+  linked_user_id?: number | null;
+  linked_username?: string | null;
+  has_pending_temp_credentials?: boolean;
   derived_status: DerivedStatus;
   open_trip_id: number | null;
   licence_status: LicenceStatus;
   days_to_expiry: number | null;
+}
+
+export interface DriverTempCredentials {
+  driver_id: number;
+  full_name: string;
+  username: string;
+  temp_pin: string;
 }
 
 export type TripType = 'HIRE' | 'ERRAND';
@@ -404,6 +428,7 @@ export type ReportType =
   | 'vehicles'
   | 'drivers'
   | 'flagged_trips'
+  | 'checklists'
   | 'audit_log';
 
 export type ExportFormat = 'csv' | 'pdf' | 'json' | 'md';
@@ -602,3 +627,210 @@ export function formatDriverMissingDocsWarning(
 ): string {
   return `Driver ${driverName}'s details are missing Driver's Licence information: ${missingDocuments.join(', ')}.`;
 }
+
+// ==================== DIGITAL VEHICLE CHECKLISTS MODULE ====================
+
+export type ChecklistStatus = 'out' | 'completed';
+export type ChecklistHirerType = 'renter' | 'owner';
+export type ChecklistInputType =
+  | 'tick_cross'
+  | 'status_pair'
+  | 'yes_no'
+  | 'text'
+  | 'text_checkbox'
+  | 'multi_check'
+  | 'expiry_checks'
+  | 'numbers'
+  | 'available_na';
+
+export type SketchVehicleKind = 'sedan' | 'suv' | 'doublecab' | 'kombi';
+export type DamagePinType = 'S' | 'D' | 'C' | 'M' | 'O';
+
+export interface SketchStroke {
+  id: string;
+  points: { x: number; y: number }[];
+  width: number;
+}
+
+export interface SketchDamagePin {
+  id: string;
+  number: number;
+  x: number;
+  y: number;
+  type: DamagePinType;
+  note?: string;
+}
+
+export interface ChecklistSketchData {
+  vehicle_kind: SketchVehicleKind;
+  strokes_out: SketchStroke[];
+  pins_out: SketchDamagePin[];
+  no_damage_out: boolean;
+  strokes_in: SketchStroke[];
+  pins_in: SketchDamagePin[];
+  no_damage_in: boolean;
+}
+
+export interface ChecklistSignatureEntry {
+  name: string;
+  id_number: string;
+  signature_data_url: string;
+  signed_at?: string;
+}
+
+export interface ChecklistSignatures {
+  outRenter: ChecklistSignatureEntry | null;
+  outCompany: ChecklistSignatureEntry | null;
+  inRenter: ChecklistSignatureEntry | null;
+  inCompany: ChecklistSignatureEntry | null;
+}
+
+export interface ChecklistItemTemplate {
+  id: number;
+  code: string;
+  label: string;
+  category: string;
+  input_type: ChecklistInputType;
+  options: string[];
+  sort_order: number;
+  is_default: boolean;
+  active: boolean;
+  created_at: string;
+}
+
+export interface ChecklistItemValue {
+  choice?: string; // e.g. 'tick' | 'cross' | 'Working' | 'Faulty' | 'Yes' | 'No' | 'Available' | 'N/A'
+  text?: string;
+  checked?: string[];
+  counts?: Record<string, number>;
+  expiries?: Record<string, { checked: boolean; expiry_date: string }>;
+}
+
+export interface ChecklistItem {
+  id: number;
+  checklist_id: number;
+  template_id: number | null;
+  custom_label: string;
+  input_type: ChecklistInputType;
+  options: string[];
+  sort_order: number;
+  value_out: ChecklistItemValue;
+  value_in: ChecklistItemValue | null;
+  note: string;
+  photo_data_url: string | null;
+}
+
+export interface ChecklistDiffEntry {
+  item_id: number | null;
+  label: string;
+  out_summary: string;
+  in_summary: string;
+  kind: 'item' | 'sketch' | 'mileage' | 'fuel';
+}
+
+export interface ChecklistSummary {
+  id: number;
+  trip_id: number | null;
+  vehicle_id: number;
+  status: ChecklistStatus;
+  hirer_type: ChecklistHirerType;
+  hirer_name: string;
+  representative: string;
+  cell: string;
+  car_model: string;
+  vehicle_type: string;
+  colour: string | null;
+  reg_number: string;
+  hire_date: string;
+  days: number;
+  return_date: string;
+  mileage_out: number;
+  mileage_out_diff_warning: boolean;
+  previous_closing_mileage: number | null;
+  mileage_in: number | null;
+  next_service_mileage: number | null;
+  datetime_in: string | null;
+  fuel_type: VehicleFuelType;
+  fuel_out: FuelLevel | null;
+  fuel_in: FuelLevel | null;
+  differences: ChecklistDiffEntry[];
+  notes: string;
+  created_by: number;
+  created_by_name?: string;
+  returned_by: number | null;
+  returned_by_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChecklistDetail extends ChecklistSummary {
+  sketch: ChecklistSketchData;
+  sketch_png_data_url: string | null;
+  signatures: ChecklistSignatures;
+  declaration_text: string;
+  items: ChecklistItem[];
+}
+
+export interface CreateChecklistNewVehicleInput {
+  vehicle_type: string;
+  make_model: string;
+  reg_number: string;
+  colour?: string | null;
+  fuel_type?: VehicleFuelType;
+  last_known_mileage?: number;
+}
+
+export interface CreateChecklistPayload {
+  trip_id?: number | null;
+  vehicle_id?: number;
+  new_vehicle?: CreateChecklistNewVehicleInput;
+  hirer_type: ChecklistHirerType;
+  hirer_name: string;
+  representative: string;
+  cell: string;
+  colour?: string | null;
+  hire_date?: string; // server forces today unless ADMIN
+  days: number;
+  mileage_out: number;
+  next_service_mileage?: number | null;
+  fuel_type: VehicleFuelType;
+  fuel_out?: FuelLevel | null;
+  notes?: string;
+  sketch: ChecklistSketchData;
+  sketch_png_data_url?: string | null;
+  signatures: {
+    outRenter: ChecklistSignatureEntry;
+    outCompany: ChecklistSignatureEntry;
+  };
+  items: Array<{
+    template_id?: number | null;
+    custom_label: string;
+    input_type: ChecklistInputType;
+    options?: string[];
+    sort_order: number;
+    value_out: ChecklistItemValue;
+    note?: string;
+    photo_data_url?: string | null;
+  }>;
+}
+
+export interface CompleteChecklistPayload {
+  mileage_in: number;
+  fuel_in?: FuelLevel | null;
+  next_service_mileage?: number | null;
+  colour?: string | null;
+  notes?: string;
+  sketch: ChecklistSketchData;
+  sketch_png_data_url?: string | null;
+  signatures: {
+    inRenter: ChecklistSignatureEntry;
+    inCompany: ChecklistSignatureEntry;
+  };
+  items: Array<{
+    id: number;
+    value_in: ChecklistItemValue;
+    note?: string;
+    photo_data_url?: string | null;
+  }>;
+}
+

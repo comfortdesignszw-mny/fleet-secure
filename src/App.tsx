@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   Bell,
   Car,
+  ClipboardCheck,
   ClipboardList,
   FileSpreadsheet,
   HelpCircle,
@@ -51,9 +52,16 @@ import {
   requestNotificationsRefresh,
   unlockNotificationAudio,
 } from './lib/pushNotifications';
-import { DEFAULT_SETTINGS, ROLE_LABELS, type AppSettings, type UserPublic } from './shared/types';
+import {
+  DEFAULT_SETTINGS,
+  ROLE_LABELS,
+  type AppSettings,
+  type TripSummary,
+  type UserPublic,
+} from './shared/types';
 import { AppFooter } from './components/AppFooter';
 import { AuditLogView } from './components/AuditLogView';
+import { ChecklistsView, type ChecklistPrefill } from './components/ChecklistsView';
 import { DriversView } from './components/DriversView';
 import { FleetMaintenanceView } from './components/FleetMaintenanceView';
 import { HelpView } from './components/HelpView';
@@ -78,6 +86,12 @@ export default function App() {
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
   const [selectedNotificationId, setSelectedNotificationId] = useState<number | null>(null);
+  const [pendingDriverLogin, setPendingDriverLogin] = useState<{
+    driverId: number;
+    fullName: string;
+  } | null>(null);
+  const [pendingChecklistPrefill, setPendingChecklistPrefill] =
+    useState<ChecklistPrefill | null>(null);
   const [pendingNotificationLink, setPendingNotificationLink] = useState<{
     notificationId: number | null;
   } | null>(() => {
@@ -440,6 +454,7 @@ export default function App() {
   }[] = [
     { id: 'home', label: en.nav.home, icon: Home, visible: true },
     { id: 'trips', label: en.nav.trips, icon: ClipboardList, visible: true },
+    { id: 'checklists', label: en.nav.checklists, icon: ClipboardCheck, visible: true },
     { id: 'vehicles', label: en.nav.vehicles, icon: Car, visible: true },
     { id: 'maintenance', label: en.nav.maintenance, icon: Wrench, visible: true },
     { id: 'drivers', label: en.nav.drivers, icon: Users, visible: true },
@@ -499,6 +514,33 @@ export default function App() {
     setSelectedTripId(null);
     setSelectedNotificationId(null);
     setSection('vehicles');
+    setMobileMenuOpen(false);
+  };
+
+  const handleCreateDriverLogin = (driver: { id: number; full_name: string }) => {
+    setPendingDriverLogin({ driverId: driver.id, fullName: driver.full_name });
+    setSettingsTab('users');
+    setSection('settings');
+    setMobileMenuOpen(false);
+  };
+
+  const handleCreateChecklistFromTrip = (trip: TripSummary) => {
+    const outDate = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Harare',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(trip.out_at));
+    setPendingChecklistPrefill({
+      trip_id: trip.id,
+      vehicle_id: trip.vehicle_id,
+      hirer_name: trip.client_name ?? '',
+      hire_date: outDate,
+      days: trip.days_hired ?? 1,
+      mileage_out: trip.mileage_out,
+      fuel_out: trip.fuel_out,
+    });
+    setSection('checklists');
     setMobileMenuOpen(false);
   };
 
@@ -814,12 +856,15 @@ export default function App() {
               onNavigate={navigateTo}
               onOpenVehicle={openVehicleFromDashboard}
               onOpenPinSettings={openPinChangeInSettings}
+              onCreateChecklistForTrip={handleCreateChecklistFromTrip}
             />
           )}
           {(section === 'settings' || section === 'change-pin') && (
             <SettingsView
               currentUser={user}
               initialTab={settingsTab}
+              pendingDriverLogin={pendingDriverLogin}
+              onConsumePendingDriverLogin={() => setPendingDriverLogin(null)}
               onSettingsChanged={(updated) => setSettings(updated)}
               onUserUpdated={(updatedUser) => setUser(updatedUser)}
               onBackHome={() => navigateTo('home')}
@@ -888,10 +933,24 @@ export default function App() {
             <DriversView
               userRole={user.role}
               onOpenTrip={(tid) => navigateTo('trips', tid)}
+              onCreateDriverLogin={handleCreateDriverLogin}
             />
           )}
           {!user.must_change_pin && section === 'trips' && (
-            <TripsView userRole={user.role} initialTripId={selectedTripId} />
+            <TripsView
+              userRole={user.role}
+              initialTripId={selectedTripId}
+              onCreateChecklist={handleCreateChecklistFromTrip}
+            />
+          )}
+          {!user.must_change_pin && section === 'checklists' && (
+            <ChecklistsView
+              currentUser={user}
+              companyName={settings.company_name}
+              initialPrefill={pendingChecklistPrefill}
+              onConsumePrefill={() => setPendingChecklistPrefill(null)}
+              onOpenVehicle={openVehicleFromDashboard}
+            />
           )}
           {!user.must_change_pin && section === 'notifications' && isAlertRecipient && (
             <NotificationsView

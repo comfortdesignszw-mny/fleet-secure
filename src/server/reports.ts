@@ -22,6 +22,7 @@ const VALID_TYPES: readonly ReportType[] = [
   'vehicles',
   'drivers',
   'flagged_trips',
+  'checklists',
   'audit_log',
 ];
 
@@ -34,6 +35,7 @@ const REPORT_TITLES: Record<ReportType, string> = {
   vehicles: 'Vehicles Directory & Usage Report',
   drivers: 'Drivers Directory & Licence Report',
   flagged_trips: 'Flagged & Overdue Trips Report',
+  checklists: 'Digital Vehicle Checklists Report',
   audit_log: 'Audit Trail Report',
 };
 
@@ -338,6 +340,72 @@ async function buildReportDataset(
     summary['Total Drivers'] = rows.length;
     summary['Active'] = activeCount;
     summary['Expiring / Expired'] = expiringCount;
+  } else if (type === 'checklists') {
+    const { results } = await db
+      .prepare(
+        `SELECT c.*, cu.full_name AS created_by_name, ru.full_name AS returned_by_name
+         FROM checklists c
+         LEFT JOIN users cu ON cu.id = c.created_by
+         LEFT JOIN users ru ON ru.id = c.returned_by
+         WHERE c.deleted_at IS NULL
+         ORDER BY c.id DESC`
+      )
+      .all<Record<string, unknown>>();
+
+    let openCount = 0;
+    let completedCount = 0;
+    let diffCount = 0;
+
+    for (const cRow of results) {
+      const hireDate = String(cRow.hire_date);
+      if (from && hireDate < from) continue;
+      if (to && hireDate > to) continue;
+
+      const isCompleted = cRow.status === 'completed';
+      if (isCompleted) completedCount++;
+      else openCount++;
+
+      let diffsLen = 0;
+      try {
+        const parsed = JSON.parse(String(cRow.differences_json || '[]')) as Array<{ kind?: string }>;
+        diffsLen = parsed.filter((d) => d.kind === 'item' || d.kind === 'sketch').length;
+      } catch {
+        diffsLen = 0;
+      }
+      if (diffsLen > 0) diffCount++;
+
+      rows.push({
+        checklist_id: Number(cRow.id),
+        status: isCompleted ? 'Completed' : 'Out (Open)',
+        reg_number: String(cRow.reg_number),
+        vehicle: `${cRow.car_model} (${cRow.vehicle_type})`,
+        hirer: `${cRow.hirer_name} (${cRow.hirer_type === 'owner' ? 'Owner' : 'Renter'})`,
+        hire_date: hireDate,
+        return_date: String(cRow.return_date),
+        km_out_in: `${cRow.mileage_out} -> ${cRow.mileage_in ?? '-'}`,
+        fuel: `${cRow.fuel_out ?? 'EV'} -> ${cRow.fuel_in ?? '-'}`,
+        diffs: diffsLen > 0 ? `${diffsLen} diff(s)` : 'None',
+        logged_by: String(cRow.created_by_name ?? '-'),
+      });
+    }
+
+    columnDefs = [
+      { key: 'checklist_id', label: 'ID', width: 5 },
+      { key: 'status', label: 'Status', width: 10 },
+      { key: 'reg_number', label: 'Reg No.', width: 10 },
+      { key: 'vehicle', label: 'Vehicle', width: 16 },
+      { key: 'hirer', label: 'Renter / Owner', width: 17 },
+      { key: 'hire_date', label: 'Hire Date', width: 10 },
+      { key: 'return_date', label: 'Due Return', width: 10 },
+      { key: 'km_out_in', label: 'Mileage Out->In', width: 12 },
+      { key: 'fuel', label: 'Fuel Out->In', width: 10 },
+      { key: 'diffs', label: 'Diffs', width: 8 },
+    ];
+
+    summary['Total Checklists'] = rows.length;
+    summary['Out (Open)'] = openCount;
+    summary['Completed (Returned)'] = completedCount;
+    summary['With Inspection Differences'] = diffCount;
   } else if (type === 'audit_log') {
     const { results } = await db
       .prepare(`SELECT * FROM audit_log ORDER BY id DESC LIMIT 1000`)

@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Edit3,
   Plus,
   Search,
@@ -29,6 +30,7 @@ import {
 } from '../lib/offlineQueue';
 import {
   VEHICLE_CONDITIONS,
+  VEHICLE_FUEL_TYPES,
   VEHICLE_TYPES,
   VEHICLE_TYPE_TO_CLASS,
   formatHarareTime,
@@ -37,6 +39,7 @@ import {
   type Role,
   type Vehicle,
   type VehicleCondition,
+  type VehicleFuelType,
 } from '../shared/types';
 
 interface VehiclesViewProps {
@@ -158,6 +161,9 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     }>
   >([]);
   const [conditionHistory, setConditionHistory] = useState<AuditLogEntry[]>([]);
+  const [detailChecklists, setDetailChecklists] = useState<
+    NonNullable<CachedVehicleDetail['checklists']>
+  >([]);
 
   // Create / Edit modal
   const [showForm, setShowForm] = useState(false);
@@ -165,6 +171,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
   const [formReg, setFormReg] = useState('');
   const [formType, setFormType] = useState<string>(VEHICLE_TYPES[0]);
   const [formMakeModel, setFormMakeModel] = useState('');
+  const [formColour, setFormColour] = useState('');
+  const [formFuelType, setFormFuelType] = useState<VehicleFuelType>('diesel');
   const [formCondition, setFormCondition] = useState<VehicleCondition>('Good');
   const [formMileage, setFormMileage] = useState('0');
   const [formNextServiceDueKm, setFormNextServiceDueKm] = useState('');
@@ -284,10 +292,12 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       setDetailVehicle(res.vehicle);
       setDetailTrips(res.trips);
       setConditionHistory(res.conditionHistory);
+      setDetailChecklists(res.checklists ?? []);
       writeCachedEntry<CachedVehicleDetail>(CACHE_KEYS.vehicleDetail(id), {
         vehicle: res.vehicle,
         trips: res.trips,
         conditionHistory: res.conditionHistory,
+        checklists: res.checklists ?? [],
       });
     } catch (err) {
       if (isLikelyNetworkError(err) || (typeof navigator !== 'undefined' && !navigator.onLine)) {
@@ -296,6 +306,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           setDetailVehicle(cachedDetail.data.vehicle);
           setDetailTrips(cachedDetail.data.trips);
           setConditionHistory(cachedDetail.data.conditionHistory);
+          setDetailChecklists(cachedDetail.data.checklists ?? []);
           setUsingCache(true);
           setCacheUpdatedAt(cachedDetail.updatedAt);
         } else {
@@ -305,6 +316,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
             setDetailVehicle(listMatch);
             setDetailTrips([]);
             setConditionHistory([]);
+            setDetailChecklists([]);
             setUsingCache(true);
             setCacheUpdatedAt(cachedAll?.updatedAt ?? null);
           } else {
@@ -349,6 +361,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     setFormReg('');
     setFormType(VEHICLE_TYPES[0]);
     setFormMakeModel('');
+    setFormColour('');
+    setFormFuelType('diesel');
     setFormCondition('Good');
     setFormMileage('0');
     setFormNextServiceDueKm('');
@@ -362,6 +376,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
     setFormReg(v.reg_number);
     setFormType(v.vehicle_type);
     setFormMakeModel(v.make_model);
+    setFormColour(v.colour ?? '');
+    setFormFuelType(v.fuel_type ?? 'diesel');
     setFormCondition(v.condition);
     setFormMileage(String(v.last_known_mileage));
     setFormNextServiceDueKm(
@@ -399,6 +415,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           reg_number: formReg.trim(),
           vehicle_type: formType,
           make_model: formMakeModel.trim(),
+          colour: formColour.trim() || null,
+          fuel_type: formFuelType,
           condition: formCondition,
           last_known_mileage: mileageNum,
           ...(canMaintain ? { next_service_due_km: nextDueVal } : {}),
@@ -415,6 +433,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
           reg_number: formReg.trim().toUpperCase().replace(/\s+/g, ' '),
           vehicle_type: formType,
           make_model: formMakeModel.trim(),
+          colour: formColour.trim() || null,
+          fuel_type: formFuelType,
           condition: formCondition,
           last_known_mileage: mileageNum,
           ...(canMaintain && nextDueVal !== null ? { next_service_due_km: nextDueVal } : {}),
@@ -570,6 +590,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                 <div>
                   <div className="text-sm font-medium text-cyan-700">
                     {detailVehicle.vehicle_type} · {detailVehicle.vehicle_class}
+                    {detailVehicle.colour ? ` · ${detailVehicle.colour}` : ''}
+                    {detailVehicle.fuel_type ? ` · ${detailVehicle.fuel_type.toUpperCase()}` : ''}
                     {!detailVehicle.active && ' · Inactive'}
                   </div>
                   <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
@@ -691,6 +713,43 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                       <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
                         {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
                       </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 shadow-xs">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-blue-950">
+                <ClipboardCheck className="h-5 w-5 text-cyan-600" aria-hidden="true" />
+                <span>Digital Vehicle Checklists ({detailChecklists.length})</span>
+              </h2>
+              {detailChecklists.length === 0 ? (
+                <p className="mt-2 text-base text-slate-600">
+                  No inspection checklists recorded for this vehicle yet.
+                </p>
+              ) : (
+                <div className="mt-4 divide-y divide-blue-100">
+                  {detailChecklists.map((chk) => (
+                    <div key={chk.id} className="py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                      <div>
+                        <div className="text-sm font-semibold text-blue-950">
+                          Checklist #{chk.id} · {chk.hirer_type === 'owner' ? 'Owner:' : 'Renter:'} {chk.hirer_name}
+                        </div>
+                        <div className="text-xs font-mono tabular-nums text-slate-500">
+                          Out {chk.hire_date} · Return {chk.return_date} · {chk.mileage_out.toLocaleString()} km
+                          {chk.mileage_in !== null ? ` → ${chk.mileage_in.toLocaleString()} km` : ''}
+                        </div>
+                      </div>
+                      <span
+                        className={`self-start sm:self-center rounded-lg px-2.5 py-0.5 text-xs font-bold ${
+                          chk.status === 'completed'
+                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                            : 'bg-amber-50 text-amber-900 border border-amber-300'
+                        }`}
+                      >
+                        {chk.status === 'completed' ? 'Completed' : 'Out (open)'}
+                      </span>
                     </div>
                   ))}
                 </div>
@@ -1102,7 +1161,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
 
               <div>
                 <label htmlFor="v-make" className="block text-sm font-semibold text-blue-950">
-                  Make & Model
+                  Make &amp; Model
                 </label>
                 <input
                   id="v-make"
@@ -1113,6 +1172,39 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                   placeholder="e.g. Toyota Hilux GD-6"
                   className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
                 />
+              </div>
+
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <div>
+                  <label htmlFor="v-colour" className="block text-sm font-semibold text-blue-950">
+                    Colour (optional)
+                  </label>
+                  <input
+                    id="v-colour"
+                    type="text"
+                    value={formColour}
+                    onChange={(e) => setFormColour(e.target.value)}
+                    placeholder="e.g. White"
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="v-fuel-type" className="block text-sm font-semibold text-blue-950">
+                    Fuel Type
+                  </label>
+                  <select
+                    id="v-fuel-type"
+                    value={formFuelType}
+                    onChange={(e) => setFormFuelType(e.target.value as VehicleFuelType)}
+                    className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 bg-white px-3.5 text-base text-blue-950"
+                  >
+                    {VEHICLE_FUEL_TYPES.map((ft) => (
+                      <option key={ft.value} value={ft.value}>
+                        {ft.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
 
               <div>

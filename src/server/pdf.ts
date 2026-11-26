@@ -243,3 +243,297 @@ export function buildReportPdf(input: PdfReportInput): Uint8Array {
   }
   return out;
 }
+
+export interface PdfChecklistInput {
+  companyName: string;
+  companyContact: string;
+  companyAddress: string;
+  checklistId: number;
+  statusLabel: string;
+  hirerLabel: string;
+  hirerName: string;
+  representative: string;
+  cell: string;
+  carModel: string;
+  vehicleType: string;
+  colour: string;
+  regNumber: string;
+  hireDate: string;
+  days: number;
+  returnDate: string;
+  mileageOut: number;
+  mileageIn: number | null;
+  nextServiceMileage: number | null;
+  datetimeIn: string;
+  fuelType: string;
+  fuelOut: string;
+  fuelIn: string;
+  items: Array<{
+    idx: number;
+    label: string;
+    outText: string;
+    inText: string;
+    note: string;
+  }>;
+  differences: Array<{ label: string; outText: string; inText: string }>;
+  sketchSummary: string[];
+  declarationText: string;
+  signaturesSummary: Array<{ roleLabel: string; name: string; idNumber: string; signedAt: string }>;
+  generatedAt: string;
+}
+
+function wrapPdfLine(text: string, maxChars: number): string[] {
+  const clean = toPdfAscii(text).replace(/\s+/g, ' ').trim();
+  if (!clean) return [''];
+  const words = clean.split(' ');
+  const lines: string[] = [];
+  let cur = '';
+  for (const w of words) {
+    if (!cur) {
+      cur = w.slice(0, maxChars);
+    } else if (cur.length + 1 + w.length <= maxChars) {
+      cur = `${cur} ${w}`;
+    } else {
+      lines.push(cur);
+      cur = w.slice(0, maxChars);
+    }
+  }
+  if (cur) lines.push(cur);
+  return lines;
+}
+
+export function buildChecklistPdf(input: PdfChecklistInput): Uint8Array {
+  // Portrait A4: 595 x 842 pt
+  const pageWidth = 595;
+  const pageHeight = 842;
+  const marginX = 36;
+  const topY = pageHeight - 36;
+  const bottomY = 40;
+  const printableWidth = pageWidth - marginX * 2;
+
+  const pageStreams: string[] = [];
+  let cmds: string[] = [];
+  let y = topY;
+
+  const startNewPage = () => {
+    if (cmds.length > 0) {
+      pageStreams.push(cmds.join('\n'));
+    }
+    cmds = [];
+    y = topY;
+    cmds.push('0.06 0.09 0.16 rg');
+    cmds.push(`BT /F2 11 Tf ${marginX} ${y} Td (${pdfEscape(`${input.companyName} - Digital Vehicle Checklist #${input.checklistId}`)}) Tj ET`);
+    y -= 14;
+    cmds.push('0.80 0.84 0.88 RG 0.6 w');
+    cmds.push(`${marginX} ${y + 3} m ${pageWidth - marginX} ${y + 3} l S`);
+    y -= 14;
+  };
+
+  const ensureSpace = (needed: number) => {
+    if (y - needed < bottomY) {
+      startNewPage();
+    }
+  };
+
+  // First page header
+  cmds.push('0.06 0.09 0.16 rg');
+  cmds.push(`BT /F2 14 Tf ${marginX} ${y} Td (${pdfEscape(input.companyName)}) Tj ET`);
+  cmds.push('0.06 0.56 0.68 rg');
+  cmds.push(`BT /F2 10 Tf ${pageWidth - marginX - 110} ${y} Td (${pdfEscape(input.statusLabel)}) Tj ET`);
+  y -= 14;
+
+  const contactLine = [input.companyAddress, input.companyContact].filter(Boolean).join('  |  ');
+  if (contactLine) {
+    cmds.push('0.39 0.45 0.55 rg');
+    cmds.push(`BT /F1 8.5 Tf ${marginX} ${y} Td (${pdfEscape(contactLine)}) Tj ET`);
+    y -= 13;
+  }
+
+  cmds.push('0.06 0.09 0.16 rg');
+  cmds.push(`BT /F2 13 Tf ${marginX} ${y} Td (${pdfEscape(`Digital Vehicle Checklist #${input.checklistId}`)}) Tj ET`);
+  y -= 12;
+  cmds.push('0.39 0.45 0.55 rg');
+  cmds.push(`BT /F1 8 Tf ${marginX} ${y} Td (${pdfEscape(`Generated (Africa/Harare): ${input.generatedAt}`)}) Tj ET`);
+  y -= 12;
+
+  cmds.push('0.80 0.84 0.88 RG 0.7 w');
+  cmds.push(`${marginX} ${y + 3} m ${pageWidth - marginX} ${y + 3} l S`);
+  y -= 14;
+
+  // Sections A-E Metadata Grid
+  const metaRows: [string, string][] = [
+    [`${input.hirerLabel}: ${input.hirerName}`, `Representative: ${input.representative || '-'}   |   Cell: ${input.cell || '-'}`],
+    [`Vehicle: ${input.carModel} (${input.vehicleType})`, `Reg: ${input.regNumber}   |   Colour: ${input.colour || '-'}`],
+    [`Hire Date: ${input.hireDate} (${input.days} day${input.days === 1 ? '' : 's'})`, `Expected Return: ${input.returnDate}`],
+    [`Mileage OUT: ${input.mileageOut.toLocaleString()} km`, `Mileage IN: ${input.mileageIn !== null ? `${input.mileageIn.toLocaleString()} km` : 'Open'}`],
+    [
+      `Fuel (${input.fuelType.toUpperCase()}): OUT ${input.fuelOut || 'N/A'} | IN ${input.fuelIn || '-'}`,
+      `Next Service: ${input.nextServiceMileage !== null ? `${input.nextServiceMileage.toLocaleString()} km` : '-'} | Date IN: ${input.datetimeIn || 'Open'}`,
+    ],
+  ];
+
+  for (const [left, right] of metaRows) {
+    ensureSpace(16);
+    cmds.push('0.96 0.98 1.00 rg');
+    cmds.push(`${marginX} ${y - 4} ${printableWidth} 15 re f`);
+    cmds.push('0.09 0.13 0.22 rg');
+    cmds.push(`BT /F1 8.5 Tf ${marginX + 4} ${y} Td (${pdfEscape(truncateText(left, 56))}) Tj ET`);
+    cmds.push(`BT /F1 8.5 Tf ${marginX + 265} ${y} Td (${pdfEscape(truncateText(right, 58))}) Tj ET`);
+    y -= 17;
+  }
+  y -= 6;
+
+  // Section F Inspection Table
+  ensureSpace(30);
+  cmds.push('0.06 0.09 0.16 rg');
+  cmds.push(`${marginX} ${y - 4} ${printableWidth} 16 re f`);
+  cmds.push('1 1 1 rg');
+  cmds.push(`BT /F2 8 Tf ${marginX + 4} ${y} Td (#) Tj ET`);
+  cmds.push(`BT /F2 8 Tf ${marginX + 24} ${y} Td (Checklist Item) Tj ET`);
+  cmds.push(`BT /F2 8 Tf ${marginX + 215} ${y} Td (OUT) Tj ET`);
+  cmds.push(`BT /F2 8 Tf ${marginX + 355} ${y} Td (IN) Tj ET`);
+  cmds.push(`BT /F2 8 Tf ${marginX + 455} ${y} Td (Note) Tj ET`);
+  y -= 16;
+
+  for (let i = 0; i < input.items.length; i++) {
+    const it = input.items[i];
+    ensureSpace(16);
+    if (i % 2 === 1) {
+      cmds.push('0.97 0.98 0.99 rg');
+      cmds.push(`${marginX} ${y - 4} ${printableWidth} 14 re f`);
+    }
+    cmds.push('0.12 0.16 0.23 rg');
+    cmds.push(`BT /F1 7.5 Tf ${marginX + 4} ${y} Td (${it.idx}) Tj ET`);
+    cmds.push(`BT /F1 7.5 Tf ${marginX + 24} ${y} Td (${pdfEscape(truncateText(it.label, 38))}) Tj ET`);
+    cmds.push(`BT /F1 7.5 Tf ${marginX + 215} ${y} Td (${pdfEscape(truncateText(it.outText || '-', 28))}) Tj ET`);
+    cmds.push(`BT /F1 7.5 Tf ${marginX + 355} ${y} Td (${pdfEscape(truncateText(it.inText || '-', 20))}) Tj ET`);
+    cmds.push(`BT /F1 7.5 Tf ${marginX + 455} ${y} Td (${pdfEscape(truncateText(it.note || '-', 14))}) Tj ET`);
+    cmds.push('0.90 0.92 0.95 RG 0.35 w');
+    cmds.push(`${marginX} ${y - 4} m ${pageWidth - marginX} ${y - 4} l S`);
+    y -= 14;
+  }
+
+  // Differences summary (on return)
+  if (input.differences.length > 0) {
+    y -= 8;
+    ensureSpace(32);
+    cmds.push('0.75 0.15 0.15 rg');
+    cmds.push(`BT /F2 10 Tf ${marginX} ${y} Td (Return Inspection Differences (${input.differences.length})) Tj ET`);
+    y -= 14;
+    for (const diff of input.differences) {
+      ensureSpace(14);
+      cmds.push('0.12 0.16 0.23 rg');
+      const line = `- ${diff.label}: OUT "${diff.outText}" -> IN "${diff.inText}"`;
+      cmds.push(`BT /F1 8 Tf ${marginX + 6} ${y} Td (${pdfEscape(truncateText(line, 110))}) Tj ET`);
+      y -= 12;
+    }
+  }
+
+  // Sketch Summary
+  y -= 8;
+  ensureSpace(32);
+  cmds.push('0.06 0.09 0.16 rg');
+  cmds.push(`BT /F2 10 Tf ${marginX} ${y} Td (Vehicle Condition Sketch Notes) Tj ET`);
+  y -= 13;
+  for (const sLine of input.sketchSummary) {
+    for (const wrapped of wrapPdfLine(sLine, 105)) {
+      ensureSpace(12);
+      cmds.push('0.18 0.23 0.32 rg');
+      cmds.push(`BT /F1 8 Tf ${marginX + 6} ${y} Td (${pdfEscape(wrapped)}) Tj ET`);
+      y -= 11;
+    }
+  }
+
+  // Section G Declaration & Signatures
+  y -= 8;
+  ensureSpace(40);
+  cmds.push('0.06 0.09 0.16 rg');
+  cmds.push(`BT /F2 10 Tf ${marginX} ${y} Td (Section G: Declaration & Sign-Off) Tj ET`);
+  y -= 13;
+  for (const line of wrapPdfLine(input.declarationText, 105)) {
+    ensureSpace(12);
+    cmds.push('0.20 0.25 0.34 rg');
+    cmds.push(`BT /F1 8 Tf ${marginX} ${y} Td (${pdfEscape(line)}) Tj ET`);
+    y -= 11;
+  }
+
+  y -= 6;
+  for (const sig of input.signaturesSummary) {
+    ensureSpace(15);
+    cmds.push('0.09 0.13 0.22 rg');
+    const txt = `${sig.roleLabel}: ${sig.name || 'Pending'}   |   ID: ${sig.idNumber || '-'}   |   Signed: ${sig.signedAt || 'Pending'}`;
+    cmds.push(`BT /F1 8.5 Tf ${marginX + 4} ${y} Td (${pdfEscape(truncateText(txt, 108))}) Tj ET`);
+    y -= 13;
+  }
+
+  if (cmds.length > 0) {
+    pageStreams.push(cmds.join('\n'));
+  }
+
+  // Footer on every page
+  const totalPages = pageStreams.length;
+  for (let p = 0; p < totalPages; p++) {
+    pageStreams[p] += `\n0.45 0.50 0.58 rg\nBT /F1 8 Tf ${marginX} 20 Td (${pdfEscape(
+      `${input.companyName} - Checklist #${input.checklistId}  |  Page ${p + 1} of ${totalPages}`
+    )}) Tj ET`;
+  }
+
+  const objects: string[] = [];
+  const pageObjNums = pageStreams.map((_, i) => 5 + i * 2);
+
+  objects.push('1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n');
+  objects.push(
+    `2 0 obj\n<< /Type /Pages /Kids [${pageObjNums.map((n) => `${n} 0 R`).join(' ')}] /Count ${totalPages} >>\nendobj\n`
+  );
+  objects.push('3 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n');
+  objects.push('4 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>\nendobj\n');
+
+  for (let i = 0; i < pageStreams.length; i++) {
+    const pageObjId = 5 + i * 2;
+    const streamObjId = pageObjId + 1;
+    const streamContent = pageStreams[i];
+    const streamBytes = new TextEncoder().encode(streamContent).length;
+
+    objects.push(
+      `${pageObjId} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${streamObjId} 0 R >>\nendobj\n`
+    );
+    objects.push(
+      `${streamObjId} 0 obj\n<< /Length ${streamBytes} >>\nstream\n${streamContent}\nendstream\nendobj\n`
+    );
+  }
+
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const offsets: number[] = [0];
+  let currentOffset = 0;
+
+  const pushStr = (s: string) => {
+    const bytes = encoder.encode(s);
+    chunks.push(bytes);
+    currentOffset += bytes.length;
+  };
+
+  pushStr('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n');
+  for (const obj of objects) {
+    offsets.push(currentOffset);
+    pushStr(obj);
+  }
+
+  const xrefStart = currentOffset;
+  pushStr(`xref\n0 ${objects.length + 1}\n`);
+  pushStr('0000000000 65535 f \n');
+  for (let i = 1; i < offsets.length; i++) {
+    pushStr(`${String(offsets[i]).padStart(10, '0')} 00000 n \n`);
+  }
+  pushStr(`trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF\n`);
+
+  const totalLen = chunks.reduce((sum, c) => sum + c.length, 0);
+  const out = new Uint8Array(totalLen);
+  let pos = 0;
+  for (const c of chunks) {
+    out.set(c, pos);
+    pos += c.length;
+  }
+  return out;
+}
+

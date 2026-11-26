@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Clock,
   Edit3,
   Lock,
@@ -34,6 +35,7 @@ interface TripsViewProps {
   userRole: Role;
   initialTripId?: number | null;
   onRecordReturn?: (trip: TripSummary) => void;
+  onCreateChecklist?: (trip: TripSummary) => void;
 }
 
 const LEGACY_CACHE_KEY = 'fleet_secure_cache_trips';
@@ -53,6 +55,7 @@ export const TripsView: React.FC<TripsViewProps> = ({
   userRole,
   initialTripId = null,
   onRecordReturn,
+  onCreateChecklist,
 }) => {
   const canCorrect = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
 
@@ -342,7 +345,17 @@ export const TripsView: React.FC<TripsViewProps> = ({
             <span>Back to Trips</span>
           </button>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            {detail?.trip.status === 'OPEN' && detail.trip.trip_type === 'HIRE' && onCreateChecklist && (
+              <button
+                type="button"
+                onClick={() => onCreateChecklist(detail.trip)}
+                className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50/70 px-4 text-sm font-semibold text-blue-950"
+              >
+                <ClipboardCheck className="h-4 w-4 text-cyan-700" aria-hidden="true" />
+                <span>Create Checklist</span>
+              </button>
+            )}
             {detail?.trip.status === 'OPEN' && onRecordReturn && (
               <button
                 type="button"
@@ -990,6 +1003,19 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 shrink-0">
+                  {t.status === 'OPEN' && t.trip_type === 'HIRE' && onCreateChecklist && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCreateChecklist(t);
+                      }}
+                      className="cyan-glow-outline inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-2.5 text-xs font-semibold text-blue-950"
+                    >
+                      <ClipboardCheck className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                      <span>Create Checklist</span>
+                    </button>
+                  )}
                   {t.flags.length > 0 && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700">
                       <AlertTriangle className="h-4 w-4" aria-hidden="true" />

@@ -1155,8 +1155,10 @@ export function registerTripRoutes(
       .run();
 
     await c.env.DB.prepare("UPDATE trips SET status = 'CLOSED' WHERE id = ?").bind(tripId).run();
-    await c.env.DB.prepare('UPDATE vehicles SET last_known_mileage = ? WHERE id = ?')
-      .bind(mileageIn, existing.vehicle_id)
+    await c.env.DB.prepare(
+      'UPDATE vehicles SET last_known_mileage = ?, last_closing_mileage = ?, last_fuel_level = ? WHERE id = ?'
+    )
+      .bind(mileageIn, mileageIn, fuelIn, existing.vehicle_id)
       .run();
 
     const closedRow = await c.env.DB.prepare(`${TRIP_SUMMARY_SELECT} WHERE t.id = ?`)

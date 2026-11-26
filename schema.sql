@@ -10,11 +10,14 @@ CREATE TABLE IF NOT EXISTS users (
   pin_hash TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   must_change_pin INTEGER NOT NULL DEFAULT 1 CHECK (must_change_pin IN (0, 1)),
+  driver_id INTEGER,
+  temp_pin_enc TEXT,
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_role_active ON users(role, active);
+-- idx_users_driver_id is created in ensureInitialSeed after additive ALTER TABLE migration
 
 -- 2. Drivers Directory
 CREATE TABLE IF NOT EXISTS drivers (
@@ -33,12 +36,14 @@ CREATE TABLE IF NOT EXISTS drivers (
   medical_cert_number TEXT,
   medical_document TEXT,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+  user_id INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   created_by INTEGER REFERENCES users(id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active);
 CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry);
+-- idx_drivers_user_id is created in ensureInitialSeed after additive ALTER TABLE migration
 CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique
   ON drivers(UPPER(licence_number))
   WHERE licence_number IS NOT NULL AND licence_number != '';
@@ -50,11 +55,16 @@ CREATE TABLE IF NOT EXISTS vehicles (
   vehicle_type TEXT NOT NULL,
   vehicle_class TEXT NOT NULL CHECK (vehicle_class IN ('ECONOMY', 'HEAVY')),
   make_model TEXT NOT NULL,
+  colour TEXT,
+  fuel_type TEXT NOT NULL DEFAULT 'petrol' CHECK (fuel_type IN ('diesel', 'petrol', 'ev')),
   condition TEXT NOT NULL DEFAULT 'Good' CHECK (
     condition IN ('Very Good', 'Good', 'Needs Little Attention', 'Bad Condition', 'Accident', 'Grounded')
   ),
   last_known_mileage INTEGER NOT NULL DEFAULT 0 CHECK (last_known_mileage >= 0),
+  last_closing_mileage INTEGER,
+  last_fuel_level TEXT,
   next_service_due_km INTEGER,
+  next_service_mileage INTEGER,
   active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
@@ -258,3 +268,105 @@ CREATE TABLE IF NOT EXISTS parts_purchase_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_parts_vehicle_status ON parts_purchase_requests(vehicle_id, status);
+
+-- 16. Checklist Item Templates (Seeded 25 paper slip rows + admin-customizable)
+CREATE TABLE IF NOT EXISTS checklist_item_templates (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  code TEXT NOT NULL UNIQUE,
+  label TEXT NOT NULL,
+  category TEXT NOT NULL DEFAULT 'Inspection',
+  input_type TEXT NOT NULL CHECK (
+    input_type IN (
+      'tick_cross',
+      'status_pair',
+      'yes_no',
+      'text',
+      'text_checkbox',
+      'multi_check',
+      'expiry_checks',
+      'numbers',
+      'available_na'
+    )
+  ),
+  options_json TEXT NOT NULL DEFAULT '[]',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_default INTEGER NOT NULL DEFAULT 1 CHECK (is_default IN (0, 1)),
+  active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_chk_tpl_active_order ON checklist_item_templates(active, sort_order);
+
+-- 17. Digital Vehicle Checklists
+CREATE TABLE IF NOT EXISTS checklists (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  trip_id INTEGER REFERENCES trips(id),
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+  status TEXT NOT NULL DEFAULT 'out' CHECK (status IN ('out', 'completed')),
+  hirer_type TEXT NOT NULL CHECK (hirer_type IN ('renter', 'owner')),
+  hirer_name TEXT NOT NULL,
+  representative TEXT NOT NULL DEFAULT '',
+  cell TEXT NOT NULL DEFAULT '',
+  car_model TEXT NOT NULL,
+  vehicle_type TEXT NOT NULL,
+  colour TEXT,
+  reg_number TEXT NOT NULL,
+  hire_date TEXT NOT NULL,
+  days INTEGER NOT NULL CHECK (days >= 1),
+  return_date TEXT NOT NULL,
+  mileage_out INTEGER NOT NULL CHECK (mileage_out >= 0),
+  mileage_out_diff_warning INTEGER NOT NULL DEFAULT 0 CHECK (mileage_out_diff_warning IN (0, 1)),
+  previous_closing_mileage INTEGER,
+  mileage_in INTEGER CHECK (mileage_in IS NULL OR mileage_in >= 0),
+  next_service_mileage INTEGER,
+  datetime_in TEXT,
+  fuel_type TEXT NOT NULL DEFAULT 'petrol' CHECK (fuel_type IN ('diesel', 'petrol', 'ev')),
+  fuel_out TEXT,
+  fuel_in TEXT,
+  sketch_json TEXT NOT NULL DEFAULT '{}',
+  sketch_png_data_url TEXT,
+  signatures_json TEXT NOT NULL DEFAULT '{}',
+  declaration_text TEXT NOT NULL DEFAULT '',
+  differences_json TEXT NOT NULL DEFAULT '[]',
+  notes TEXT NOT NULL DEFAULT '',
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  returned_by INTEGER REFERENCES users(id),
+  deleted_at TEXT,
+  deleted_by INTEGER REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+  updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_checklists_status ON checklists(status, deleted_at);
+CREATE INDEX IF NOT EXISTS idx_checklists_reg ON checklists(reg_number, hire_date);
+CREATE INDEX IF NOT EXISTS idx_checklists_vehicle ON checklists(vehicle_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_checklists_trip ON checklists(trip_id);
+
+-- 18. Checklist Inspection Items
+CREATE TABLE IF NOT EXISTS checklist_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+  template_id INTEGER REFERENCES checklist_item_templates(id),
+  custom_label TEXT NOT NULL,
+  input_type TEXT NOT NULL CHECK (
+    input_type IN (
+      'tick_cross',
+      'status_pair',
+      'yes_no',
+      'text',
+      'text_checkbox',
+      'multi_check',
+      'expiry_checks',
+      'numbers',
+      'available_na'
+    )
+  ),
+  options_json TEXT NOT NULL DEFAULT '[]',
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  value_out_json TEXT NOT NULL DEFAULT '{}',
+  value_in_json TEXT,
+  note TEXT NOT NULL DEFAULT '',
+  photo_data_url TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_checklist_items_parent ON checklist_items(checklist_id, sort_order);

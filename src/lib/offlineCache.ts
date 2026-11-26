@@ -2,9 +2,12 @@ import { api } from './api';
 import type {
   AppSettings,
   AuditLogEntry,
+  ChecklistItemTemplate,
+  ChecklistSummary,
   DashboardData,
   Driver,
   FleetMaintenanceOverview,
+  FuelLevel,
   NotificationRecipient,
   NotificationRecord,
   ReportPreviewData,
@@ -45,6 +48,8 @@ export const CACHE_KEYS = {
   notifications: 'notifications_recent',
   notificationRecipients: 'notification_recipients',
   staffUsers: 'staff_users_all',
+  checklistsAll: 'checklists_all',
+  checklistTemplates: 'checklist_templates_active',
   reportPreview: (type: ReportType, from: string, to: string) =>
     `report_${type}_${from || 'all'}_${to || 'all'}`,
   reportDefault: (type: ReportType) => `report_${type}_default`,
@@ -108,6 +113,19 @@ export interface CachedVehicleDetail {
     total_mileage: number | null;
   }>;
   conditionHistory: AuditLogEntry[];
+  checklists?: Array<{
+    id: number;
+    status: 'out' | 'completed';
+    hirer_type: 'renter' | 'owner';
+    hirer_name: string;
+    hire_date: string;
+    return_date: string;
+    mileage_out: number;
+    mileage_in: number | null;
+    fuel_out: FuelLevel | null;
+    fuel_in: FuelLevel | null;
+    created_at: string;
+  }>;
 }
 
 export interface CachedDriverDetail {
@@ -240,6 +258,18 @@ export async function warmOfflineCaches(
           writeCachedEntry<FleetMaintenanceOverview>(CACHE_KEYS.fleetMaintenance, overview);
         })
         .catch(() => undefined),
+      api
+        .listChecklists({ limit: 100 })
+        .then((res) => {
+          writeCachedEntry<ChecklistSummary[]>(CACHE_KEYS.checklistsAll, res.items);
+        })
+        .catch(() => undefined),
+      api
+        .listChecklistTemplates()
+        .then((res) => {
+          writeCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates, res.items);
+        })
+        .catch(() => undefined),
     ];
 
     if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {
@@ -270,7 +300,13 @@ export async function warmOfflineCaches(
           .catch(() => undefined)
       );
 
-      const reportTypesToWarm: ReportType[] = ['all_trips', 'hires', 'vehicles', 'drivers'];
+      const reportTypesToWarm: ReportType[] = [
+        'all_trips',
+        'hires',
+        'vehicles',
+        'drivers',
+        'checklists',
+      ];
       for (const rType of reportTypesToWarm) {
         coreTasks.push(
           api

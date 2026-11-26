@@ -5,12 +5,15 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Edit3,
   FileCheck2,
+  KeyRound,
   Phone,
   Plus,
   Search,
   UserCheck,
+  UserPlus,
   X,
   XCircle,
 } from 'lucide-react';
@@ -36,6 +39,7 @@ import {
   getDriverMissingDocuments,
   type DerivedStatus,
   type Driver,
+  type DriverTempCredentials,
   type LicenceStatus,
   type Role,
 } from '../shared/types';
@@ -45,6 +49,7 @@ interface DriversViewProps {
   userRole: Role;
   initialDriverId?: number | null;
   onOpenTrip?: (tripId: number) => void;
+  onCreateDriverLogin?: (driver: { id: number; full_name: string }) => void;
 }
 
 const LEGACY_CACHE_KEY = 'fleet_secure_cache_drivers';
@@ -103,9 +108,11 @@ export const DriversView: React.FC<DriversViewProps> = ({
   userRole,
   initialDriverId = null,
   onOpenTrip,
+  onCreateDriverLogin,
 }) => {
   const canManage = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
   const canSeeMissingDocWarnings = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
+  const isAdmin = userRole === 'ADMIN';
 
   const [items, setItems] = useState<Driver[]>([]);
   const [total, setTotal] = useState(0);
@@ -158,6 +165,13 @@ export const DriversView: React.FC<DriversViewProps> = ({
   const [formAddress, setFormAddress] = useState('');
   const [formExpiry, setFormExpiry] = useState('');
   const [formLicenceDoc, setFormLicenceDoc] = useState<string | null>(null);
+
+  // Driver temporary credentials modal (Admin only)
+  const [credModalDriver, setCredModalDriver] = useState<Driver | null>(null);
+  const [credLoading, setCredLoading] = useState(false);
+  const [credData, setCredData] = useState<DriverTempCredentials | null>(null);
+  const [credError, setCredError] = useState<string | null>(null);
+  const [credCopied, setCredCopied] = useState(false);
   const [formDdcNumber, setFormDdcNumber] = useState('');
   const [formDdcDoc, setFormDdcDoc] = useState<string | null>(null);
   const [formRetestNumber, setFormRetestNumber] = useState('');
@@ -589,6 +603,42 @@ export const DriversView: React.FC<DriversViewProps> = ({
     }
   };
 
+  const openCredentialsModal = async (driver: Driver) => {
+    setCredModalDriver(driver);
+    setCredLoading(true);
+    setCredData(null);
+    setCredError(null);
+    setCredCopied(false);
+    try {
+      const res = await api.getDriverCredentials(driver.id);
+      setCredData(res.credentials);
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 410) {
+        setCredError(
+          'This driver has already logged in and set their personal PIN/password. Temporary credentials are no longer visible.'
+        );
+        void fetchDrivers();
+      } else {
+        setCredError(
+          err instanceof ApiError ? err.message : 'Could not load temporary login credentials.'
+        );
+      }
+    } finally {
+      setCredLoading(false);
+    }
+  };
+
+  const handleCopyCredentials = async () => {
+    if (!credData) return;
+    const text = `Name: ${credData.full_name}\nUsername: ${credData.username}\nTemporary PIN/Password: ${credData.temp_pin}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCredCopied(true);
+    } catch {
+      setCredCopied(false);
+    }
+  };
+
   const totalPages = Math.max(1, Math.ceil(total / limit));
 
   if (selectedId !== null) {
@@ -612,16 +662,40 @@ export const DriversView: React.FC<DriversViewProps> = ({
             <span>Back to Drivers</span>
           </button>
 
-          {canManage && detailDriver && (
-            <button
-              type="button"
-              onClick={() => void openEditModal(detailDriver)}
-              className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
-            >
-              <Edit3 className="h-4 w-4" aria-hidden="true" />
-              <span>Edit Driver</span>
-            </button>
-          )}
+          <div className="flex flex-wrap items-center gap-2.5">
+            {isAdmin && detailDriver && detailDriver.id > 0 && !detailDriver.linked_user_id && onCreateDriverLogin && (
+              <button
+                type="button"
+                onClick={() =>
+                  onCreateDriverLogin({ id: detailDriver.id, full_name: detailDriver.full_name })
+                }
+                className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
+              >
+                <UserPlus className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+                <span>Create Login Credential</span>
+              </button>
+            )}
+            {isAdmin && detailDriver && detailDriver.id > 0 && detailDriver.has_pending_temp_credentials && (
+              <button
+                type="button"
+                onClick={() => void openCredentialsModal(detailDriver)}
+                className="inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50 px-4 text-sm font-semibold text-cyan-900 hover:bg-cyan-100"
+              >
+                <KeyRound className="h-4 w-4 text-cyan-700" aria-hidden="true" />
+                <span>Login Credentials</span>
+              </button>
+            )}
+            {canManage && detailDriver && (
+              <button
+                type="button"
+                onClick={() => void openEditModal(detailDriver)}
+                className="cyan-glow-btn inline-flex min-h-[44px] items-center gap-2 rounded-xl px-4 text-sm font-semibold"
+              >
+                <Edit3 className="h-4 w-4" aria-hidden="true" />
+                <span>Edit Driver</span>
+              </button>
+            )}
+          </div>
         </div>
 
         {usingCache && (
@@ -1044,15 +1118,28 @@ export const DriversView: React.FC<DriversViewProps> = ({
                         className={`${d.id > 0 ? 'cursor-pointer hover:bg-cyan-50/45' : ''} transition-colors`}
                       >
                         <td className="py-3.5 px-4">
-                          <div className="font-semibold text-blue-950">
-                            {d.full_name}
+                          <div className="flex flex-wrap items-center gap-2 font-semibold text-blue-950">
+                            <span>{d.full_name}</span>
                             {!d.active && (
-                              <span className="ml-2 text-xs font-normal text-red-700">(Disabled)</span>
+                              <span className="text-xs font-normal text-red-700">(Disabled)</span>
                             )}
                             {d.id < 0 && (
-                              <span className="ml-2 text-xs font-medium text-amber-700">
+                              <span className="text-xs font-medium text-amber-700">
                                 (Queued Offline)
                               </span>
+                            )}
+                            {isAdmin && d.id > 0 && d.has_pending_temp_credentials && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  void openCredentialsModal(d);
+                                }}
+                                className="inline-flex items-center gap-1 rounded-md border border-cyan-300 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-800 underline underline-offset-2 hover:bg-cyan-100"
+                              >
+                                <KeyRound className="h-3 w-3" aria-hidden="true" />
+                                <span>Login Credentials</span>
+                              </button>
                             )}
                           </div>
                           {canSeeMissingDocWarnings && missingDocs.length > 0 && (
@@ -1094,14 +1181,28 @@ export const DriversView: React.FC<DriversViewProps> = ({
                             onClick={(e) => e.stopPropagation()}
                           >
                             {d.id > 0 && (
-                              <button
-                                type="button"
-                                onClick={() => void openEditModal(d)}
-                                className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
-                              >
-                                <Edit3 className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
-                                <span>Manage</span>
-                              </button>
+                              <div className="inline-flex flex-wrap items-center justify-end gap-2">
+                                {isAdmin && !d.linked_user_id && onCreateDriverLogin && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      onCreateDriverLogin({ id: d.id, full_name: d.full_name })
+                                    }
+                                    className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-3 text-xs font-semibold text-blue-950 whitespace-nowrap"
+                                  >
+                                    <UserPlus className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                                    <span>Create Login Credential</span>
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => void openEditModal(d)}
+                                  className="cyan-glow-outline inline-flex min-h-[40px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
+                                >
+                                  <Edit3 className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
+                                  <span>Manage</span>
+                                </button>
+                              </div>
                             )}
                           </td>
                         )}
@@ -1125,15 +1226,28 @@ export const DriversView: React.FC<DriversViewProps> = ({
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div>
-                        <div className="text-base font-bold text-blue-950">
-                          {d.full_name}
+                        <div className="flex flex-wrap items-center gap-2 text-base font-bold text-blue-950">
+                          <span>{d.full_name}</span>
                           {!d.active && (
-                            <span className="ml-2 text-xs font-medium text-red-700">Disabled</span>
+                            <span className="text-xs font-medium text-red-700">Disabled</span>
                           )}
                           {d.id < 0 && (
-                            <span className="ml-2 text-xs font-medium text-amber-700">
+                            <span className="text-xs font-medium text-amber-700">
                               Queued Offline
                             </span>
+                          )}
+                          {isAdmin && d.id > 0 && d.has_pending_temp_credentials && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                void openCredentialsModal(d);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-md border border-cyan-300 bg-cyan-50 px-2 py-0.5 text-xs font-semibold text-cyan-800 underline underline-offset-2"
+                            >
+                              <KeyRound className="h-3 w-3" aria-hidden="true" />
+                              <span>Login Credentials</span>
+                            </button>
                           )}
                         </div>
                         <div className="text-xs font-mono text-slate-500">
@@ -1158,24 +1272,39 @@ export const DriversView: React.FC<DriversViewProps> = ({
                       </div>
                     )}
 
-                    <div className="flex items-center justify-between pt-1">
+                    <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
                       <LicenceExpiryIndicator
                         status={d.licence_status}
                         expiry={d.licence_expiry}
                         days={d.days_to_expiry}
                       />
-                      {canManage && d.id > 0 && (
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            void openEditModal(d);
-                          }}
-                          className="cyan-glow-outline min-h-[44px] rounded-lg border border-blue-200 bg-white px-3.5 text-sm font-semibold text-blue-900"
-                        >
-                          Manage
-                        </button>
-                      )}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {isAdmin && d.id > 0 && !d.linked_user_id && onCreateDriverLogin && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onCreateDriverLogin({ id: d.id, full_name: d.full_name });
+                            }}
+                            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-3 text-xs font-semibold text-blue-950"
+                          >
+                            <UserPlus className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                            <span>Create Login Credential</span>
+                          </button>
+                        )}
+                        {canManage && d.id > 0 && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              void openEditModal(d);
+                            }}
+                            className="cyan-glow-outline min-h-[44px] rounded-lg border border-blue-200 bg-white px-3.5 text-sm font-semibold text-blue-900"
+                          >
+                            Manage
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -1473,6 +1602,79 @@ export const DriversView: React.FC<DriversViewProps> = ({
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+      {/* Temporary Driver Login Credentials Modal (Admin only, simple text format) */}
+      {credModalDriver && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4">
+          <div className="w-full max-w-md rounded-2xl border border-blue-200 bg-white p-6 shadow-xl space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-2">
+                <KeyRound className="h-5 w-5 text-cyan-600" aria-hidden="true" />
+                <h2 className="font-display text-lg font-bold text-blue-950">
+                  Driver Login Credentials
+                </h2>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCredModalDriver(null)}
+                aria-label="Close"
+                className="cyan-glow-outline flex min-h-[44px] min-w-[44px] items-center justify-center rounded-lg border border-transparent text-slate-500"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            {credLoading ? (
+              <div className="py-4 text-sm text-slate-600">Loading temporary login details...</div>
+            ) : credError ? (
+              <div
+                role="alert"
+                className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"
+              >
+                {credError}
+              </div>
+            ) : credData ? (
+              <div className="space-y-4">
+                <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4 font-mono text-sm text-blue-950 space-y-2 select-all">
+                  <div>
+                    <span className="text-slate-500 font-sans text-xs uppercase block">Driver Name</span>
+                    <span className="font-semibold">{credData.full_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-sans text-xs uppercase block">Username</span>
+                    <span className="font-semibold">{credData.username}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 font-sans text-xs uppercase block">Temporary PIN / Password</span>
+                    <span className="font-bold text-cyan-800">{credData.temp_pin}</span>
+                  </div>
+                </div>
+
+                <p className="text-xs text-slate-600">
+                  Hand these details to the driver so they can sign in. As soon as the driver signs in and changes their temporary PIN/password, this temporary link disappears automatically and nobody else can view their personal credential.
+                </p>
+
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyCredentials()}
+                    className="cyan-glow-btn flex-1 min-h-[44px] inline-flex items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold"
+                  >
+                    <Copy className="h-4 w-4" aria-hidden="true" />
+                    <span>{credCopied ? 'Copied!' : 'Copy Text'}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCredModalDriver(null)}
+                    className="cyan-glow-outline min-h-[44px] rounded-xl border border-blue-200 bg-white px-4 text-sm font-medium text-blue-900"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       )}

@@ -10,7 +10,8 @@ import {
   type UserPublic,
 } from '../shared/types';
 import { recordAudit, verifyAuditChain } from './audit';
-import { hashPin, signSession, verifyPin, verifySession } from './crypto';
+import { encryptTempSecret, hashPin, signSession, verifyPin, verifySession } from './crypto';
+import { registerChecklistRoutes } from './checklists';
 import { registerDashboardRoutes } from './dashboard';
 import { registerDirectoryRoutes } from './directories';
 import {
@@ -113,6 +114,7 @@ function mapUserRow(row: Record<string, unknown>): UserPublic {
     role: row.role as Role,
     active: Number(row.active) === 1,
     must_change_pin: Number(row.must_change_pin) === 1,
+    driver_id: row.driver_id !== null && row.driver_id !== undefined ? Number(row.driver_id) : null,
     created_at: String(row.created_at),
   };
 }
@@ -212,7 +214,7 @@ export function createApp() {
       return c.json({ error: 'Your session has expired. Please sign in again.' }, 401);
     }
     const row = await c.env.DB.prepare(
-      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
     )
       .bind(payload.uid)
       .first<Record<string, unknown>>();
@@ -625,7 +627,9 @@ export function createApp() {
     }
 
     const nextHash = await hashPin(newPin);
-    await c.env.DB.prepare('UPDATE users SET pin_hash = ?, must_change_pin = 0 WHERE id = ?')
+    await c.env.DB.prepare(
+      'UPDATE users SET pin_hash = ?, must_change_pin = 0, temp_pin_enc = NULL WHERE id = ?'
+    )
       .bind(nextHash, user.id)
       .run();
 
@@ -636,13 +640,13 @@ export function createApp() {
       action: 'AUTH_CHANGE_PIN',
       entity: 'users',
       entityId: user.id,
-      newValue: { must_change_pin: false },
+      newValue: { must_change_pin: false, temp_pin_cleared: true },
       ip: getClientIp(c),
       userAgent: getUserAgent(c),
     });
 
     const updatedRow = await c.env.DB.prepare(
-      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
     )
       .bind(user.id)
       .first<Record<string, unknown>>();
@@ -751,7 +755,7 @@ export function createApp() {
       .first<{ total: number }>();
 
     const { results } = await c.env.DB.prepare(
-      `SELECT id, username, full_name, role, active, must_change_pin, created_at
+      `SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at
        FROM users ${whereSql}
        ORDER BY active DESC, full_name ASC
        LIMIT ? OFFSET ?`
@@ -769,7 +773,7 @@ export function createApp() {
 
   app.post('/users', requireAuth, requirePinChanged(), requireRole(['ADMIN']), async (c) => {
     const actor = c.get('user')!;
-    let body: { username?: string; full_name?: string; role?: Role; pin?: string };
+    let body: { username?: string; full_name?: string; role?: Role; pin?: string; driver_id?: number | null };
     try {
       body = await c.req.json();
     } catch {
@@ -780,6 +784,10 @@ export function createApp() {
     const fullName = (body.full_name || '').trim();
     const role = body.role;
     const pin = String(body.pin || '').trim();
+    const driverId =
+      body.driver_id !== undefined && body.driver_id !== null && Number(body.driver_id) > 0
+        ? Number(body.driver_id)
+        : null;
 
     if (!username || !/^[a-z0-9._-]{3,32}$/.test(username)) {
       return c.json(
@@ -800,6 +808,18 @@ export function createApp() {
       return c.json({ error: 'Set an initial PIN or password of at least 4 characters.' }, 400);
     }
 
+    if (driverId !== null) {
+      const driverRow = await c.env.DB.prepare('SELECT id, user_id, full_name FROM drivers WHERE id = ?')
+        .bind(driverId)
+        .first<{ id: number; user_id: number | null; full_name: string }>();
+      if (!driverRow) {
+        return c.json({ error: 'Linked driver record not found in directory.' }, 404);
+      }
+      if (driverRow.user_id) {
+        return c.json({ error: `Driver "${driverRow.full_name}" already has a login account.` }, 409);
+      }
+    }
+
     const existing = await c.env.DB.prepare('SELECT id FROM users WHERE username = ?')
       .bind(username)
       .first<{ id: number }>();
@@ -808,12 +828,13 @@ export function createApp() {
     }
 
     const pinHash = await hashPin(pin);
+    const tempPinEnc = await encryptTempSecret(pin, getSessionSecret(c.env));
     const insertUser = async () =>
       c.env.DB.prepare(
-        `INSERT INTO users (username, full_name, role, pin_hash, active, must_change_pin)
-         VALUES (?, ?, ?, ?, 1, 1)`
+        `INSERT INTO users (username, full_name, role, pin_hash, active, must_change_pin, driver_id, temp_pin_enc)
+         VALUES (?, ?, ?, ?, 1, 1, ?, ?)`
       )
-        .bind(username, fullName, role, pinHash)
+        .bind(username, fullName, role, pinHash, driverId, tempPinEnc)
         .run();
 
     let res;
@@ -834,6 +855,12 @@ export function createApp() {
     }
 
     const newId = res.meta.last_row_id;
+
+    if (driverId !== null) {
+      await c.env.DB.prepare('UPDATE drivers SET user_id = ? WHERE id = ?')
+        .bind(newId, driverId)
+        .run();
+    }
 
     // Auto-create default IN_APP notification recipient for Supervisors, Fleet Managers, and Admins
     if (role === 'SUPERVISOR' || role === 'FLEET_MANAGER' || role === 'ADMIN') {
@@ -857,7 +884,7 @@ export function createApp() {
     }
 
     const createdRow = await c.env.DB.prepare(
-      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
     )
       .bind(newId)
       .first<Record<string, unknown>>();
@@ -871,7 +898,12 @@ export function createApp() {
       action: 'USER_CREATED',
       entity: 'users',
       entityId: newId,
-      newValue: { username: created.username, full_name: created.full_name, role: created.role },
+      newValue: {
+        username: created.username,
+        full_name: created.full_name,
+        role: created.role,
+        driver_id: driverId,
+      },
       ip: getClientIp(c),
       userAgent: getUserAgent(c),
     });
@@ -887,7 +919,7 @@ export function createApp() {
     }
 
     const existingRow = await c.env.DB.prepare(
-      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
     )
       .bind(targetId)
       .first<Record<string, unknown>>();
@@ -939,10 +971,11 @@ export function createApp() {
           return { invalidPin: true as const };
         }
         const newHash = await hashPin(resetPin);
+        const tempPinEnc = await encryptTempSecret(resetPin, getSessionSecret(c.env));
         await c.env.DB.prepare(
-          `UPDATE users SET full_name = ?, role = ?, active = ?, pin_hash = ?, must_change_pin = 1 WHERE id = ?`
+          `UPDATE users SET full_name = ?, role = ?, active = ?, pin_hash = ?, must_change_pin = 1, temp_pin_enc = ? WHERE id = ?`
         )
-          .bind(nextFullName, nextRole, nextActive ? 1 : 0, newHash, targetId)
+          .bind(nextFullName, nextRole, nextActive ? 1 : 0, newHash, tempPinEnc, targetId)
           .run();
       } else {
         await c.env.DB.prepare(`UPDATE users SET full_name = ?, role = ?, active = ? WHERE id = ?`)
@@ -998,7 +1031,7 @@ export function createApp() {
     }
 
     const updatedRow = await c.env.DB.prepare(
-      'SELECT id, username, full_name, role, active, must_change_pin, created_at FROM users WHERE id = ?'
+      'SELECT id, username, full_name, role, active, must_change_pin, driver_id, created_at FROM users WHERE id = ?'
     )
       .bind(targetId)
       .first<Record<string, unknown>>();
@@ -1113,6 +1146,7 @@ export function createApp() {
     requireRole,
     getClientIp,
     getUserAgent,
+    getSessionSecret,
   });
 
   registerTripRoutes(app, {
@@ -1148,6 +1182,14 @@ export function createApp() {
   });
 
   registerMaintenanceRoutes(app, {
+    requireAuth,
+    requirePinChanged,
+    requireRole,
+    getClientIp,
+    getUserAgent,
+  });
+
+  registerChecklistRoutes(app, {
     requireAuth,
     requirePinChanged,
     requireRole,

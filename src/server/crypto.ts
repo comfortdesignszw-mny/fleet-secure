@@ -172,3 +172,48 @@ export async function verifySession(
     return null;
   }
 }
+
+async function importTempPinAesKey(secret: string): Promise<CryptoKey> {
+  const digest = await crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(`fleet-secure-temp-pin:${secret}`)
+  );
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ]);
+}
+
+export async function encryptTempSecret(plaintext: string, secret: string): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await importTempPinAesKey(secret);
+  const cipherBuffer = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(plaintext)
+  );
+  return `${toHex(iv)}:${toHex(new Uint8Array(cipherBuffer))}`;
+}
+
+export async function decryptTempSecret(
+  encoded: string | null | undefined,
+  secret: string
+): Promise<string | null> {
+  if (!encoded || !encoded.includes(':')) return null;
+  const [ivHex, cipherHex] = encoded.split(':');
+  if (!ivHex || !cipherHex) return null;
+  try {
+    const iv = fromHex(ivHex);
+    const cipherBytes = fromHex(cipherHex);
+    const key = await importTempPinAesKey(secret);
+    const plainBuffer = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv as Uint8Array<ArrayBuffer> },
+      key,
+      cipherBytes as Uint8Array<ArrayBuffer>
+    );
+    return new TextDecoder().decode(plainBuffer);
+  } catch {
+    return null;
+  }
+}
+

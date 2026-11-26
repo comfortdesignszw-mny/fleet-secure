@@ -12,6 +12,8 @@ const SCHEMA_STATEMENTS = [
     pin_hash TEXT NOT NULL,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     must_change_pin INTEGER NOT NULL DEFAULT 1 CHECK (must_change_pin IN (0, 1)),
+    driver_id INTEGER,
+    temp_pin_enc TEXT,
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
@@ -32,6 +34,7 @@ const SCHEMA_STATEMENTS = [
     medical_cert_number TEXT,
     medical_document TEXT,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    user_id INTEGER REFERENCES users(id),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     created_by INTEGER REFERENCES users(id)
   )`,
@@ -43,11 +46,16 @@ const SCHEMA_STATEMENTS = [
     vehicle_type TEXT NOT NULL,
     vehicle_class TEXT NOT NULL CHECK (vehicle_class IN ('ECONOMY', 'HEAVY')),
     make_model TEXT NOT NULL,
+    colour TEXT,
+    fuel_type TEXT NOT NULL DEFAULT 'petrol' CHECK (fuel_type IN ('diesel', 'petrol', 'ev')),
     condition TEXT NOT NULL DEFAULT 'Good' CHECK (
       condition IN ('Very Good', 'Good', 'Needs Little Attention', 'Bad Condition', 'Accident', 'Grounded')
     ),
     last_known_mileage INTEGER NOT NULL DEFAULT 0 CHECK (last_known_mileage >= 0),
+    last_closing_mileage INTEGER,
+    last_fuel_level TEXT,
     next_service_due_km INTEGER,
+    next_service_mileage INTEGER,
     active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`,
@@ -218,6 +226,99 @@ const SCHEMA_STATEMENTS = [
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_parts_vehicle_status ON parts_purchase_requests(vehicle_id, status)`,
+  `CREATE TABLE IF NOT EXISTS checklist_item_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL,
+    category TEXT NOT NULL DEFAULT 'Inspection',
+    input_type TEXT NOT NULL CHECK (
+      input_type IN (
+        'tick_cross',
+        'status_pair',
+        'yes_no',
+        'text',
+        'text_checkbox',
+        'multi_check',
+        'expiry_checks',
+        'numbers',
+        'available_na'
+      )
+    ),
+    options_json TEXT NOT NULL DEFAULT '[]',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    is_default INTEGER NOT NULL DEFAULT 1 CHECK (is_default IN (0, 1)),
+    active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_chk_tpl_active_order ON checklist_item_templates(active, sort_order)`,
+  `CREATE TABLE IF NOT EXISTS checklists (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    trip_id INTEGER REFERENCES trips(id),
+    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+    status TEXT NOT NULL DEFAULT 'out' CHECK (status IN ('out', 'completed')),
+    hirer_type TEXT NOT NULL CHECK (hirer_type IN ('renter', 'owner')),
+    hirer_name TEXT NOT NULL,
+    representative TEXT NOT NULL DEFAULT '',
+    cell TEXT NOT NULL DEFAULT '',
+    car_model TEXT NOT NULL,
+    vehicle_type TEXT NOT NULL,
+    colour TEXT,
+    reg_number TEXT NOT NULL,
+    hire_date TEXT NOT NULL,
+    days INTEGER NOT NULL CHECK (days >= 1),
+    return_date TEXT NOT NULL,
+    mileage_out INTEGER NOT NULL CHECK (mileage_out >= 0),
+    mileage_out_diff_warning INTEGER NOT NULL DEFAULT 0 CHECK (mileage_out_diff_warning IN (0, 1)),
+    previous_closing_mileage INTEGER,
+    mileage_in INTEGER CHECK (mileage_in IS NULL OR mileage_in >= 0),
+    next_service_mileage INTEGER,
+    datetime_in TEXT,
+    fuel_type TEXT NOT NULL DEFAULT 'petrol' CHECK (fuel_type IN ('diesel', 'petrol', 'ev')),
+    fuel_out TEXT,
+    fuel_in TEXT,
+    sketch_json TEXT NOT NULL DEFAULT '{}',
+    sketch_png_data_url TEXT,
+    signatures_json TEXT NOT NULL DEFAULT '{}',
+    declaration_text TEXT NOT NULL DEFAULT '',
+    differences_json TEXT NOT NULL DEFAULT '[]',
+    notes TEXT NOT NULL DEFAULT '',
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    returned_by INTEGER REFERENCES users(id),
+    deleted_at TEXT,
+    deleted_by INTEGER REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_checklists_status ON checklists(status, deleted_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_checklists_reg ON checklists(reg_number, hire_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_checklists_vehicle ON checklists(vehicle_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_checklists_trip ON checklists(trip_id)`,
+  `CREATE TABLE IF NOT EXISTS checklist_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+    template_id INTEGER REFERENCES checklist_item_templates(id),
+    custom_label TEXT NOT NULL,
+    input_type TEXT NOT NULL CHECK (
+      input_type IN (
+        'tick_cross',
+        'status_pair',
+        'yes_no',
+        'text',
+        'text_checkbox',
+        'multi_check',
+        'expiry_checks',
+        'numbers',
+        'available_na'
+      )
+    ),
+    options_json TEXT NOT NULL DEFAULT '[]',
+    sort_order INTEGER NOT NULL DEFAULT 0,
+    value_out_json TEXT NOT NULL DEFAULT '{}',
+    value_in_json TEXT,
+    note TEXT NOT NULL DEFAULT '',
+    photo_data_url TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_checklist_items_parent ON checklist_items(checklist_id, sort_order)`,
 ];
 
 async function ensureSchemaTables(db: D1DatabaseLike): Promise<void> {
@@ -353,12 +454,42 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     if (!vColNames.has('next_service_due_km')) {
       await db.exec('ALTER TABLE vehicles ADD COLUMN next_service_due_km INTEGER');
     }
+    if (!vColNames.has('colour')) {
+      await db.exec('ALTER TABLE vehicles ADD COLUMN colour TEXT');
+    }
+    if (!vColNames.has('fuel_type')) {
+      await db.exec("ALTER TABLE vehicles ADD COLUMN fuel_type TEXT NOT NULL DEFAULT 'petrol'");
+    }
+    if (!vColNames.has('next_service_mileage')) {
+      await db.exec('ALTER TABLE vehicles ADD COLUMN next_service_mileage INTEGER');
+    }
+    if (!vColNames.has('last_closing_mileage')) {
+      await db.exec('ALTER TABLE vehicles ADD COLUMN last_closing_mileage INTEGER');
+    }
+    if (!vColNames.has('last_fuel_level')) {
+      await db.exec('ALTER TABLE vehicles ADD COLUMN last_fuel_level TEXT');
+    }
   } catch {
     // Ignore if already exists
   }
 
   // Ensure users table CHECK constraint allows FLEET_MANAGER on pre-existing databases
   const usersRoleMigrated = await ensureUsersRoleConstraintAllowsFleetManager(db);
+
+  // Ensure additive credential-handoff columns exist on users
+  try {
+    const userCols = await db.prepare('PRAGMA table_info(users)').all<{ name: string }>();
+    const uColNames = new Set(userCols.results.map((c) => c.name));
+    if (!uColNames.has('driver_id')) {
+      await db.prepare('ALTER TABLE users ADD COLUMN driver_id INTEGER').run();
+    }
+    if (!uColNames.has('temp_pin_enc')) {
+      await db.prepare('ALTER TABLE users ADD COLUMN temp_pin_enc TEXT').run();
+    }
+    await db.prepare('CREATE INDEX IF NOT EXISTS idx_users_driver_id ON users(driver_id)').run();
+  } catch {
+    // Ignore if already exists
+  }
 
   // Ensure drivers table has all certificate/document columns and supports optional licence_number
   try {
@@ -379,6 +510,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
       ['retest_document', 'TEXT'],
       ['medical_cert_number', 'TEXT'],
       ['medical_document', 'TEXT'],
+      ['user_id', 'INTEGER REFERENCES users(id)'],
     ];
     for (const [col, colType] of extraCols) {
       if (!driverColNames.has(col)) {
@@ -414,6 +546,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
             medical_cert_number TEXT,
             medical_document TEXT,
             active INTEGER NOT NULL DEFAULT 1 CHECK (active IN (0, 1)),
+            user_id INTEGER REFERENCES users(id),
             created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
             created_by INTEGER REFERENCES users(id)
           );
@@ -422,14 +555,14 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
             licence_document, ddc_number, ddc_document,
             retest_cert_number, retest_document,
             medical_cert_number, medical_document,
-            active, created_at, created_by
+            active, user_id, created_at, created_by
           )
           SELECT
             id, full_name, NULLIF(TRIM(licence_number), ''), licence_code, phone, address, licence_expiry,
             licence_document, ddc_number, ddc_document,
             retest_cert_number, retest_document,
             medical_cert_number, medical_document,
-            active, created_at, created_by
+            active, user_id, created_at, created_by
           FROM drivers;
           DROP TABLE drivers;
           ALTER TABLE drivers_migrated RENAME TO drivers;
@@ -454,6 +587,7 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     const driverIndexes = [
       'CREATE INDEX IF NOT EXISTS idx_drivers_active ON drivers(active)',
       'CREATE INDEX IF NOT EXISTS idx_drivers_licence_expiry ON drivers(licence_expiry)',
+      'CREATE INDEX IF NOT EXISTS idx_drivers_user_id ON drivers(user_id)',
       "CREATE UNIQUE INDEX IF NOT EXISTS idx_drivers_licence_unique ON drivers(UPPER(licence_number)) WHERE licence_number IS NOT NULL AND licence_number != ''",
     ];
     for (const idxSql of driverIndexes) {
@@ -474,6 +608,9 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
       .bind(key, value)
       .run();
   }
+
+  // Seed default 25 paper slip checklist item templates
+  await seedDefaultChecklistTemplates(db);
 
   // Ensure at least one user exists; seed initial Admin from env
   const countRow = await db.prepare('SELECT COUNT(*) as cnt FROM users').first<{ cnt: number }>();
@@ -661,6 +798,54 @@ export async function seedPreviewDemoData(
   return { vehiclesAdded, driversAdded, tripsAdded };
 }
 
+const DEFAULT_CHECKLIST_TEMPLATES: ReadonlyArray<{
+  code: string;
+  label: string;
+  category: string;
+  input_type: string;
+  options: string[];
+  sort_order: number;
+}> = [
+  { code: 'spare_wheel', label: 'Spare Wheel', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 1 },
+  { code: 'jack', label: 'Jack', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 2 },
+  { code: 'wheel_spanner', label: 'Wheel Spanner', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 3 },
+  { code: 'lock_nut', label: 'Lock Nut / Wheel Key', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 4 },
+  { code: 'emergency_triangle', label: 'Emergency Triangle', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 5 },
+  { code: 'fire_extinguisher', label: 'Fire Extinguisher', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 6 },
+  { code: 'reflector_vest', label: 'Reflector Vest', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 7 },
+  { code: 'first_aid_kit', label: 'First Aid Kit', category: 'Tools & Safety', input_type: 'tick_cross', options: [], sort_order: 8 },
+  { code: 'headlights', label: 'Headlights', category: 'Lights & Electrical', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 9 },
+  { code: 'indicators_hazards', label: 'Indicators & Hazard Lights', category: 'Lights & Electrical', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 10 },
+  { code: 'brake_reverse_lights', label: 'Brake & Reverse Lights', category: 'Lights & Electrical', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 11 },
+  { code: 'air_conditioning', label: 'Air Conditioning', category: 'Cabin & Controls', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 12 },
+  { code: 'radio_bluetooth', label: 'Radio / Bluetooth', category: 'Cabin & Controls', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 13 },
+  { code: 'wipers_washer', label: 'Wipers & Washer', category: 'Cabin & Controls', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 14 },
+  { code: 'horn', label: 'Horn', category: 'Cabin & Controls', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 15 },
+  { code: 'seatbelts', label: 'Seatbelts', category: 'Cabin & Controls', input_type: 'status_pair', options: ['Working', 'Faulty'], sort_order: 16 },
+  { code: 'spare_key', label: 'Spare Key Provided', category: 'Keys & Docs', input_type: 'yes_no', options: ['Yes', 'No'], sort_order: 17 },
+  { code: 'body_interior_condition', label: 'Vehicle Condition Inside & Outside', category: 'General Condition', input_type: 'text', options: [], sort_order: 18 },
+  { code: 'fuel_tank_cap', label: 'Fuel Tank Cap', category: 'Exterior', input_type: 'available_na', options: ['Available', 'N/A'], sort_order: 19 },
+  { code: 'floor_mats', label: 'Floor Mats', category: 'Interior', input_type: 'numbers', options: ['Rubber Mats', 'Carpet Mats'], sort_order: 20 },
+  { code: 'wheel_caps_rims', label: 'Wheel Caps / Alloy Rims', category: 'Wheels & Tyres', input_type: 'text_checkbox', options: ['All 4 Intact', 'Scuffed', 'Missing Cap'], sort_order: 21 },
+  { code: 'tyres_condition', label: 'Tyres Condition', category: 'Wheels & Tyres', input_type: 'multi_check', options: ['Good Tread', 'Worn', 'Spare Good', 'Pressure OK'], sort_order: 22 },
+  { code: 'windscreen_mirrors', label: 'Windscreen & Mirrors', category: 'Exterior', input_type: 'multi_check', options: ['Clean / No Cracks', 'Chipped', 'Cracked', 'Mirrors OK'], sort_order: 23 },
+  { code: 'licences_discs', label: 'Vehicle Licences & Discs', category: 'Keys & Docs', input_type: 'expiry_checks', options: ['ZINARA Disc', 'ZBC Radio Licence', 'Insurance Disc'], sort_order: 24 },
+  { code: 'service_book_manual', label: 'Service Book & Owner Manual', category: 'Keys & Docs', input_type: 'available_na', options: ['Available', 'N/A'], sort_order: 25 },
+];
+
+export async function seedDefaultChecklistTemplates(db: D1DatabaseLike): Promise<void> {
+  for (const tpl of DEFAULT_CHECKLIST_TEMPLATES) {
+    await db
+      .prepare(
+        `INSERT OR IGNORE INTO checklist_item_templates (code, label, category, input_type, options_json, sort_order, is_default, active)
+         VALUES (?, ?, ?, ?, ?, ?, 1, 1)`
+      )
+      .bind(tpl.code, tpl.label, tpl.category, tpl.input_type, JSON.stringify(tpl.options), tpl.sort_order)
+      .run();
+  }
+}
+
 export function resetSeedCacheForTests(): void {
   seedChecked = false;
 }
+

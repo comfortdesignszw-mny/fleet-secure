@@ -52,6 +52,7 @@ import { TripOutForm } from './TripOutForm';
 export type NavSection =
   | 'home'
   | 'trips'
+  | 'checklists'
   | 'vehicles'
   | 'maintenance'
   | 'drivers'
@@ -70,6 +71,7 @@ interface HomeViewProps {
   onNavigate: (section: NavSection, tripId?: number) => void;
   onOpenVehicle: (vehicleId: number) => void;
   onOpenPinSettings: () => void;
+  onCreateChecklistForTrip?: (trip: TripSummary) => void;
 }
 
 type ActiveYardMode =
@@ -105,6 +107,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onNavigate,
   onOpenVehicle,
   onOpenPinSettings,
+  onCreateChecklistForTrip,
 }) => {
   const [mode, setMode] = useState<ActiveYardMode>(null);
   const [ongoing, setOngoing] = useState<TripSummary[]>([]);
@@ -704,11 +707,120 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </section>
       )}
 
-      {/* Embedded Fleet Dashboard on Top (right after Welcome & alerts) */}
+      {/* Embedded Fleet Dashboard on Top (Stats Cards -> Ongoing Trips -> Daily Trips Bar Graphs) */}
       <DashboardView
         embedded
         onOpenVehicle={onOpenVehicle}
         onOpenTrip={(tid) => onNavigate('trips', tid)}
+        afterStatsSlot={
+          <section
+            aria-labelledby="ongoing-heading"
+            className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden shadow-sm shadow-blue-900/5"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-blue-100 bg-gradient-to-r from-white to-blue-50/60 px-5 py-4">
+              <div>
+                <h2 id="ongoing-heading" className="text-base font-semibold text-blue-950">
+                  Ongoing Trips ({ongoing.length})
+                </h2>
+                {usingOngoingCache && (
+                  <p className="text-xs font-medium text-amber-800 mt-0.5">
+                    Offline cached snapshot
+                    {ongoingCacheUpdatedAt ? ` · updated ${formatHarareTime(ongoingCacheUpdatedAt)} CAT` : ''}
+                  </p>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => onNavigate('trips')}
+                className="text-sm font-semibold text-blue-700 hover:text-cyan-600 underline underline-offset-2"
+              >
+                All Trips
+              </button>
+            </div>
+
+            {loadingOngoing ? (
+              <div className="p-6 text-base text-slate-500">Checking vehicles out...</div>
+            ) : ongoing.length === 0 ? (
+              <div className="p-6 text-base text-slate-600">
+                All vehicles are currently parked in the yard.
+              </div>
+            ) : (
+              <div className="divide-y divide-blue-100">
+                {ongoing.map((t) => (
+                  <div
+                    key={t.id}
+                    className="p-4 sm:px-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between transition-colors hover:bg-cyan-50/40"
+                  >
+                    <div
+                      onClick={() => onNavigate('trips', t.id)}
+                      className="space-y-1 cursor-pointer min-w-0"
+                    >
+                      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="font-mono text-base font-bold text-blue-950">
+                          {t.reg_number}
+                        </span>
+                        <span aria-hidden="true" className="text-cyan-500">·</span>
+                        <span className="text-base font-medium text-slate-800">{t.make_model}</span>
+                        <span aria-hidden="true" className="text-cyan-500">·</span>
+                        <span
+                          className={`inline-flex items-center gap-1 text-sm font-semibold ${
+                            t.is_overdue || t.is_return_due || t.is_return_overdue
+                              ? 'text-red-700'
+                              : 'text-amber-700'
+                          }`}
+                        >
+                          <Clock className="h-4 w-4" aria-hidden="true" />
+                          <span>
+                            {formatElapsed(t.out_at)}
+                            {t.is_return_overdue
+                              ? ' (Return Overdue)'
+                              : t.is_return_due
+                                ? ' (Return Due)'
+                                : t.is_overdue
+                                  ? ' (Overdue)'
+                                  : ''}
+                          </span>
+                        </span>
+                      </div>
+                      <div className="text-sm text-slate-600">
+                        {t.trip_type === 'HIRE' ? `Hire to ${t.client_name}` : `Errand: ${t.destination}`} · Driver: {t.driver_name}
+                      </div>
+                      <div className="text-xs font-mono tabular-nums text-slate-500">
+                        Left {formatHarareTime(t.out_at)} · {t.mileage_out.toLocaleString()} km · Fuel {t.fuel_out}
+                        {t.trip_type === 'HIRE' && t.days_hired !== null ? ` · ${t.days_hired}d hire` : ''}
+                        {t.trip_type === 'HIRE' && t.expected_return_date
+                          ? ` · Due ${t.expected_return_date}`
+                          : ''}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
+                      {t.trip_type === 'HIRE' && onCreateChecklistForTrip && (
+                        <button
+                          type="button"
+                          onClick={() => onCreateChecklistForTrip(t)}
+                          className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 text-xs font-semibold text-blue-900 whitespace-nowrap"
+                        >
+                          <ClipboardCheck className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+                          <span>Checklist</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          openYardAction({ kind: 'IN', tripType: t.trip_type, tripId: t.id })
+                        }
+                        className="cyan-glow-btn min-h-[48px] rounded-xl px-4 text-sm font-semibold whitespace-nowrap"
+                      >
+                        Record Return
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </section>
+        }
       />
 
       {/* Quick Actions (compact bar just below Dashboard, + Record toggles small quick-action buttons) */}
@@ -772,100 +884,6 @@ export const HomeView: React.FC<HomeViewProps> = ({
                 </button>
               );
             })}
-          </div>
-        )}
-      </section>
-
-      {/* Ongoing Trips (Live) */}
-      <section aria-labelledby="ongoing-heading" className="rounded-2xl border border-blue-200/80 bg-white overflow-hidden shadow-sm shadow-blue-900/5">
-        <div className="flex items-center justify-between gap-4 border-b border-blue-100 bg-gradient-to-r from-white to-blue-50/60 px-5 py-4">
-          <div>
-            <h2 id="ongoing-heading" className="text-base font-semibold text-blue-950">
-              Ongoing Trips ({ongoing.length})
-            </h2>
-            {usingOngoingCache && (
-              <p className="text-xs font-medium text-amber-800 mt-0.5">
-                Offline cached snapshot
-                {ongoingCacheUpdatedAt ? ` · updated ${formatHarareTime(ongoingCacheUpdatedAt)} CAT` : ''}
-              </p>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={() => onNavigate('trips')}
-            className="text-sm font-semibold text-blue-700 hover:text-cyan-600 underline underline-offset-2"
-          >
-            All Trips
-          </button>
-        </div>
-
-        {loadingOngoing ? (
-          <div className="p-6 text-base text-slate-500">Checking vehicles out...</div>
-        ) : ongoing.length === 0 ? (
-          <div className="p-6 text-base text-slate-600">
-            All vehicles are currently parked in the yard.
-          </div>
-        ) : (
-          <div className="divide-y divide-blue-100">
-            {ongoing.map((t) => (
-              <div
-                key={t.id}
-                className="p-4 sm:px-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between transition-colors hover:bg-cyan-50/40"
-              >
-                <div
-                  onClick={() => onNavigate('trips', t.id)}
-                  className="space-y-1 cursor-pointer min-w-0"
-                >
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="font-mono text-base font-bold text-blue-950">
-                      {t.reg_number}
-                    </span>
-                    <span aria-hidden="true" className="text-cyan-500">·</span>
-                    <span className="text-base font-medium text-slate-800">{t.make_model}</span>
-                    <span aria-hidden="true" className="text-cyan-500">·</span>
-                    <span
-                      className={`inline-flex items-center gap-1 text-sm font-semibold ${
-                        t.is_overdue || t.is_return_due || t.is_return_overdue
-                          ? 'text-red-700'
-                          : 'text-amber-700'
-                      }`}
-                    >
-                      <Clock className="h-4 w-4" aria-hidden="true" />
-                      <span>
-                        {formatElapsed(t.out_at)}
-                        {t.is_return_overdue
-                          ? ' (Return Overdue)'
-                          : t.is_return_due
-                            ? ' (Return Due)'
-                            : t.is_overdue
-                              ? ' (Overdue)'
-                              : ''}
-                      </span>
-                    </span>
-                  </div>
-                  <div className="text-sm text-slate-600">
-                    {t.trip_type === 'HIRE' ? `Hire to ${t.client_name}` : `Errand: ${t.destination}`} · Driver: {t.driver_name}
-                  </div>
-                  <div className="text-xs font-mono tabular-nums text-slate-500">
-                    Left {formatHarareTime(t.out_at)} · {t.mileage_out.toLocaleString()} km · Fuel {t.fuel_out}
-                    {t.trip_type === 'HIRE' && t.days_hired !== null ? ` · ${t.days_hired}d hire` : ''}
-                    {t.trip_type === 'HIRE' && t.expected_return_date
-                      ? ` · Due ${t.expected_return_date}`
-                      : ''}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() =>
-                    openYardAction({ kind: 'IN', tripType: t.trip_type, tripId: t.id })
-                  }
-                  className="cyan-glow-btn min-h-[48px] self-start sm:self-center rounded-xl px-4 text-sm font-semibold whitespace-nowrap shrink-0"
-                >
-                  Record Return
-                </button>
-              </div>
-            ))}
           </div>
         )}
       </section>

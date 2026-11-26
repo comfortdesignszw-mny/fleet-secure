@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import {
   AlertTriangle,
   Car,
+  ClipboardCheck,
   ClipboardList,
   Download,
   FileCode2,
@@ -84,6 +85,13 @@ const REPORT_OPTIONS: Array<{
     description: 'Drivers list, phone numbers, licence numbers, and expiry warnings.',
     usesDateRange: false,
     icon: Users,
+  },
+  {
+    type: 'checklists',
+    label: 'Vehicle Checklists',
+    description: 'Digital vehicle check-out & check-in slips with mileage, fuel, and differences.',
+    usesDateRange: true,
+    icon: ClipboardCheck,
   },
   {
     type: 'audit_log',

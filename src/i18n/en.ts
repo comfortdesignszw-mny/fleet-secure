@@ -5,6 +5,7 @@ export const en = {
   nav: {
     home: 'Home',
     trips: 'Trips',
+    checklists: 'Checklists',
     vehicles: 'Vehicles',
     maintenance: 'Fleet Maintenance',
     drivers: 'Drivers',
