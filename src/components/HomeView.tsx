@@ -84,6 +84,7 @@ interface HomeViewProps {
   onOpenPinSettings: () => void;
   onCreateChecklistForTrip?: (trip: TripSummary) => void;
   onStartCreateChecklist?: (prefill: ChecklistPrefill) => void;
+  onOpenChecklist?: (checklistId: number) => void;
 }
 
 type ActiveYardMode =
@@ -124,6 +125,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
   onOpenPinSettings,
   onCreateChecklistForTrip,
   onStartCreateChecklist,
+  onOpenChecklist,
 }) => {
   const [mode, setMode] = useState<ActiveYardMode>(null);
   const [restoredChecklist, setRestoredChecklist] = useState<ChecklistSummary | null>(null);
@@ -873,15 +875,30 @@ export const HomeView: React.FC<HomeViewProps> = ({
                     </div>
 
                     <div className="flex flex-wrap items-center gap-2 self-start sm:self-center shrink-0">
-                      {t.trip_type === 'HIRE' && onCreateChecklistForTrip && (
+                      {t.checklist_id && onOpenChecklist ? (
                         <button
                           type="button"
-                          onClick={() => onCreateChecklistForTrip(t)}
-                          className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 text-xs font-semibold text-blue-900 whitespace-nowrap"
+                          onClick={() => onOpenChecklist(t.checklist_id!)}
+                          className={`inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border px-3.5 text-xs font-semibold whitespace-nowrap ${
+                            t.checklist_status === 'completed'
+                              ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                              : 'border-cyan-300 bg-cyan-50 text-blue-950 hover:bg-cyan-100'
+                          }`}
                         >
-                          <ClipboardCheck className="h-4 w-4 text-cyan-600" aria-hidden="true" />
-                          <span>Checklist</span>
+                          <ClipboardCheck className="h-4 w-4 text-cyan-700" aria-hidden="true" />
+                          <span>Checklist #{t.checklist_id}</span>
                         </button>
+                      ) : (
+                        onCreateChecklistForTrip && (
+                          <button
+                            type="button"
+                            onClick={() => onCreateChecklistForTrip(t)}
+                            className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-1.5 rounded-xl border border-blue-200 bg-white px-3.5 text-xs font-semibold text-blue-900 whitespace-nowrap"
+                          >
+                            <ClipboardCheck className="h-4 w-4 text-cyan-600" aria-hidden="true" />
+                            <span>Checklist</span>
+                          </button>
+                        )
                       )}
                       <button
                         type="button"

@@ -10,6 +10,9 @@ import {
   normalizeDriverLicenceNumber,
   toHarareYmd,
   type AppSettings,
+  type ChecklistHirerType,
+  type ChecklistStatus,
+  type ChecklistSummary,
   type FuelLevel,
   type NewDriverInput,
   type NewVehicleInput,
@@ -22,6 +25,7 @@ import {
   type VehicleCondition,
 } from '../shared/types';
 import { recordAudit } from './audit';
+import { CHECKLIST_LIST_SELECT, mapChecklistSummaryRow } from './checklists';
 import {
   computeLicenceExpiryStatus,
   isNotNullLicenceError,
@@ -206,14 +210,35 @@ function mapTripSummaryRow(
     flags: combinedFlags,
     correction_count: Number(row.correction_count ?? 0),
     is_overdue: isOverdue,
-    checklist_id: row.checklist_id !== null && row.checklist_id !== undefined ? Number(row.checklist_id) : null,
+    checklist_id:
+      row.effective_checklist_id !== null && row.effective_checklist_id !== undefined
+        ? Number(row.effective_checklist_id)
+        : row.checklist_id !== null && row.checklist_id !== undefined
+          ? Number(row.checklist_id)
+          : null,
+    checklist_status: row.checklist_status ? (String(row.checklist_status) as ChecklistStatus) : null,
+    checklist_hirer_type: row.checklist_hirer_type
+      ? (String(row.checklist_hirer_type) as ChecklistHirerType)
+      : null,
+    checklist_hirer_name: row.checklist_hirer_name ? String(row.checklist_hirer_name) : null,
   };
 }
+
+const EFFECTIVE_CHECKLIST_EXPR = `COALESCE(t.checklist_id, (
+  SELECT c2.id FROM checklists c2
+  WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+  ORDER BY c2.id DESC
+  LIMIT 1
+))`;
 
 const TRIP_SUMMARY_SELECT = `
   SELECT
     t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason,
     t.days_hired, t.expected_return_date, t.checklist_id, t.created_at,
+    ${EFFECTIVE_CHECKLIST_EXPR} AS effective_checklist_id,
+    chk.status AS checklist_status,
+    chk.hirer_type AS checklist_hirer_type,
+    chk.hirer_name AS checklist_hirer_name,
     v.reg_number, v.make_model, v.vehicle_type, v.vehicle_class,
     d.full_name AS driver_name, d.phone AS driver_phone,
     tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -229,6 +254,7 @@ const TRIP_SUMMARY_SELECT = `
   JOIN drivers d ON d.id = t.driver_id
   JOIN trip_out tout ON tout.trip_id = t.id
   LEFT JOIN trip_in tin ON tin.trip_id = t.id
+  LEFT JOIN checklists chk ON chk.id = ${EFFECTIVE_CHECKLIST_EXPR} AND chk.deleted_at IS NULL
 `;
 
 export function registerTripRoutes(
@@ -375,8 +401,31 @@ export function registerTripRoutes(
       };
     });
 
+    const actor = c.get('user')!;
+    const tripSummary = mapTripSummaryRow(summaryRow, overdueHours, Date.now());
+    const checklistAccessSql =
+      actor.role === 'DRIVER'
+        ? actor.driver_id !== null
+          ? 'AND (c.created_by = ? OR c.trip_id IN (SELECT id FROM trips WHERE driver_id = ?))'
+          : 'AND c.created_by = ?'
+        : '';
+    const checklistAccessArgs: unknown[] =
+      actor.role === 'DRIVER'
+        ? actor.driver_id !== null
+          ? [id, tripSummary.checklist_id ?? -1, actor.id, actor.driver_id]
+          : [id, tripSummary.checklist_id ?? -1, actor.id]
+        : [id, tripSummary.checklist_id ?? -1];
+    const { results: linkedChecklistRows } = await c.env.DB.prepare(
+      `${CHECKLIST_LIST_SELECT}
+       WHERE (c.trip_id = ? OR c.id = ?) AND c.deleted_at IS NULL ${checklistAccessSql}
+       ORDER BY c.id DESC`
+    )
+      .bind(...checklistAccessArgs)
+      .all<Record<string, unknown>>();
+    const linkedChecklists: ChecklistSummary[] = linkedChecklistRows.map(mapChecklistSummaryRow);
+
     return c.json({
-      trip: mapTripSummaryRow(summaryRow, overdueHours, Date.now()),
+      trip: tripSummary,
       out: {
         trip_id: Number(outRow!.trip_id),
         out_at: String(outRow!.out_at),
@@ -409,6 +458,7 @@ export function registerTripRoutes(
           }
         : null,
       corrections,
+      linkedChecklists,
     });
   });
 
@@ -1265,8 +1315,10 @@ export function registerTripRoutes(
       entity: 'trips',
       entityId: tripId,
       newValue: {
+        vehicle_id: existing.vehicle_id,
         vehicle: summary.reg_number,
         driver: summary.driver_name,
+        checklist_id: summary.checklist_id ?? null,
         mileage_in: mileageIn,
         fuel_in: fuelIn,
         total_mileage: calc.total_mileage,

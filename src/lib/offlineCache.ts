@@ -170,10 +170,13 @@ export interface CachedVehicleDetail {
     mileage_out: number | null;
     mileage_in: number | null;
     total_mileage: number | null;
+    checklist_id?: number | null;
+    checklist_status?: 'out' | 'completed' | null;
   }>;
   conditionHistory: AuditLogEntry[];
   checklists?: Array<{
     id: number;
+    trip_id?: number | null;
     status: 'out' | 'completed';
     hirer_type: 'renter' | 'owner';
     hirer_name: string;
@@ -202,6 +205,8 @@ export interface CachedDriverDetail {
     days_hired: number | null;
     expected_return_date: string | null;
     total_mileage: number | null;
+    checklist_id?: number | null;
+    checklist_status?: 'out' | 'completed' | null;
   }>;
 }
 

@@ -110,6 +110,12 @@ async function buildReportDataset(
     let sql = `
       SELECT
         t.id, t.trip_type, t.status, t.client_name, t.destination, t.reason, t.days_hired, t.expected_return_date,
+        COALESCE(t.checklist_id, (
+          SELECT c2.id FROM checklists c2
+          WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+          ORDER BY c2.id DESC LIMIT 1
+        )) AS effective_checklist_id,
+        chk.status AS checklist_status,
         v.reg_number, v.make_model, v.vehicle_class,
         d.full_name AS driver_name,
         tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -120,6 +126,11 @@ async function buildReportDataset(
       JOIN drivers d ON d.id = t.driver_id
       JOIN trip_out tout ON tout.trip_id = t.id
       LEFT JOIN trip_in tin ON tin.trip_id = t.id
+      LEFT JOIN checklists chk ON chk.id = COALESCE(t.checklist_id, (
+        SELECT c2.id FROM checklists c2
+        WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+        ORDER BY c2.id DESC LIMIT 1
+      )) AND chk.deleted_at IS NULL
     `;
     const params: unknown[] = [];
     if (type === 'hires') {
@@ -194,6 +205,10 @@ async function buildReportDataset(
             ? `${r.est_fuel_litres} / ${r.gauge_fuel_litres}`
             : '-',
         flags: combinedFlags.map((f) => f.code).join(', ') || 'None',
+        checklist:
+          r.effective_checklist_id !== null && r.effective_checklist_id !== undefined
+            ? `#${Number(r.effective_checklist_id)} (${r.checklist_status === 'completed' ? 'Completed' : 'Out'})`
+            : '-',
         corrections: Number(r.correction_count ?? 0),
       });
     }
@@ -203,16 +218,17 @@ async function buildReportDataset(
       { key: 'type', label: 'Type', width: 6 },
       { key: 'status', label: 'Status', width: 9 },
       { key: 'reg_number', label: 'Vehicle', width: 9 },
-      { key: 'driver', label: 'Driver', width: 12 },
-      { key: 'purpose', label: 'Client / Destination', width: 14 },
+      { key: 'driver', label: 'Driver', width: 11 },
+      { key: 'purpose', label: 'Client / Destination', width: 13 },
+      { key: 'checklist', label: 'Checklist', width: 11 },
       { key: 'days_hired', label: 'Days', width: 5 },
       { key: 'expected_return', label: 'Exp. Return', width: 10 },
-      { key: 'out_at', label: 'Left (Harare)', width: 13 },
-      { key: 'in_at', label: 'Returned', width: 13 },
+      { key: 'out_at', label: 'Left (Harare)', width: 12 },
+      { key: 'in_at', label: 'Returned', width: 12 },
       { key: 'distance_km', label: 'Km', width: 6 },
       { key: 'fuel_out_in', label: 'Gauge', width: 10 },
       { key: 'est_vs_gauge_l', label: 'Est/Gge L', width: 9 },
-      { key: 'flags', label: 'Flags', width: 12 },
+      { key: 'flags', label: 'Flags', width: 11 },
     ];
 
     summary['Total Trips'] = rows.length;
@@ -379,6 +395,7 @@ async function buildReportDataset(
         status: isCompleted ? 'Completed' : 'Out (Open)',
         reg_number: String(cRow.reg_number),
         vehicle: `${cRow.car_model} (${cRow.vehicle_type})`,
+        linked_trip: cRow.trip_id ? `Trip #${Number(cRow.trip_id)}` : '-',
         hirer: `${cRow.hirer_name} (${cRow.hirer_type === 'owner' ? 'Owner' : 'Renter'})`,
         hire_date: hireDate,
         return_date: cRow.return_date ? String(cRow.return_date) : '-',
@@ -393,8 +410,9 @@ async function buildReportDataset(
       { key: 'checklist_id', label: 'ID', width: 5 },
       { key: 'status', label: 'Status', width: 10 },
       { key: 'reg_number', label: 'Reg No.', width: 10 },
-      { key: 'vehicle', label: 'Vehicle', width: 16 },
-      { key: 'hirer', label: 'Renter / Owner', width: 17 },
+      { key: 'vehicle', label: 'Vehicle', width: 15 },
+      { key: 'linked_trip', label: 'Trip', width: 9 },
+      { key: 'hirer', label: 'Renter / Owner', width: 16 },
       { key: 'hire_date', label: 'Hire Date', width: 10 },
       { key: 'return_date', label: 'Due Return', width: 10 },
       { key: 'km_out_in', label: 'Mileage Out->In', width: 12 },

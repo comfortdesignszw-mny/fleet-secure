@@ -387,6 +387,12 @@ export function registerDirectoryRoutes(
     const { results: trips } = await c.env.DB.prepare(
       `SELECT
          t.id, t.trip_type, t.status, t.client_name, t.destination, t.days_hired, t.expected_return_date,
+         COALESCE(t.checklist_id, (
+           SELECT c2.id FROM checklists c2
+           WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+           ORDER BY c2.id DESC LIMIT 1
+         )) AS checklist_id,
+         chk.status AS checklist_status,
          d.full_name AS driver_name,
          tout.out_at, tout.mileage_out,
          tin.in_at, tin.mileage_in, tin.total_mileage
@@ -394,6 +400,11 @@ export function registerDirectoryRoutes(
        JOIN drivers d ON d.id = t.driver_id
        LEFT JOIN trip_out tout ON tout.trip_id = t.id
        LEFT JOIN trip_in tin ON tin.trip_id = t.id
+       LEFT JOIN checklists chk ON chk.id = COALESCE(t.checklist_id, (
+         SELECT c2.id FROM checklists c2
+         WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+         ORDER BY c2.id DESC LIMIT 1
+       )) AND chk.deleted_at IS NULL
        WHERE t.vehicle_id = ?
        ORDER BY t.id DESC
        LIMIT 30`
@@ -426,7 +437,7 @@ export function registerDirectoryRoutes(
         : [id];
 
     const { results: checklists } = await c.env.DB.prepare(
-      `SELECT id, status, hirer_type, hirer_name, hire_date, return_date, mileage_out, mileage_in, fuel_out, fuel_in, created_at
+      `SELECT id, trip_id, status, hirer_type, hirer_name, hire_date, return_date, mileage_out, mileage_in, fuel_out, fuel_in, created_at
        FROM checklists
        WHERE vehicle_id = ? AND deleted_at IS NULL ${checklistScopeSql}
        ORDER BY id DESC
@@ -947,6 +958,12 @@ export function registerDirectoryRoutes(
     const { results: trips } = await c.env.DB.prepare(
       `SELECT
          t.id, t.trip_type, t.status, t.client_name, t.destination, t.days_hired, t.expected_return_date,
+         COALESCE(t.checklist_id, (
+           SELECT c2.id FROM checklists c2
+           WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+           ORDER BY c2.id DESC LIMIT 1
+         )) AS checklist_id,
+         chk.status AS checklist_status,
          v.reg_number, v.make_model,
          tout.out_at,
          tin.in_at, tin.total_mileage
@@ -954,6 +971,11 @@ export function registerDirectoryRoutes(
        JOIN vehicles v ON v.id = t.vehicle_id
        LEFT JOIN trip_out tout ON tout.trip_id = t.id
        LEFT JOIN trip_in tin ON tin.trip_id = t.id
+       LEFT JOIN checklists chk ON chk.id = COALESCE(t.checklist_id, (
+         SELECT c2.id FROM checklists c2
+         WHERE c2.trip_id = t.id AND c2.deleted_at IS NULL
+         ORDER BY c2.id DESC LIMIT 1
+       )) AND chk.deleted_at IS NULL
        WHERE t.driver_id = ?
        ORDER BY t.id DESC
        LIMIT 30`

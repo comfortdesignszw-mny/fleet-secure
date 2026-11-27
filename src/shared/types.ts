@@ -305,6 +305,9 @@ export interface TripSummary {
   correction_count: number;
   is_overdue: boolean;
   checklist_id?: number | null;
+  checklist_status?: ChecklistStatus | null;
+  checklist_hirer_type?: ChecklistHirerType | null;
+  checklist_hirer_name?: string | null;
 }
 
 export interface NewDriverInput {
@@ -357,6 +360,7 @@ export interface TripDetail {
   out: TripOutRecord;
   inRecord: TripInRecord | null;
   corrections: TripCorrection[];
+  linkedChecklists?: ChecklistSummary[];
 }
 
 export interface DashboardVehicleStat {

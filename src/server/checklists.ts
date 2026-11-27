@@ -262,7 +262,7 @@ function mapTemplateRow(row: Record<string, unknown>): ChecklistItemTemplate {
   };
 }
 
-function mapChecklistSummaryRow(row: Record<string, unknown>): ChecklistSummary {
+export function mapChecklistSummaryRow(row: Record<string, unknown>): ChecklistSummary {
   return {
     id: Number(row.id),
     trip_id: row.trip_id !== null && row.trip_id !== undefined ? Number(row.trip_id) : null,
@@ -330,7 +330,7 @@ async function getSettingsMap(db: D1DatabaseLike): Promise<AppSettings> {
   return merged as unknown as AppSettings;
 }
 
-const CHECKLIST_LIST_SELECT = `
+export const CHECKLIST_LIST_SELECT = `
   SELECT
     c.id, c.trip_id, c.vehicle_id, c.status, c.hirer_type, c.hirer_name, c.representative, c.cell,
     c.car_model, c.vehicle_type, c.colour, c.reg_number, c.hire_date, c.days, c.return_date,
@@ -735,6 +735,20 @@ export function registerChecklistRoutes(
       return c.json({ error: 'Next Service Mileage must be a whole number 0 or greater.' }, 400);
     }
 
+    const tripId = body.trip_id && Number.isInteger(Number(body.trip_id)) ? Number(body.trip_id) : null;
+    let tripRow: { id: number; driver_id: number; vehicle_id: number } | null = null;
+    if (tripId !== null) {
+      tripRow = await c.env.DB.prepare('SELECT id, driver_id, vehicle_id FROM trips WHERE id = ?')
+        .bind(tripId)
+        .first<{ id: number; driver_id: number; vehicle_id: number }>();
+      if (!tripRow) {
+        return c.json({ error: 'Linked trip record was not found.' }, 404);
+      }
+      if (actor.role === 'DRIVER' && actor.driver_id !== null && Number(tripRow.driver_id) !== actor.driver_id) {
+        return c.json({ error: 'You can only link checklists to your own assigned trips.' }, 403);
+      }
+    }
+
     // Resolve or add inline vehicle in Vehicle Directory
     let vehicleRow: Record<string, unknown> | null = null;
     let vehicleCreatedInline = false;
@@ -796,9 +810,10 @@ export function registerChecklistRoutes(
         .bind(vIns.meta.last_row_id)
         .first<Record<string, unknown>>();
       vehicleCreatedInline = true;
-    } else if (body.vehicle_id) {
+    } else if (body.vehicle_id || tripRow?.vehicle_id) {
+      const targetVehicleId = Number(body.vehicle_id || tripRow!.vehicle_id);
       vehicleRow = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?')
-        .bind(Number(body.vehicle_id))
+        .bind(targetVehicleId)
         .first<Record<string, unknown>>();
       if (!vehicleRow) {
         return c.json({ error: 'Selected vehicle was not found in the Vehicle Directory.' }, 404);
@@ -913,18 +928,6 @@ export function registerChecklistRoutes(
 
     const settings = await getSettingsMap(c.env.DB);
     const declarationText = buildDeclarationText(settings.company_name);
-    const tripId = body.trip_id && Number.isInteger(Number(body.trip_id)) ? Number(body.trip_id) : null;
-    if (tripId !== null) {
-      const tripRow = await c.env.DB.prepare('SELECT id, driver_id FROM trips WHERE id = ?')
-        .bind(tripId)
-        .first<{ id: number; driver_id: number }>();
-      if (!tripRow) {
-        return c.json({ error: 'Linked trip record was not found.' }, 404);
-      }
-      if (actor.role === 'DRIVER' && actor.driver_id !== null && Number(tripRow.driver_id) !== actor.driver_id) {
-        return c.json({ error: 'You can only link checklists to your own assigned trips.' }, 403);
-      }
-    }
     const notes = String(body.notes || '').trim();
 
     const ins = await c.env.DB.prepare(
@@ -1001,9 +1004,9 @@ export function registerChecklistRoutes(
       .bind(colour, fuelType, nextServiceMileage, nextServiceMileage, mileageOut, mileageOut, vehicleId)
       .run();
 
-    if (tripId !== null && hirerType === 'renter') {
+    if (tripId !== null) {
       await c.env.DB.prepare(
-        `UPDATE trips SET checklist_id = COALESCE(checklist_id, ?) WHERE id = ? AND trip_type = 'HIRE'`
+        `UPDATE trips SET checklist_id = COALESCE(checklist_id, ?) WHERE id = ?`
       )
         .bind(checklistId, tripId)
         .run();
@@ -1020,6 +1023,8 @@ export function registerChecklistRoutes(
       entityId: checklistId,
       newValue: {
         checklist_id: checklistId,
+        trip_id: tripId,
+        vehicle_id: vehicleId,
         reg_number: regNumber,
         hirer_type: hirerType,
         hirer_name: hirerName,
@@ -1371,6 +1376,8 @@ export function registerChecklistRoutes(
       entityId: checklistId,
       newValue: {
         checklist_id: checklistId,
+        trip_id: existing.trip_id,
+        vehicle_id: existing.vehicle_id,
         reg_number: existing.reg_number,
         mileage_in: mileageIn,
         fuel_in: fuelIn,

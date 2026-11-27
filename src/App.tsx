@@ -86,6 +86,7 @@ export default function App() {
   const [settingsTab, setSettingsTab] = useState<SettingsTab>('general');
   const [selectedTripId, setSelectedTripId] = useState<number | null>(null);
   const [selectedVehicleId, setSelectedVehicleId] = useState<number | null>(null);
+  const [selectedChecklistId, setSelectedChecklistId] = useState<number | null>(null);
   const [selectedNotificationId, setSelectedNotificationId] = useState<number | null>(null);
   const [pendingDriverLogin, setPendingDriverLogin] = useState<{
     driverId: number;
@@ -275,6 +276,7 @@ export default function App() {
       setSelectedNotificationId(pendingNotificationLink.notificationId);
       setSelectedTripId(null);
       setSelectedVehicleId(null);
+      setSelectedChecklistId(null);
       setMobileMenuOpen(false);
       requestNotificationsRefresh();
     }
@@ -307,6 +309,7 @@ export default function App() {
       setSelectedNotificationId(cleanId);
       setSelectedTripId(null);
       setSelectedVehicleId(null);
+      setSelectedChecklistId(null);
       setMobileMenuOpen(false);
       requestNotificationsRefresh();
     };
@@ -485,6 +488,7 @@ export default function App() {
   const navigateTo = (next: NavSection, tripId?: number) => {
     setSelectedTripId(tripId ?? null);
     setSelectedVehicleId(null);
+    setSelectedChecklistId(null);
     setSelectedNotificationId(null);
     setMobileMenuOpen(false);
     if (next === 'home' || next === 'dashboard') {
@@ -506,6 +510,7 @@ export default function App() {
   const openPinChangeInSettings = () => {
     setSelectedTripId(null);
     setSelectedVehicleId(null);
+    setSelectedChecklistId(null);
     setSelectedNotificationId(null);
     setSettingsTab('pin');
     setSection('settings');
@@ -515,8 +520,19 @@ export default function App() {
   const openVehicleFromDashboard = (vid: number) => {
     setSelectedVehicleId(vid);
     setSelectedTripId(null);
+    setSelectedChecklistId(null);
     setSelectedNotificationId(null);
     setSection('vehicles');
+    setMobileMenuOpen(false);
+  };
+
+  const openChecklistFromRecord = (checklistId: number) => {
+    setSelectedChecklistId(checklistId);
+    setPendingChecklistPrefill(null);
+    setSelectedTripId(null);
+    setSelectedVehicleId(null);
+    setSelectedNotificationId(null);
+    setSection('checklists');
     setMobileMenuOpen(false);
   };
 
@@ -534,12 +550,17 @@ export default function App() {
       month: '2-digit',
       day: '2-digit',
     }).format(new Date(trip.out_at));
+    setSelectedChecklistId(null);
     setPendingChecklistPrefill({
       trip_id: trip.id,
       vehicle_id: trip.vehicle_id,
+      vehicle_reg: trip.reg_number,
+      vehicle_make_model: trip.make_model,
+      vehicle_type: trip.vehicle_type,
       hirer_type: trip.trip_type === 'ERRAND' ? 'owner' : 'renter',
       hirer_name: trip.client_name || trip.driver_name || '',
       representative: trip.driver_name ?? '',
+      cell: trip.driver_phone ?? '',
       hire_date: outDate,
       days: trip.days_hired ?? 1,
       mileage_out: trip.mileage_out,
@@ -550,6 +571,7 @@ export default function App() {
   };
 
   const handleStartChecklistFromYardForm = (prefill: ChecklistPrefill) => {
+    setSelectedChecklistId(null);
     setPendingChecklistPrefill(prefill);
     setSection('checklists');
     setMobileMenuOpen(false);
@@ -892,6 +914,7 @@ export default function App() {
               onOpenPinSettings={openPinChangeInSettings}
               onCreateChecklistForTrip={handleCreateChecklistFromTrip}
               onStartCreateChecklist={handleStartChecklistFromYardForm}
+              onOpenChecklist={openChecklistFromRecord}
             />
           )}
           {(section === 'settings' || section === 'change-pin') && (
@@ -955,6 +978,7 @@ export default function App() {
               userRole={user.role}
               initialVehicleId={selectedVehicleId}
               onOpenTrip={(tid) => navigateTo('trips', tid)}
+              onOpenChecklist={openChecklistFromRecord}
               onOpenMaintenance={() => navigateTo('maintenance')}
             />
           )}
@@ -968,6 +992,7 @@ export default function App() {
             <DriversView
               userRole={user.role}
               onOpenTrip={(tid) => navigateTo('trips', tid)}
+              onOpenChecklist={openChecklistFromRecord}
               onCreateDriverLogin={handleCreateDriverLogin}
             />
           )}
@@ -976,6 +1001,8 @@ export default function App() {
               userRole={user.role}
               initialTripId={selectedTripId}
               onCreateChecklist={handleCreateChecklistFromTrip}
+              onOpenChecklist={openChecklistFromRecord}
+              onOpenVehicle={openVehicleFromDashboard}
             />
           )}
           {!user.must_change_pin && section === 'checklists' && (
@@ -984,7 +1011,10 @@ export default function App() {
               companyName={settings.company_name}
               initialPrefill={pendingChecklistPrefill}
               onConsumePrefill={() => setPendingChecklistPrefill(null)}
+              initialChecklistId={selectedChecklistId}
+              onConsumeChecklistId={() => setSelectedChecklistId(null)}
               onOpenVehicle={openVehicleFromDashboard}
+              onOpenTrip={(tid) => navigateTo('trips', tid)}
               onChecklistCreatedAndReturn={handleChecklistCreatedAndReturn}
               onCancelReturnToForm={handleCancelChecklistReturn}
             />

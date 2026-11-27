@@ -68,6 +68,9 @@ import {
 export interface ChecklistPrefill {
   trip_id?: number | null;
   vehicle_id?: number;
+  vehicle_reg?: string;
+  vehicle_make_model?: string;
+  vehicle_type?: string;
   hirer_type?: ChecklistHirerType;
   hirer_name?: string;
   representative?: string;
@@ -85,7 +88,10 @@ interface ChecklistsViewProps {
   companyName: string;
   initialPrefill?: ChecklistPrefill | null;
   onConsumePrefill?: () => void;
+  initialChecklistId?: number | null;
+  onConsumeChecklistId?: () => void;
   onOpenVehicle?: (vehicleId: number) => void;
+  onOpenTrip?: (tripId: number) => void;
   onChecklistCreatedAndReturn?: (
     checklist: ChecklistSummary,
     target: { kind: 'HIRE' | 'SUBHIRE' }
@@ -242,7 +248,10 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   companyName,
   initialPrefill = null,
   onConsumePrefill,
+  initialChecklistId = null,
+  onConsumeChecklistId,
   onOpenVehicle,
+  onOpenTrip,
   onChecklistCreatedAndReturn,
   onCancelReturnToForm,
 }) => {
@@ -595,6 +604,43 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       } else if (matchedVehicle) {
         setCNewCondition(undefined);
         applyVehicleSelection(matchedVehicle, prefill?.mileage_out, prefill?.fuel_out);
+      } else if (!prefill?.new_vehicle && prefill?.vehicle_id) {
+        const fallbackVehicle: Vehicle = {
+          id: prefill.vehicle_id,
+          reg_number: prefill.vehicle_reg || `Vehicle #${prefill.vehicle_id}`,
+          vehicle_type: prefill.vehicle_type || VEHICLE_TYPES[0],
+          vehicle_class: 'Economy',
+          make_model: prefill.vehicle_make_model || 'Trip Vehicle',
+          colour: null,
+          fuel_type: 'diesel',
+          condition: 'Good',
+          last_known_mileage: prefill.mileage_out ?? 0,
+          last_closing_mileage: prefill.mileage_out ?? 0,
+          last_fuel_level: prefill.fuel_out ?? 'Full',
+          next_service_due_km: null,
+          next_service_mileage: null,
+          active: false,
+          created_at: new Date().toISOString(),
+          derived_status: 'Available',
+          open_trip_id: prefill.trip_id ?? null,
+        };
+        setVehicles((prev) =>
+          prev.some((v) => v.id === fallbackVehicle.id) ? prev : [fallbackVehicle, ...prev]
+        );
+        setCNewCondition(undefined);
+        applyVehicleSelection(fallbackVehicle, prefill.mileage_out, prefill.fuel_out);
+        void api
+          .getVehicle(prefill.vehicle_id)
+          .then((res) => {
+            setVehicles((prev) => {
+              const filtered = prev.filter((v) => v.id !== res.vehicle.id);
+              return [res.vehicle, ...filtered];
+            });
+            applyVehicleSelection(res.vehicle, prefill.mileage_out, prefill.fuel_out);
+          })
+          .catch(() => {
+            // Keep fallback trip vehicle metadata when offline
+          });
       } else {
         setCVehicleMode('new');
         setCVehicleId(0);
@@ -636,7 +682,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     return () => window.clearTimeout(timer);
   }, [screen, returnMode, detail, printChecklistA4]);
 
-  const openDetail = async (id: number) => {
+  const openDetail = useCallback(async (id: number) => {
     if (id < 0) {
       setError('This checklist was saved offline and will open in detail view once synced to the cloud.');
       return;
@@ -655,7 +701,13 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     } finally {
       setDetailLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    if (!initialChecklistId || initialPrefill) return;
+    void openDetail(initialChecklistId);
+    onConsumeChecklistId?.();
+  }, [initialChecklistId, initialPrefill, openDetail, onConsumeChecklistId]);
 
   const beginReturnFlow = (chk: ChecklistDetail) => {
     setReturnMode(true);
@@ -705,14 +757,14 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
   const filteredVehiclesForPicker = useMemo(() => {
     const q = vehicleSearch.trim().toLowerCase();
-    const activeOnes = vehicles.filter((v) => v.active);
+    const activeOnes = vehicles.filter((v) => v.active || v.id === cVehicleId);
     if (!q) return activeOnes;
     return activeOnes.filter((v) =>
       `${v.reg_number} ${v.make_model} ${v.vehicle_type} ${v.colour ?? ''}`
         .toLowerCase()
         .includes(q)
     );
-  }, [vehicles, vehicleSearch]);
+  }, [vehicles, vehicleSearch, cVehicleId]);
 
   const cReturnDate = useMemo(() => {
     if (cHirerType === 'owner') {
@@ -952,6 +1004,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
       try {
         const res = await api.createChecklist(payload);
+        const savedSummary: ChecklistSummary = res.checklist;
+        const cachedBefore = readCachedEntry<ChecklistSummary[]>(CACHE_KEYS.checklistsAll)?.data ?? checklists;
+        const mergedImmediate = [savedSummary, ...cachedBefore.filter((x) => x.id !== savedSummary.id)];
+        writeCachedEntry(CACHE_KEYS.checklistsAll, mergedImmediate);
+        setChecklists((prev) => [savedSummary, ...prev.filter((x) => x.id !== savedSummary.id)]);
+
         if (cReturnTarget && onChecklistCreatedAndReturn) {
           const target = cReturnTarget;
           setCReturnTarget(null);
@@ -1104,6 +1162,11 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             date: res.checklist.hire_date,
           };
         }
+        const completedSummary: ChecklistSummary = res.checklist;
+        const cachedBeforeRet = readCachedEntry<ChecklistSummary[]>(CACHE_KEYS.checklistsAll)?.data ?? checklists;
+        const mergedAfterRet = cachedBeforeRet.map((x) => (x.id === completedSummary.id ? completedSummary : x));
+        writeCachedEntry(CACHE_KEYS.checklistsAll, mergedAfterRet);
+        setChecklists((prev) => prev.map((x) => (x.id === completedSummary.id ? completedSummary : x)));
         setDetail(res.checklist);
         setReturnMode(false);
         setNotice(`Checklist #${res.checklist.id} completed and vehicle record updated.`);
@@ -1795,6 +1858,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
           </div>
         )}
 
+        {cTripId !== null && (
+          <div className="rounded-xl border border-blue-200 bg-blue-50/80 px-4 py-3 text-sm text-blue-950">
+            Initiated from <strong>Trip #{cTripId}</strong> — saving this checklist will populate the Checklists section and keep it linked to both Trip #{cTripId} and the selected vehicle.
+          </div>
+        )}
+
         <div>
           <h1 className="font-display text-2xl font-bold text-blue-950">Digital Vehicle Checklist</h1>
           <p className="mt-1 text-sm text-slate-600">
@@ -1936,7 +2005,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                   >
                     {filteredVehiclesForPicker.map((v) => (
                       <option key={v.id} value={v.id}>
-                        {v.reg_number} — {v.make_model} ({v.vehicle_type})
+                        {v.reg_number} — {v.make_model} ({v.vehicle_type}){!v.active ? ' (One-time / Inactive)' : ''}
                       </option>
                     ))}
                   </select>
@@ -2635,6 +2704,15 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                       View Vehicle Record &rarr;
                     </button>
                   )}
+                  {onOpenTrip && detail.trip_id && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenTrip(detail.trip_id!)}
+                      className="no-print text-xs font-semibold text-cyan-700 hover:underline"
+                    >
+                      View Linked Trip #{detail.trip_id} &rarr;
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -3144,6 +3222,11 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                         </>
                       )}
                     </span>
+                    {c.trip_id && (
+                      <span className="inline-flex items-center rounded-md border border-blue-200 bg-blue-50 px-2 py-0.5 font-mono text-[11px] font-semibold text-blue-900">
+                        Trip #{c.trip_id}
+                      </span>
+                    )}
                     {c.id < 0 && (
                       <span className="text-xs font-semibold text-amber-700">(Queued Offline)</span>
                     )}

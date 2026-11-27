@@ -5,6 +5,7 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  ClipboardCheck,
   Copy,
   Edit3,
   FileCheck2,
@@ -49,6 +50,7 @@ interface DriversViewProps {
   userRole: Role;
   initialDriverId?: number | null;
   onOpenTrip?: (tripId: number) => void;
+  onOpenChecklist?: (checklistId: number) => void;
   onCreateDriverLogin?: (driver: { id: number; full_name: string }) => void;
 }
 
@@ -108,6 +110,7 @@ export const DriversView: React.FC<DriversViewProps> = ({
   userRole,
   initialDriverId = null,
   onOpenTrip,
+  onOpenChecklist,
   onCreateDriverLogin,
 }) => {
   const canManage = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
@@ -152,6 +155,8 @@ export const DriversView: React.FC<DriversViewProps> = ({
       days_hired: number | null;
       expected_return_date: string | null;
       total_mileage: number | null;
+      checklist_id?: number | null;
+      checklist_status?: 'out' | 'completed' | null;
     }>
   >([]);
 
@@ -882,8 +887,27 @@ export const DriversView: React.FC<DriversViewProps> = ({
                             : ''}
                         </div>
                       </div>
-                      <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
-                        {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {t.checklist_id && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenChecklist?.(t.checklist_id!);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-semibold ${
+                              t.checklist_status === 'completed'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : 'border-cyan-200 bg-cyan-50 text-blue-950'
+                            }`}
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                            <span>Checklist #{t.checklist_id}</span>
+                          </button>
+                        )}
+                        <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
+                          {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
+                        </div>
                       </div>
                     </div>
                   ))}

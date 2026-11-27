@@ -46,6 +46,7 @@ interface VehiclesViewProps {
   userRole: Role;
   initialVehicleId?: number | null;
   onOpenTrip?: (tripId: number) => void;
+  onOpenChecklist?: (checklistId: number) => void;
   onOpenMaintenance?: () => void;
 }
 
@@ -114,6 +115,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
   userRole,
   initialVehicleId = null,
   onOpenTrip,
+  onOpenChecklist,
   onOpenMaintenance,
 }) => {
   const canManage =
@@ -158,6 +160,8 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
       mileage_out: number | null;
       mileage_in: number | null;
       total_mileage: number | null;
+      checklist_id?: number | null;
+      checklist_status?: 'out' | 'completed' | null;
     }>
   >([]);
   const [conditionHistory, setConditionHistory] = useState<AuditLogEntry[]>([]);
@@ -710,8 +714,27 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                             : ''}
                         </div>
                       </div>
-                      <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
-                        {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
+                      <div className="flex flex-wrap items-center gap-2">
+                        {t.checklist_id && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onOpenChecklist?.(t.checklist_id!);
+                            }}
+                            className={`inline-flex items-center gap-1 rounded-lg border px-2 py-0.5 text-xs font-semibold ${
+                              t.checklist_status === 'completed'
+                                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                                : 'border-cyan-200 bg-cyan-50 text-blue-950'
+                            }`}
+                          >
+                            <ClipboardCheck className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                            <span>Checklist #{t.checklist_id}</span>
+                          </button>
+                        )}
+                        <div className="text-sm font-mono tabular-nums text-cyan-800 font-semibold">
+                          {t.total_mileage !== null ? `${t.total_mileage.toLocaleString()} km` : t.status}
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -731,25 +754,37 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
               ) : (
                 <div className="mt-4 divide-y divide-blue-100">
                   {detailChecklists.map((chk) => (
-                    <div key={chk.id} className="py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+                    <div
+                      key={chk.id}
+                      onClick={() => onOpenChecklist?.(chk.id)}
+                      className={`py-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between ${
+                        onOpenChecklist ? 'cursor-pointer hover:bg-cyan-50/45 rounded-lg px-2 -mx-2 transition-colors' : ''
+                      }`}
+                    >
                       <div>
                         <div className="text-sm font-semibold text-blue-950">
                           Checklist #{chk.id} · {chk.hirer_type === 'owner' ? 'Owner:' : 'Renter:'} {chk.hirer_name}
+                          {chk.trip_id ? ` · Linked Trip #${chk.trip_id}` : ''}
                         </div>
                         <div className="text-xs font-mono tabular-nums text-slate-500">
                           Out {chk.hire_date} · {chk.return_date ? `Return ${chk.return_date}` : 'Return Optional'} · {chk.mileage_out.toLocaleString()} km
                           {chk.mileage_in !== null ? ` → ${chk.mileage_in.toLocaleString()} km` : ''}
                         </div>
                       </div>
-                      <span
-                        className={`self-start sm:self-center rounded-lg px-2.5 py-0.5 text-xs font-bold ${
-                          chk.status === 'completed'
-                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                            : 'bg-amber-50 text-amber-900 border border-amber-300'
-                        }`}
-                      >
-                        {chk.status === 'completed' ? 'Completed' : 'Out (open)'}
-                      </span>
+                      <div className="flex items-center gap-2 self-start sm:self-center">
+                        <span
+                          className={`rounded-lg px-2.5 py-0.5 text-xs font-bold ${
+                            chk.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-900 border border-amber-300'
+                          }`}
+                        >
+                          {chk.status === 'completed' ? 'Completed' : 'Out (open)'}
+                        </span>
+                        {onOpenChecklist && (
+                          <span className="text-xs font-semibold text-blue-700">Open &rarr;</span>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>

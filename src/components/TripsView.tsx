@@ -36,6 +36,8 @@ interface TripsViewProps {
   initialTripId?: number | null;
   onRecordReturn?: (trip: TripSummary) => void;
   onCreateChecklist?: (trip: TripSummary) => void;
+  onOpenChecklist?: (checklistId: number) => void;
+  onOpenVehicle?: (vehicleId: number) => void;
 }
 
 const LEGACY_CACHE_KEY = 'fleet_secure_cache_trips';
@@ -56,6 +58,8 @@ export const TripsView: React.FC<TripsViewProps> = ({
   initialTripId = null,
   onRecordReturn,
   onCreateChecklist,
+  onOpenChecklist,
+  onOpenVehicle,
 }) => {
   const canCorrect = userRole === 'SUPERVISOR' || userRole === 'ADMIN';
 
@@ -346,14 +350,32 @@ export const TripsView: React.FC<TripsViewProps> = ({
           </button>
 
           <div className="flex flex-wrap items-center gap-3">
-            {detail?.trip.status === 'OPEN' && detail.trip.trip_type === 'HIRE' && onCreateChecklist && (
+            {detail?.trip.checklist_id && onOpenChecklist && (
+              <button
+                type="button"
+                onClick={() => onOpenChecklist(detail.trip.checklist_id!)}
+                className={`inline-flex min-h-[44px] items-center gap-2 rounded-xl border px-4 text-sm font-semibold ${
+                  detail.trip.checklist_status === 'completed'
+                    ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                    : 'border-cyan-300 bg-cyan-50 text-blue-950 hover:bg-cyan-100'
+                }`}
+              >
+                <ClipboardCheck className="h-4 w-4 text-cyan-700" aria-hidden="true" />
+                <span>Open Checklist #{detail.trip.checklist_id}</span>
+              </button>
+            )}
+            {detail && onCreateChecklist && (
               <button
                 type="button"
                 onClick={() => onCreateChecklist(detail.trip)}
                 className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-cyan-300 bg-cyan-50/70 px-4 text-sm font-semibold text-blue-950"
               >
                 <ClipboardCheck className="h-4 w-4 text-cyan-700" aria-hidden="true" />
-                <span>Create Checklist</span>
+                <span>
+                  {detail.trip.checklist_id || (detail.linkedChecklists?.length ?? 0) > 0
+                    ? 'New Linked Checklist'
+                    : 'Create Checklist'}
+                </span>
               </button>
             )}
             {detail?.trip.status === 'OPEN' && onRecordReturn && (
@@ -456,6 +478,99 @@ export const TripsView: React.FC<TripsViewProps> = ({
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            {/* Linked Vehicle & Checklists */}
+            <div className="rounded-2xl border border-blue-200/80 bg-white p-6 space-y-4 shadow-xs">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="flex items-center gap-2 text-lg font-semibold text-blue-950">
+                    <ClipboardCheck className="h-5 w-5 text-cyan-600" aria-hidden="true" />
+                    <span>
+                      Linked Vehicle &amp; Checklists ({detail.linkedChecklists?.length ?? (detail.trip.checklist_id ? 1 : 0)})
+                    </span>
+                  </h2>
+                  <p className="mt-0.5 text-sm text-slate-600">
+                    Vehicle:{' '}
+                    <span className="font-mono font-semibold text-blue-950">
+                      {detail.trip.reg_number}
+                    </span>{' '}
+                    — {detail.trip.make_model} ({detail.trip.vehicle_type})
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {onOpenVehicle && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenVehicle(detail.trip.vehicle_id)}
+                      className="cyan-glow-outline inline-flex min-h-[38px] items-center rounded-xl border border-blue-200 bg-white px-3.5 text-xs font-semibold text-blue-900"
+                    >
+                      View Vehicle Record &rarr;
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {(detail.linkedChecklists?.length ?? 0) > 0 ? (
+                <div className="divide-y divide-blue-100">
+                  {detail.linkedChecklists!.map((chk) => (
+                    <div
+                      key={chk.id}
+                      onClick={() => onOpenChecklist?.(chk.id)}
+                      className={`py-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between ${
+                        onOpenChecklist ? 'cursor-pointer hover:bg-cyan-50/45 rounded-lg px-2 -mx-2 transition-colors' : ''
+                      }`}
+                    >
+                      <div>
+                        <div className="text-sm font-semibold text-blue-950">
+                          Checklist #{chk.id} · {chk.reg_number} ·{' '}
+                          {chk.hirer_type === 'owner' ? 'Owner:' : 'Renter:'} {chk.hirer_name}
+                        </div>
+                        <div className="text-xs font-mono tabular-nums text-slate-500">
+                          Out {chk.hire_date} ·{' '}
+                          {chk.return_date ? `Return ${chk.return_date}` : 'Return Optional'} ·{' '}
+                          {chk.mileage_out.toLocaleString()} km
+                          {chk.mileage_in !== null ? ` → ${chk.mileage_in.toLocaleString()} km` : ''}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 self-start sm:self-center">
+                        <span
+                          className={`rounded-lg px-2.5 py-0.5 text-xs font-bold ${
+                            chk.status === 'completed'
+                              ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
+                              : 'bg-amber-50 text-amber-900 border border-amber-300'
+                          }`}
+                        >
+                          {chk.status === 'completed' ? 'Completed' : 'Out (open)'}
+                        </span>
+                        {onOpenChecklist && (
+                          <span className="text-xs font-semibold text-blue-700">Open &rarr;</span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : detail.trip.checklist_id ? (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-cyan-200 bg-cyan-50/50 px-4 py-3">
+                  <span className="text-sm font-medium text-blue-950">
+                    Linked to Checklist #{detail.trip.checklist_id}
+                    {detail.trip.checklist_hirer_name ? ` (${detail.trip.checklist_hirer_name})` : ''}
+                  </span>
+                  {onOpenChecklist && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenChecklist(detail.trip.checklist_id!)}
+                      className="text-xs font-semibold text-blue-700 hover:underline"
+                    >
+                      Open Checklist &rarr;
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">
+                  No digital checklist linked to this trip yet. Use <strong>Create Checklist</strong> above to complete one and link it permanently to this trip and vehicle.
+                </p>
               )}
             </div>
 
@@ -1003,18 +1118,39 @@ export const TripsView: React.FC<TripsViewProps> = ({
                 </div>
 
                 <div className="flex flex-wrap items-center gap-3 shrink-0">
-                  {t.status === 'OPEN' && t.trip_type === 'HIRE' && onCreateChecklist && (
+                  {t.checklist_id ? (
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
-                        onCreateChecklist(t);
+                        onOpenChecklist?.(t.checklist_id!);
                       }}
-                      className="cyan-glow-outline inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-2.5 text-xs font-semibold text-blue-950"
+                      className={`inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold ${
+                        t.checklist_status === 'completed'
+                          ? 'border-emerald-200 bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                          : 'border-cyan-300 bg-cyan-50 text-blue-950 hover:bg-cyan-100'
+                      }`}
                     >
                       <ClipboardCheck className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
-                      <span>Create Checklist</span>
+                      <span>
+                        Checklist #{t.checklist_id} ({t.checklist_status === 'completed' ? 'Completed' : 'Out'})
+                      </span>
                     </button>
+                  ) : (
+                    t.status === 'OPEN' &&
+                    onCreateChecklist && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCreateChecklist(t);
+                        }}
+                        className="cyan-glow-outline inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-2.5 text-xs font-semibold text-blue-950"
+                      >
+                        <ClipboardCheck className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                        <span>Create Checklist</span>
+                      </button>
+                    )
                   )}
                   {t.flags.length > 0 && (
                     <span className="inline-flex items-center gap-1 text-xs font-semibold text-red-700">
