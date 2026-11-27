@@ -11,6 +11,7 @@ import { en } from '../i18n/en';
 import { api, ApiError } from '../lib/api';
 import type { UserPublic } from '../shared/types';
 import { AppFooter } from './AppFooter';
+import { LegalDocsModal, type LegalDocType } from './LegalDocsModal';
 import { PWAInstallButton } from './PWAInstallButton';
 
 interface LoginViewProps {
@@ -37,6 +38,7 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [legalDoc, setLegalDoc] = useState<LegalDocType | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -248,6 +250,26 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 </div>
               </div>
 
+              <p className="rounded-xl border border-blue-100 bg-blue-50/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-700">
+                By putting your credentials and logging in, you agree to the{' '}
+                <button
+                  type="button"
+                  onClick={() => setLegalDoc('terms')}
+                  className="font-semibold text-blue-700 underline underline-offset-2 hover:text-cyan-700"
+                >
+                  Terms of Use
+                </button>{' '}
+                and{' '}
+                <button
+                  type="button"
+                  onClick={() => setLegalDoc('privacy')}
+                  className="font-semibold text-blue-700 underline underline-offset-2 hover:text-cyan-700"
+                >
+                  Privacy Policy
+                </button>{' '}
+                of this Application Software.
+              </p>
+
               <button
                 type="submit"
                 disabled={loading}
@@ -367,6 +389,26 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
                 </span>
               </label>
 
+              <p className="rounded-xl border border-blue-100 bg-blue-50/60 px-3.5 py-2.5 text-xs leading-relaxed text-slate-700">
+                By putting your credentials and logging in, you agree to the{' '}
+                <button
+                  type="button"
+                  onClick={() => setLegalDoc('terms')}
+                  className="font-semibold text-blue-700 underline underline-offset-2 hover:text-cyan-700"
+                >
+                  Terms of Use
+                </button>{' '}
+                and{' '}
+                <button
+                  type="button"
+                  onClick={() => setLegalDoc('privacy')}
+                  className="font-semibold text-blue-700 underline underline-offset-2 hover:text-cyan-700"
+                >
+                  Privacy Policy
+                </button>{' '}
+                of this Application Software.
+              </p>
+
               <button
                 type="submit"
                 disabled={loading}
@@ -382,6 +424,12 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
       <div className="relative mx-auto w-full max-w-2xl">
         <AppFooter compact />
       </div>
+
+      <LegalDocsModal
+        openDoc={legalDoc}
+        onClose={() => setLegalDoc(null)}
+        onSwitchDoc={setLegalDoc}
+      />
     </div>
   );
 };

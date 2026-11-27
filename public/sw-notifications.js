@@ -6,8 +6,12 @@ const VEHICLE_3D_IMAGE_URLS = [
   '/src/assets/images/vehicle_right_3d_1795721974156.jpg',
   '/src/assets/images/doublecab_left_3d_1795723685048.jpg',
   '/src/assets/images/doublecab_right_3d_1795723685317.jpg',
+  '/src/assets/images/singlecab_left_3d_1795766653871.jpg',
+  '/src/assets/images/singlecab_right_3d_1795766654083.jpg',
   '/src/assets/images/kombi_left_3d_1795723686440.jpg',
   '/src/assets/images/kombi_right_3d_1795723686552.jpg',
+  '/src/assets/images/hatchback_left_3d_1795766654853.jpg',
+  '/src/assets/images/hatchback_right_3d_1795766655296.jpg',
 ];
 
 self.addEventListener('install', (event) => {

@@ -55,10 +55,12 @@ export const VEHICLE_TYPE_TO_CLASS: Record<string, VehicleClass> = {
   Hatchback: 'ECONOMY',
   'Mini SUV': 'ECONOMY',
   'Double Cab': 'HEAVY',
+  'Single Cab': 'HEAVY',
   SUV: 'HEAVY',
   Truck: 'HEAVY',
   'Executive Sedan': 'HEAVY',
   Kombi: 'HEAVY',
+  Van: 'HEAVY',
   Quantum: 'HEAVY',
   Bus: 'HEAVY',
 };
@@ -643,7 +645,7 @@ export type ChecklistInputType =
   | 'numbers'
   | 'available_na';
 
-export type SketchVehicleKind = 'sedan' | 'suv' | 'doublecab' | 'kombi';
+export type SketchVehicleKind = 'sedan' | 'suv' | 'doublecab' | 'singlecab' | 'kombi' | 'hatchback';
 export type SketchPanelView = 'left' | 'right' | 'top';
 export type DamagePinType = 'S' | 'D' | 'C' | 'M' | 'O';
 
@@ -669,9 +671,19 @@ export const SKETCH_3D_MEDIA_BY_KIND: Record<SketchVehicleKind, SketchVehicleMed
     right: '/src/assets/images/doublecab_right_3d_1795723685317.jpg',
     flipRight: false,
   },
+  singlecab: {
+    left: '/src/assets/images/singlecab_left_3d_1795766653871.jpg',
+    right: '/src/assets/images/singlecab_right_3d_1795766654083.jpg',
+    flipRight: false,
+  },
   kombi: {
     left: '/src/assets/images/kombi_left_3d_1795723686440.jpg',
     right: '/src/assets/images/kombi_right_3d_1795723686552.jpg',
+    flipRight: false,
+  },
+  hatchback: {
+    left: '/src/assets/images/hatchback_left_3d_1795766654853.jpg',
+    right: '/src/assets/images/hatchback_right_3d_1795766655296.jpg',
     flipRight: false,
   },
 };

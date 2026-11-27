@@ -54,6 +54,10 @@ export async function resolveCachedSketchImageSrc(url: string): Promise<string> 
         if (blob.size > 0 && typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function') {
           const objectUrl = URL.createObjectURL(blob);
           sketchObjectUrlMap.set(url, objectUrl);
+          if (typeof Image !== 'undefined') {
+            const preloadImg = new Image();
+            preloadImg.src = objectUrl;
+          }
           return objectUrl;
         }
       }

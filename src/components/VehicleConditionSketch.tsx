@@ -7,6 +7,7 @@ import {
 } from '../lib/offlineCache';
 import {
   SKETCH_3D_MEDIA_BY_KIND,
+  type ChecklistHirerType,
   type ChecklistSignatureEntry,
   type ChecklistSignatures,
   type ChecklistSketchData,
@@ -38,14 +39,19 @@ export const SKETCH_KINDS: Array<{ id: SketchVehicleKind; label: string }> = [
   { id: 'sedan', label: 'Sedan' },
   { id: 'suv', label: 'SUV' },
   { id: 'doublecab', label: 'Double Cab' },
-  { id: 'kombi', label: 'Kombi / Quantum' },
+  { id: 'singlecab', label: 'Single Cab' },
+  { id: 'kombi', label: 'Kombi / Van' },
+  { id: 'hatchback', label: 'Hatchback' },
 ];
 
 export function matchSketchKindFromText(text?: string | null): SketchVehicleKind | null {
   const hay = (text ?? '').toLowerCase().trim();
   if (!hay) return null;
+  if (/(single\s*cab|singlecab|chassis\s*cab)/.test(hay)) {
+    return 'singlecab';
+  }
   if (
-    /(double\s*cab|doublecab|single\s*cab|pickup|bakkie|hilux|ranger|amarok|triton|navara|d-?max|bt-?50|np\s?300|truck)/.test(
+    /(double\s*cab|doublecab|pickup|bakkie|hilux|ranger|amarok|triton|navara|d-?max|bt-?50|np\s?300|truck)/.test(
       hay
     )
   ) {
@@ -62,7 +68,14 @@ export function matchSketchKindFromText(text?: string | null): SketchVehicleKind
     return 'suv';
   }
   if (
-    /(sedan|hatchback|executive\s*sedan|corolla|camry|civic|accord|fit|vitz|demio|polo|golf|belta|axio|allion|premio|runx)/.test(
+    /(hatchback|hatch|\bfit\b|\bvitz\b|\bdemio\b|\bpolo\b|\bgolf\b|\bswift\b|\byaris\b|\bi20\b|\bi10\b|\bmarch\b|\brunx\b)/.test(
+      hay
+    )
+  ) {
+    return 'hatchback';
+  }
+  if (
+    /(sedan|executive\s*sedan|corolla|camry|civic|accord|belta|axio|allion|premio)/.test(
       hay
     )
   ) {
@@ -99,8 +112,10 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
       {/* Main chassis outline */}
       {kind === 'kombi' ? (
         <rect x="115" y="76" width="570" height="228" rx="34" />
-      ) : kind === 'doublecab' ? (
+      ) : kind === 'doublecab' || kind === 'singlecab' ? (
         <path d="M 115 110 Q 115 78 158 78 L 495 78 L 672 82 Q 690 84 690 108 L 690 272 Q 690 296 672 298 L 495 302 L 158 302 Q 115 302 115 270 Z" />
+      ) : kind === 'hatchback' ? (
+        <path d="M 122 116 Q 122 78 180 78 L 598 78 Q 644 78 644 122 L 644 258 Q 644 302 598 302 L 180 302 Q 122 302 122 264 Z" />
       ) : (
         <path d="M 115 116 Q 115 78 175 78 L 635 78 Q 688 78 688 122 L 688 258 Q 688 302 635 302 L 175 302 Q 115 302 115 264 Z" />
       )}
@@ -108,8 +123,8 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
       {/* Wheel arches / tires */}
       <rect x="178" y="69" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
       <rect x="178" y="301" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
-      <rect x="536" y="69" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
-      <rect x="536" y="301" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
+      <rect x={kind === 'hatchback' ? 506 : 536} y="69" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
+      <rect x={kind === 'hatchback' ? 506 : 536} y="301" width="76" height="10" rx="4" fill="#64748b" stroke="none" />
 
       {/* Hood / bonnet lines */}
       {kind === 'kombi' ? (
@@ -138,6 +153,13 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
           <path d="M 580 108 L 656 112 L 656 268 L 580 272" stroke="#94a3b8" strokeWidth="1.5" fill="none" />
         </>
       )}
+      {kind === 'hatchback' && (
+        <>
+          <rect x="315" y="110" width="222" height="160" rx="10" fill="#f1f5f9" stroke="#64748b" strokeWidth="1.6" />
+          <path d="M 537 110 L 598 96 L 598 284 L 537 270 Z" fill="#dbeafe" stroke="#475569" strokeWidth="1.8" />
+          <line x1="612" y1="98" x2="612" y2="282" stroke="#64748b" strokeWidth="2.2" />
+        </>
+      )}
       {kind === 'suv' && (
         <>
           <rect x="315" y="106" width="265" height="168" rx="10" fill="#f1f5f9" stroke="#64748b" strokeWidth="1.6" />
@@ -159,6 +181,19 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
           <line x1="522" y1="262" x2="660" y2="262" stroke="#94a3b8" strokeWidth="1.2" />
         </>
       )}
+      {kind === 'singlecab' && (
+        <>
+          <rect x="315" y="110" width="90" height="160" rx="8" fill="#f1f5f9" stroke="#64748b" strokeWidth="1.6" />
+          <path d="M 405 110 L 424 98 L 424 282 L 405 270 Z" fill="#dbeafe" stroke="#475569" strokeWidth="1.8" />
+          {/* Long single-cab load bed */}
+          <rect x="436" y="96" width="240" height="188" rx="6" fill="#e2e8f0" stroke="#475569" strokeWidth="1.8" />
+          <line x1="454" y1="118" x2="660" y2="118" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="454" y1="154" x2="660" y2="154" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="454" y1="190" x2="660" y2="190" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="454" y1="226" x2="660" y2="226" stroke="#94a3b8" strokeWidth="1.2" />
+          <line x1="454" y1="262" x2="660" y2="262" stroke="#94a3b8" strokeWidth="1.2" />
+        </>
+      )}
       {kind === 'kombi' && (
         <>
           <rect x="225" y="102" width="405" height="176" rx="12" fill="#f1f5f9" stroke="#64748b" strokeWidth="1.6" />
@@ -169,8 +204,12 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
       )}
 
       {/* Door seams */}
-      <line x1="398" y1="80" x2="398" y2="108" stroke="#94a3b8" strokeWidth="1.4" />
-      <line x1="398" y1="272" x2="398" y2="300" stroke="#94a3b8" strokeWidth="1.4" />
+      {kind !== 'singlecab' && (
+        <>
+          <line x1="398" y1="80" x2="398" y2="108" stroke="#94a3b8" strokeWidth="1.4" />
+          <line x1="398" y1="272" x2="398" y2="300" stroke="#94a3b8" strokeWidth="1.4" />
+        </>
+      )}
       {kind !== 'kombi' && (
         <>
           <line x1="315" y1="80" x2="315" y2="112" stroke="#94a3b8" strokeWidth="1.4" />
@@ -179,8 +218,8 @@ function renderSilhouettePaths(kind: SketchVehicleKind) {
       )}
 
       {/* Rear tail lamps */}
-      <rect x="676" y="96" width="8" height="28" rx="3" fill="#ef4444" stroke="none" />
-      <rect x="676" y="256" width="8" height="28" rx="3" fill="#ef4444" stroke="none" />
+      <rect x={kind === 'hatchback' ? 632 : 676} y="96" width="8" height="28" rx="3" fill="#ef4444" stroke="none" />
+      <rect x={kind === 'hatchback' ? 632 : 676} y="256" width="8" height="28" rx="3" fill="#ef4444" stroke="none" />
     </g>
   );
 }
@@ -284,7 +323,16 @@ export async function exportSketchPngDataUrl(sketch: ChecklistSketchData): Promi
         } else {
           ctx.fillRect(248, 102, 65, 176);
           ctx.strokeRect(248, 102, 65, 176);
-          const rx = sketch.vehicle_kind === 'doublecab' ? 465 : sketch.vehicle_kind === 'suv' ? 580 : 500;
+          const rx =
+            sketch.vehicle_kind === 'singlecab'
+              ? 405
+              : sketch.vehicle_kind === 'doublecab'
+                ? 465
+                : sketch.vehicle_kind === 'suv'
+                  ? 580
+                  : sketch.vehicle_kind === 'hatchback'
+                    ? 537
+                    : 500;
           ctx.fillRect(rx, 102, 50, 176);
           ctx.strokeRect(rx, 102, 50, 176);
         }
@@ -646,20 +694,25 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
 
         <div className="flex flex-wrap items-center gap-2">
           {canChangeKind && !readOnly && onChange ? (
-            <select
-              aria-label="Vehicle model 3D and 2D diagram"
-              value={value.vehicle_kind}
-              onChange={(e) =>
-                onChange({ ...value, vehicle_kind: e.target.value as SketchVehicleKind })
-              }
-              className="cyan-glow-input min-h-[38px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-950"
-            >
-              {SKETCH_KINDS.map((k) => (
-                <option key={k.id} value={k.id}>
-                  Model View: {k.label}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center gap-2">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+                All 3 Views:
+              </span>
+              <select
+                aria-label="Vehicle model 3D and 2D diagram"
+                value={value.vehicle_kind}
+                onChange={(e) =>
+                  onChange({ ...value, vehicle_kind: e.target.value as SketchVehicleKind })
+                }
+                className="cyan-glow-input min-h-[38px] rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-950"
+              >
+                {SKETCH_KINDS.map((k) => (
+                  <option key={k.id} value={k.id}>
+                    Model View: {k.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           ) : (
             <span className="rounded-lg border border-blue-200 bg-blue-50/70 px-3 py-1.5 text-xs font-semibold text-blue-900">
               Model View: {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? value.vehicle_kind}
@@ -752,16 +805,19 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         </div>
       )}
 
-      {/* Compact 3-Panel Inspection Grid: Left 3D, Right 3D, and Existing Top 2D */}
-      <div className="grid grid-cols-1 gap-2.5 md:grid-cols-3 print:grid-cols-3">
+      {/* Compact 3-Panel Inspection Grid: Stacked cleanly & compact on Mobile; 3 columns on Desktop & Print A4 */}
+      <div className="flex flex-col items-center gap-2.5 md:grid md:grid-cols-3 md:items-stretch print:grid print:grid-cols-3 print:gap-2">
         {/* Panel 1: Left Side (3D) */}
-        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+        <div className="w-[82%] max-w-[270px] sm:w-[70%] sm:max-w-[300px] md:w-full md:max-w-none print:w-full print:max-w-none rounded-xl border border-blue-200 bg-white shadow-xs overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50/70 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
             <span>1. Left Side (3D)</span>
-            <span className="text-[10px] font-mono text-slate-500">FRONT &larr; &rarr; REAR</span>
+            <span className="text-[10px] font-mono text-slate-600">
+              {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? 'Sedan'}
+            </span>
           </div>
           <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
             <img
+              key={`${value.vehicle_kind}-left`}
               src={leftSrc}
               alt={`Left side 3D ${value.vehicle_kind} inspection view`}
               referrerPolicy="no-referrer"
@@ -790,13 +846,16 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         </div>
 
         {/* Panel 2: Right Side (3D) */}
-        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+        <div className="w-[82%] max-w-[270px] sm:w-[70%] sm:max-w-[300px] md:w-full md:max-w-none print:w-full print:max-w-none rounded-xl border border-blue-200 bg-white shadow-xs overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50/70 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
             <span>2. Right Side (3D)</span>
-            <span className="text-[10px] font-mono text-slate-500">REAR &larr; &rarr; FRONT</span>
+            <span className="text-[10px] font-mono text-slate-600">
+              {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? 'Sedan'}
+            </span>
           </div>
           <div className="relative aspect-[16/9] w-full bg-white touch-none overflow-hidden">
             <img
+              key={`${value.vehicle_kind}-right`}
               src={rightSrc}
               alt={`Right side 3D ${value.vehicle_kind} inspection view`}
               referrerPolicy="no-referrer"
@@ -827,10 +886,10 @@ export const VehicleConditionSketch: React.FC<VehicleConditionSketchProps> = ({
         </div>
 
         {/* Panel 3: Top-Down 2D Diagram */}
-        <div className="rounded-xl border border-blue-200 bg-white overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between border-b border-blue-100 bg-blue-50/60 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
+        <div className="w-[82%] max-w-[270px] sm:w-[70%] sm:max-w-[300px] md:w-full md:max-w-none print:w-full print:max-w-none rounded-xl border border-blue-200 bg-white shadow-xs overflow-hidden flex flex-col">
+          <div className="flex items-center justify-between border-b border-blue-100 bg-gradient-to-r from-blue-50 to-cyan-50/70 px-2.5 py-1.5 text-[11px] font-bold text-blue-950">
             <span>3. Top View (2D)</span>
-            <span className="text-[10px] font-mono text-slate-500">
+            <span className="text-[10px] font-mono text-slate-600">
               {SKETCH_KINDS.find((k) => k.id === value.vehicle_kind)?.label ?? 'Sedan'}
             </span>
           </div>
@@ -1086,22 +1145,24 @@ export const SignaturePadField: React.FC<SignaturePadFieldProps> = ({
 
   return (
     <div
-      className={`rounded-xl border p-3.5 space-y-2.5 ${
+      className={`rounded-xl border p-2.5 print:p-1.5 space-y-1.5 print:space-y-1 ${
         locked ? 'border-slate-200 bg-slate-50/70' : 'border-blue-200 bg-white'
       }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div>
-          <div className="text-sm font-bold text-blue-950">
+        <div className="min-w-0">
+          <div className="text-xs sm:text-sm print:text-[10.5px] font-bold text-blue-950 leading-tight">
             {title} {required && !locked ? '*' : ''}
           </div>
-          {subtitle && <div className="text-xs text-slate-500">{subtitle}</div>}
+          {subtitle && (
+            <div className="text-[11px] print:text-[9px] text-slate-500 leading-tight">{subtitle}</div>
+          )}
         </div>
         {!locked && sigDataUrl && (
           <button
             type="button"
             onClick={clearPad}
-            className="text-xs font-semibold text-red-700 hover:underline"
+            className="text-xs font-semibold text-red-700 hover:underline shrink-0"
           >
             Clear
           </button>
@@ -1109,28 +1170,30 @@ export const SignaturePadField: React.FC<SignaturePadFieldProps> = ({
       </div>
 
       {locked ? (
-        <div className="space-y-2">
+        <div className="space-y-1.5 print:space-y-1">
           {value?.signature_data_url ? (
-            <div className="rounded-lg border border-slate-200 bg-white p-2 flex items-center justify-center min-h-[96px]">
+            <div className="rounded-lg border border-slate-200 bg-white p-1 flex items-center justify-center min-h-[54px] max-h-[58px] print:min-h-[38px] print:max-h-[42px]">
               <img
                 src={value.signature_data_url}
                 alt={`${title} signature`}
-                className="max-h-[88px] object-contain"
+                className="max-h-[48px] print:max-h-[34px] object-contain"
               />
             </div>
           ) : (
-            <div className="rounded-lg border border-dashed border-slate-300 bg-white/60 p-4 text-center text-xs text-slate-500">
+            <div className="rounded-lg border border-dashed border-slate-300 bg-white/60 px-2 py-2.5 print:py-1.5 text-center text-[11px] print:text-[9.5px] text-slate-500">
               {lockMessage || 'Locked until vehicle return'}
             </div>
           )}
-          <div className="grid grid-cols-2 gap-2 text-xs">
-            <div>
+          <div className="grid grid-cols-2 gap-1.5 border-t border-slate-200/80 pt-1 text-[11px] print:text-[9.5px] leading-tight">
+            <div className="min-w-0">
               <span className="text-slate-500 block">Name</span>
-              <span className="font-semibold text-blue-950">{value?.name || '—'}</span>
+              <span className="font-semibold text-blue-950 truncate block">{value?.name || '—'}</span>
             </div>
-            <div>
+            <div className="min-w-0">
               <span className="text-slate-500 block">ID / Licence No.</span>
-              <span className="font-mono font-semibold text-blue-950">{value?.id_number || '—'}</span>
+              <span className="font-mono font-semibold text-blue-950 truncate block">
+                {value?.id_number || '—'}
+              </span>
             </div>
           </div>
         </div>
@@ -1145,15 +1208,15 @@ export const SignaturePadField: React.FC<SignaturePadFieldProps> = ({
             <canvas
               ref={canvasRef}
               width={440}
-              height={120}
+              height={96}
               onPointerDown={handleDown}
               onPointerMove={handleMove}
               onPointerUp={handleUp}
               onPointerCancel={handleUp}
-              className="w-full h-[108px] cursor-crosshair block"
+              className="w-full h-[80px] cursor-crosshair block"
             />
           </div>
-          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="block text-[11px] font-semibold text-slate-600">
                 Full Name {required ? '*' : ''}
@@ -1168,7 +1231,7 @@ export const SignaturePadField: React.FC<SignaturePadFieldProps> = ({
                   emitChange(v, idNumber, sigDataUrl);
                 }}
                 placeholder="Print full name"
-                className="cyan-glow-input mt-1 block w-full min-h-[40px] rounded-lg border border-blue-200 px-2.5 text-sm text-blue-950"
+                className="cyan-glow-input mt-0.5 block w-full min-h-[36px] rounded-lg border border-blue-200 px-2 text-xs text-blue-950"
               />
             </div>
             <div>
@@ -1185,7 +1248,7 @@ export const SignaturePadField: React.FC<SignaturePadFieldProps> = ({
                   emitChange(name, v, sigDataUrl);
                 }}
                 placeholder="e.g. 63-123456A77"
-                className="cyan-glow-input mt-1 block w-full min-h-[40px] rounded-lg border border-blue-200 px-2.5 font-mono text-sm text-blue-950"
+                className="cyan-glow-input mt-0.5 block w-full min-h-[36px] rounded-lg border border-blue-200 px-2 font-mono text-xs text-blue-950"
               />
             </div>
           </div>
@@ -1199,6 +1262,7 @@ interface ChecklistSectionGProps {
   declarationText: string;
   signatures: ChecklistSignatures;
   mode: 'create' | 'return' | 'view';
+  hirerType?: ChecklistHirerType;
   onChangeOutRenter?: (entry: ChecklistSignatureEntry) => void;
   onChangeOutCompany?: (entry: ChecklistSignatureEntry) => void;
   onChangeInRenter?: (entry: ChecklistSignatureEntry) => void;
@@ -1209,55 +1273,111 @@ export const ChecklistSectionG: React.FC<ChecklistSectionGProps> = ({
   declarationText,
   signatures,
   mode,
+  hirerType = 'renter',
   onChangeOutRenter,
   onChangeOutCompany,
   onChangeInRenter,
   onChangeInCompany,
 }) => {
+  const isOwner = hirerType === 'owner';
+
   return (
-    <div className="space-y-4 rounded-2xl border border-blue-200 bg-white p-4 sm:p-5">
+    <div className="space-y-2.5 print:space-y-1.5 rounded-2xl border border-blue-200 bg-white p-3.5 sm:p-4 print:p-2 print:rounded-lg print:break-inside-avoid">
       <div>
-        <h3 className="text-base font-bold text-blue-950">Section G — Declaration &amp; Sign-Off</h3>
-        <p className="mt-1.5 rounded-xl border border-blue-100 bg-blue-50/40 p-3 text-xs leading-relaxed text-slate-700">
+        <h3 className="text-sm sm:text-base print:text-xs font-bold text-blue-950">
+          Section G — Declaration &amp; Sign-Off
+        </h3>
+        <p className="mt-1 rounded-lg border border-blue-100 bg-blue-50/40 p-2 print:p-1.5 text-xs print:text-[9.5px] leading-snug text-slate-700">
           {declarationText}
         </p>
       </div>
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <SignaturePadField
-          title="1. Checked Out By (Renter / Driver)"
-          subtitle="Vehicle condition accepted on departure"
-          value={signatures.outRenter}
-          onChange={onChangeOutRenter}
-          locked={mode !== 'create'}
-          required={mode === 'create'}
-        />
-        <SignaturePadField
-          title="2. Checked Out By (Company Representative)"
-          subtitle="Yard / Security dispatch verification"
-          value={signatures.outCompany}
-          onChange={onChangeOutCompany}
-          locked={mode !== 'create'}
-          required={mode === 'create'}
-        />
-        <SignaturePadField
-          title="3. Checked In By (Renter / Driver)"
-          subtitle="Vehicle condition accepted on return"
-          value={signatures.inRenter}
-          onChange={onChangeInRenter}
-          locked={mode !== 'return'}
-          lockMessage={mode === 'create' ? 'Signed upon vehicle return' : 'Not yet returned'}
-          required={mode === 'return'}
-        />
-        <SignaturePadField
-          title="4. Checked In By (Company Representative)"
-          subtitle="Yard / Security check-in sign-off"
-          value={signatures.inCompany}
-          onChange={onChangeInCompany}
-          locked={mode !== 'return'}
-          lockMessage={mode === 'create' ? 'Signed upon vehicle return' : 'Not yet returned'}
-          required={mode === 'return'}
-        />
+      {/* Row 1: Initial Check-Out (Renter) or Check-In (Owner) inline with Company Representative */}
+      <div className="space-y-1">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-blue-900">
+          {isOwner
+            ? 'Check-In Signatures (Owner & Company Representative)'
+            : 'Check-Out Signatures (Renter / Client & Company Representative)'}
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 print:grid-cols-2 print:gap-2">
+          <SignaturePadField
+            title={isOwner ? '1. Checked In By (Owner)' : '1. Checked Out By (Renter / Client)'}
+            subtitle={isOwner ? 'Condition verified on check-in' : 'Condition accepted on departure'}
+            value={signatures.outRenter}
+            onChange={onChangeOutRenter}
+            locked={mode !== 'create'}
+            required={mode === 'create'}
+          />
+          <SignaturePadField
+            title={
+              isOwner
+                ? '2. Checked In By (Company Representative)'
+                : '2. Checked Out By (Company Representative)'
+            }
+            subtitle={
+              isOwner
+                ? 'Yard / Security check-in verification'
+                : 'Yard / Security dispatch verification'
+            }
+            value={signatures.outCompany}
+            onChange={onChangeOutCompany}
+            locked={mode !== 'create'}
+            required={mode === 'create'}
+          />
+        </div>
+      </div>
+
+      {/* Row 2: Closing Check-In (Renter) or Check-Out (Owner) inline with Company Representative */}
+      <div className="space-y-1">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-cyan-900">
+          {isOwner
+            ? 'Check-Out Signatures (Owner & Company Representative)'
+            : 'Check-In / Return Signatures (Renter / Client & Company Representative)'}
+        </div>
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 print:grid-cols-2 print:gap-2">
+          <SignaturePadField
+            title={isOwner ? '3. Checked Out By (Owner)' : '3. Checked In By (Renter / Client)'}
+            subtitle={isOwner ? 'Condition accepted on check-out' : 'Condition accepted on return'}
+            value={signatures.inRenter}
+            onChange={onChangeInRenter}
+            locked={mode !== 'return'}
+            lockMessage={
+              isOwner
+                ? mode === 'create'
+                  ? 'Signed upon vehicle check-out'
+                  : 'Not yet checked out'
+                : mode === 'create'
+                  ? 'Signed upon vehicle return'
+                  : 'Not yet returned'
+            }
+            required={mode === 'return'}
+          />
+          <SignaturePadField
+            title={
+              isOwner
+                ? '4. Checked Out By (Company Representative)'
+                : '4. Checked In By (Company Representative)'
+            }
+            subtitle={
+              isOwner
+                ? 'Yard / Security check-out sign-off'
+                : 'Yard / Security check-in sign-off'
+            }
+            value={signatures.inCompany}
+            onChange={onChangeInCompany}
+            locked={mode !== 'return'}
+            lockMessage={
+              isOwner
+                ? mode === 'create'
+                  ? 'Signed upon vehicle check-out'
+                  : 'Not yet checked out'
+                : mode === 'create'
+                  ? 'Signed upon vehicle return'
+                  : 'Not yet returned'
+            }
+            required={mode === 'return'}
+          />
+        </div>
       </div>
     </div>
   );

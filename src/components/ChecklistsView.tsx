@@ -12,6 +12,7 @@ import {
   FilePlus2,
   Plus,
   Printer,
+  RotateCcw,
   Search,
   Settings2,
   Trash2,
@@ -233,6 +234,10 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   onOpenVehicle,
 }) => {
   const isAdmin = currentUser.role === 'ADMIN';
+  const canConfigureTemplates =
+    currentUser.role === 'ADMIN' ||
+    currentUser.role === 'SUPERVISOR' ||
+    currentUser.role === 'FLEET_MANAGER';
   const todayStr = getHarareTodayStr();
 
   // Mode: list | create | detail
@@ -254,6 +259,9 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     () => readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll)?.data.items ?? []
   );
   const [templates, setTemplates] = useState<ChecklistItemTemplate[]>(
+    () => readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates)?.data ?? []
+  );
+  const [allTemplates, setAllTemplates] = useState<ChecklistItemTemplate[]>(
     () => readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates)?.data ?? []
   );
   const [referenceLoaded, setReferenceLoaded] = useState(false);
@@ -346,26 +354,32 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   const [showAddRow, setShowAddRow] = useState(false);
   const [customRowLabel, setCustomRowLabel] = useState('');
   const [customRowType, setCustomRowType] = useState<ChecklistInputType>('tick_cross');
+  const [saveCustomRowAsTemplate, setSaveCustomRowAsTemplate] = useState(false);
   const [expandedRowExtras, setExpandedRowExtras] = useState<Record<string, boolean>>({});
 
   const loadReferenceData = useCallback(async () => {
     try {
       const [vRes, tRes] = await Promise.all([
         api.listVehicles({ limit: 250 }),
-        api.listChecklistTemplates(false),
+        api.listChecklistTemplates(true),
       ]);
       setVehicles(vRes.items);
       writeCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll, {
         items: vRes.items,
         total: vRes.total,
       });
-      setTemplates(tRes.items);
-      writeCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates, tRes.items);
+      setAllTemplates(tRes.items);
+      const activeOnly = tRes.items.filter((t) => t.active);
+      setTemplates(activeOnly);
+      writeCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates, activeOnly);
     } catch {
       const cachedVehicles = readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll);
       if (cachedVehicles) setVehicles(cachedVehicles.data.items);
       const cachedTemplates = readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates);
-      if (cachedTemplates) setTemplates(cachedTemplates.data);
+      if (cachedTemplates) {
+        setTemplates(cachedTemplates.data);
+        setAllTemplates(cachedTemplates.data);
+      }
     } finally {
       setReferenceLoaded(true);
     }
@@ -661,7 +675,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     return Number.isFinite(entered) && entered !== cExpectedMileage;
   }, [cExpectedMileage, cMileageOut]);
 
-  const handleAddInlineRowCreate = () => {
+  const handleAddInlineRowCreate = async () => {
     const label = customRowLabel.trim();
     if (!label) return;
     const options =
@@ -672,9 +686,25 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
           : customRowType === 'available_na'
             ? ['Available', 'N/A']
             : [];
+
+    let createdTemplateId: number | null = null;
+    if (saveCustomRowAsTemplate && canConfigureTemplates) {
+      try {
+        const res = await api.createChecklistTemplate({
+          label,
+          input_type: customRowType,
+          options,
+        });
+        createdTemplateId = res.template.id;
+        await loadReferenceData();
+      } catch {
+        // Still add locally if offline or template save fails
+      }
+    }
+
     const newRow: DraftChecklistRow = {
       localKey: `custom_${Date.now()}`,
-      template_id: null,
+      template_id: createdTemplateId,
       custom_label: label,
       input_type: customRowType,
       options,
@@ -686,7 +716,34 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     };
     setCItems((prev) => [...prev, newRow]);
     setCustomRowLabel('');
+    setSaveCustomRowAsTemplate(false);
     setShowAddRow(false);
+  };
+
+  const handleRemoveInlineRowCreate = (localKey: string) => {
+    setCItems((prev) => {
+      if (prev.length <= 1) return prev;
+      return prev.filter((r) => r.localKey !== localKey);
+    });
+  };
+
+  const handleRestoreDefaultRows = () => {
+    const activeTpls =
+      templates.length > 0
+        ? templates
+        : readCachedEntry<ChecklistItemTemplate[]>(CACHE_KEYS.checklistTemplates)?.data ?? [];
+    setCItems((prev) => {
+      const existingTplIds = new Set(prev.map((r) => r.template_id).filter((id): id is number => id !== null));
+      const missingTpls = activeTpls.filter((t) => !existingTplIds.has(t.id));
+      if (missingTpls.length === 0) return prev;
+      const restored = buildDraftItemsFromTemplates(missingTpls).map((item, idx) => ({
+        ...item,
+        localKey: `tpl_${item.template_id}_restored_${Date.now()}_${idx}`,
+      }));
+      const merged = [...prev, ...restored];
+      merged.sort((a, b) => a.sort_order - b.sort_order);
+      return merged;
+    });
   };
 
   const handleAddInlineRowReturn = async () => {
@@ -746,11 +803,19 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       return;
     }
     if (!cOutRenter.name.trim() || !cOutRenter.id_number.trim() || !cOutRenter.signature_data_url) {
-      setError('Checked Out By (Renter / Driver) name, ID No., and signature are required.');
+      setError(
+        cHirerType === 'owner'
+          ? 'Checked In By (Owner) name, ID No., and signature are required.'
+          : 'Checked Out By (Renter / Driver) name, ID No., and signature are required.'
+      );
       return;
     }
     if (!cOutCompany.name.trim() || !cOutCompany.id_number.trim() || !cOutCompany.signature_data_url) {
-      setError('Checked Out By (Company Rep) name, ID No., and signature are required.');
+      setError(
+        cHirerType === 'owner'
+          ? 'Checked In By (Company Representative) name, ID No., and signature are required.'
+          : 'Checked Out By (Company Representative) name, ID No., and signature are required.'
+      );
       return;
     }
     if (cVehicleMode === 'existing' && !cVehicleId) {
@@ -904,11 +969,19 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       return;
     }
     if (!retInRenter.name.trim() || !retInRenter.id_number.trim() || !retInRenter.signature_data_url) {
-      setError('Checked In By (Renter / Driver) name, ID No., and signature are required.');
+      setError(
+        detail.hirer_type === 'owner'
+          ? 'Checked Out By (Owner) name, ID No., and signature are required.'
+          : 'Checked In By (Renter / Driver) name, ID No., and signature are required.'
+      );
       return;
     }
     if (!retInCompany.name.trim() || !retInCompany.id_number.trim() || !retInCompany.signature_data_url) {
-      setError('Checked In By (Company Rep) name, ID No., and signature are required.');
+      setError(
+        detail.hirer_type === 'owner'
+          ? 'Checked Out By (Company Representative) name, ID No., and signature are required.'
+          : 'Checked In By (Company Representative) name, ID No., and signature are required.'
+      );
       return;
     }
 
@@ -1045,21 +1118,69 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             : newTplType === 'available_na'
               ? ['Available', 'N/A']
               : [];
-      await api.createChecklistTemplate({
+      const res = await api.createChecklistTemplate({
         label: newTplLabel.trim(),
         input_type: newTplType,
         options,
       });
       setNewTplLabel('');
       await loadReferenceData();
+      if (screen === 'create') {
+        const t = res.template;
+        setCItems((prev) => [
+          ...prev,
+          {
+            localKey: `tpl_${t.id}_${Date.now()}`,
+            template_id: t.id,
+            custom_label: t.label,
+            input_type: t.input_type,
+            options: t.options ?? [],
+            sort_order: prev.length + 1,
+            value_out: makeDefaultValue(t.input_type, t.options ?? []),
+            value_in: null,
+            note: '',
+            photo_data_url: null,
+          },
+        ]);
+      }
     } finally {
       setSavingTpl(false);
     }
   };
 
   const handleToggleTemplateActive = async (tpl: ChecklistItemTemplate) => {
-    await api.updateChecklistTemplate(tpl.id, { active: !tpl.active });
+    const nextActive = !tpl.active;
+    await api.updateChecklistTemplate(tpl.id, { active: nextActive });
     await loadReferenceData();
+    if (screen === 'create') {
+      if (!nextActive) {
+        setCItems((prev) => {
+          const filtered = prev.filter((r) => r.template_id !== tpl.id);
+          return filtered.length > 0 ? filtered : prev;
+        });
+      } else {
+        setCItems((prev) => {
+          if (prev.some((r) => r.template_id === tpl.id)) return prev;
+          const merged = [
+            ...prev,
+            {
+              localKey: `tpl_${tpl.id}_${Date.now()}`,
+              template_id: tpl.id,
+              custom_label: tpl.label,
+              input_type: tpl.input_type,
+              options: tpl.options ?? [],
+              sort_order: tpl.sort_order ?? prev.length + 1,
+              value_out: makeDefaultValue(tpl.input_type, tpl.options ?? []),
+              value_in: null,
+              note: '',
+              photo_data_url: null,
+            },
+          ];
+          merged.sort((a, b) => a.sort_order - b.sort_order);
+          return merged;
+        });
+      }
+    }
   };
 
   const renderItemControl = (
@@ -1318,69 +1439,111 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     rows: DraftChecklistRow[],
     mode: 'create' | 'return',
     onUpdateRow: (localKey: string, updater: (prev: DraftChecklistRow) => DraftChecklistRow) => void
-  ) => (
+  ) => {
+    const activeTplIds = new Set(rows.map((r) => r.template_id).filter((id): id is number => id !== null));
+    const hasMissingDefaults =
+      mode === 'create' && templates.some((t) => !activeTplIds.has(t.id));
+
+    return (
     <div className="space-y-3 rounded-2xl border border-blue-200 bg-white p-4 sm:p-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-base font-bold text-blue-950">Section F — 25-Point Vehicle Inspection</h3>
+          <h3 className="text-base font-bold text-blue-950">
+            Section F — Vehicle Inspection Checklist ({rows.length} items)
+          </h3>
           <p className="text-xs text-slate-600">
             {mode === 'create'
-              ? 'Complete all check-out inspection rows. Add optional row notes or photos where needed.'
+              ? 'Add or remove rows to tailor your checklist items. Add optional notes or photos per row.'
               : 'OUT values stay locked for comparison. Record every Check-In value on the right.'}
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setShowAddRow((v) => !v)}
-          className="cyan-glow-outline inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
-        >
-          <Plus className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
-          <span>Add row</span>
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          {hasMissingDefaults && (
+            <button
+              type="button"
+              onClick={handleRestoreDefaultRows}
+              className="cyan-glow-outline inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-blue-200 bg-blue-50/70 px-3 text-xs font-semibold text-blue-900"
+            >
+              <RotateCcw className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
+              <span>Restore Defaults</span>
+            </button>
+          )}
+          {mode === 'create' && canConfigureTemplates && (
+            <button
+              type="button"
+              onClick={() => setShowTemplateModal(true)}
+              className="cyan-glow-outline inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
+            >
+              <Settings2 className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
+              <span>Configure List</span>
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowAddRow((v) => !v)}
+            className="cyan-glow-outline inline-flex min-h-[38px] items-center gap-1.5 rounded-lg border border-blue-200 bg-white px-3 text-xs font-semibold text-blue-900"
+          >
+            <Plus className="h-3.5 w-3.5 text-cyan-600" aria-hidden="true" />
+            <span>Add Item</span>
+          </button>
+        </div>
       </div>
 
       {showAddRow && (
-        <div className="rounded-xl border border-cyan-300 bg-cyan-50/60 p-3 flex flex-col gap-2 sm:flex-row sm:items-end">
-          <div className="flex-1">
-            <label className="block text-xs font-semibold text-blue-950">Custom Row Name</label>
-            <input
-              type="text"
-              value={customRowLabel}
-              onChange={(e) => setCustomRowLabel(e.target.value)}
-              placeholder="e.g. Tow Bar Pin / Roof Rack"
-              className="cyan-glow-input mt-1 block w-full min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-blue-950">Input Type</label>
-            <select
-              value={customRowType}
-              onChange={(e) => setCustomRowType(e.target.value as ChecklistInputType)}
-              className="cyan-glow-input mt-1 block min-h-[40px] rounded-lg border border-blue-200 bg-white px-2.5 text-sm text-blue-950"
+        <div className="rounded-xl border border-cyan-300 bg-cyan-50/60 p-3 space-y-2.5">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+            <div className="flex-1">
+              <label className="block text-xs font-semibold text-blue-950">Custom Row Name</label>
+              <input
+                type="text"
+                value={customRowLabel}
+                onChange={(e) => setCustomRowLabel(e.target.value)}
+                placeholder="e.g. Tow Bar Pin / Roof Rack"
+                className="cyan-glow-input mt-1 block w-full min-h-[40px] rounded-lg border border-blue-200 bg-white px-3 text-sm text-blue-950"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-semibold text-blue-950">Input Type</label>
+              <select
+                value={customRowType}
+                onChange={(e) => setCustomRowType(e.target.value as ChecklistInputType)}
+                className="cyan-glow-input mt-1 block min-h-[40px] rounded-lg border border-blue-200 bg-white px-2.5 text-sm text-blue-950"
+              >
+                {INPUT_TYPE_LABELS.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                mode === 'create' ? void handleAddInlineRowCreate() : void handleAddInlineRowReturn()
+              }
+              className="cyan-glow-btn min-h-[40px] rounded-lg px-4 text-xs font-semibold"
             >
-              {INPUT_TYPE_LABELS.map((it) => (
-                <option key={it.id} value={it.id}>
-                  {it.label}
-                </option>
-              ))}
-            </select>
+              Insert Item
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={() =>
-              mode === 'create' ? handleAddInlineRowCreate() : void handleAddInlineRowReturn()
-            }
-            className="cyan-glow-btn min-h-[40px] rounded-lg px-4 text-xs font-semibold"
-          >
-            Insert Row
-          </button>
+          {mode === 'create' && canConfigureTemplates && (
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs font-medium text-blue-950">
+              <input
+                type="checkbox"
+                checked={saveCustomRowAsTemplate}
+                onChange={(e) => setSaveCustomRowAsTemplate(e.target.checked)}
+                className="h-4 w-4 accent-cyan-600"
+              />
+              <span>Also save to default template list for future checklists</span>
+            </label>
+          )}
         </div>
       )}
 
       <div className="divide-y divide-blue-100 rounded-xl border border-blue-100 overflow-hidden">
         {rows.length === 0 ? (
           <div className="p-4 text-sm text-slate-600">
-            Loading 25-point vehicle inspection items...
+            Loading vehicle inspection items...
           </div>
         ) : (
           rows.map((row, idx) => {
@@ -1427,6 +1590,19 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     >
                       {hasExtras ? 'Hide Note/Photo' : '+ Note / Photo'}
                     </button>
+                    {mode === 'create' && (
+                      <button
+                        type="button"
+                        disabled={rows.length <= 1}
+                        onClick={() => handleRemoveInlineRowCreate(row.localKey)}
+                        title={`Remove ${row.custom_label}`}
+                        aria-label={`Remove ${row.custom_label}`}
+                        className="inline-flex min-h-[34px] items-center gap-1 rounded-lg border border-red-200 bg-red-50/70 px-2 text-xs font-semibold text-red-700 hover:bg-red-100 disabled:opacity-35"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span className="hidden sm:inline">Remove</span>
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1488,7 +1664,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         )}
       </div>
     </div>
-  );
+    );
+  };
 
   // ==================== CREATE CHECKLIST SCREEN ====================
   if (screen === 'create') {
@@ -1595,6 +1772,10 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     setCVehicleMode('new');
                     setCVehicleId(0);
                     setCExpectedMileage(null);
+                    setCSketch((prev) => ({
+                      ...prev,
+                      vehicle_kind: inferSketchKind(cNewType, cNewMakeModel),
+                    }));
                   } else if (vehicles[0]) {
                     applyVehicleSelection(vehicles[0]);
                   }
@@ -1692,11 +1873,14 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     onChange={(e) => {
                       const nextModel = e.target.value;
                       setCNewMakeModel(nextModel);
+                      const explicitTypeKind = matchSketchKindFromText(cNewType);
+                      const modelKind = matchSketchKindFromText(nextModel);
                       setCSketch((prev) => ({
                         ...prev,
                         vehicle_kind:
-                          matchSketchKindFromText(nextModel) ??
-                          inferSketchKind(cNewType, nextModel),
+                          cNewType !== VEHICLE_TYPES[0]
+                            ? explicitTypeKind ?? modelKind ?? 'sedan'
+                            : modelKind ?? explicitTypeKind ?? 'sedan',
                       }));
                     }}
                     placeholder="e.g. Toyota Fortuner"
@@ -1892,6 +2076,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               inCompany: null,
             }}
             mode="create"
+            hirerType={cHirerType}
             onChangeOutRenter={setCOutRenter}
             onChangeOutCompany={setCOutCompany}
           />
@@ -1936,6 +2121,82 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             </button>
           </div>
         </form>
+        {showTemplateModal && canConfigureTemplates && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4 overflow-y-auto">
+            <div className="w-full max-w-lg rounded-2xl border border-blue-200 bg-white p-6 shadow-xl my-8 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-lg font-bold text-blue-950">
+                    Configure Inspection Items ({allTemplates.filter((t) => t.active).length} active)
+                  </h2>
+                  <p className="text-xs text-slate-600">
+                    Add new default checklist rows or remove/restore existing ones.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowTemplateModal(false)}
+                  aria-label="Close"
+                  className="p-2 text-slate-500"
+                >
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
+
+              <form onSubmit={handleAddTemplate} className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="text"
+                  required
+                  value={newTplLabel}
+                  onChange={(e) => setNewTplLabel(e.target.value)}
+                  placeholder="Add new default row label..."
+                  className="cyan-glow-input flex-1 min-h-[42px] rounded-xl border border-blue-200 px-3 text-sm"
+                />
+                <select
+                  value={newTplType}
+                  onChange={(e) => setNewTplType(e.target.value as ChecklistInputType)}
+                  className="cyan-glow-input min-h-[42px] rounded-xl border border-blue-200 bg-white px-2.5 text-xs font-semibold"
+                >
+                  {INPUT_TYPE_LABELS.map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {it.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="submit"
+                  disabled={savingTpl}
+                  className="cyan-glow-btn min-h-[42px] rounded-xl px-4 text-xs font-semibold"
+                >
+                  Add
+                </button>
+              </form>
+
+              <div className="max-h-80 overflow-y-auto divide-y divide-blue-100 rounded-xl border border-blue-100">
+                {allTemplates.map((t, i) => (
+                  <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                    <div className={t.active ? '' : 'opacity-60 line-through'}>
+                      <span className="font-mono text-slate-400 mr-1.5">{i + 1}.</span>
+                      <span className="font-semibold text-blue-950">{t.label}</span>
+                      <span className="ml-2 font-mono text-[11px] text-slate-500">({t.input_type})</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void handleToggleTemplateActive(t)}
+                      className={`rounded-lg px-2.5 py-1 font-semibold ${
+                        t.active
+                          ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                          : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
+                      }`}
+                    >
+                      {t.active ? 'Remove' : 'Restore'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -2139,6 +2400,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                 inCompany: retInCompany,
               }}
               mode="return"
+              hirerType={detail.hirer_type}
               onChangeInRenter={setRetInRenter}
               onChangeInCompany={setRetInCompany}
             />
@@ -2172,18 +2434,18 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             </button>
           </form>
         ) : (
-          <div className="space-y-5">
+          <div className="space-y-4 print:space-y-2">
             {/* Printable Header */}
-            <div className="rounded-2xl border border-blue-200 bg-white p-5 space-y-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between border-b border-blue-100 pb-4">
+            <div className="rounded-2xl border border-blue-200 bg-white p-4 sm:p-5 print:p-2.5 print:rounded-lg space-y-3 print:space-y-2">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between border-b border-blue-100 pb-3 print:pb-1.5">
                 <div>
-                  <div className="text-xs font-semibold uppercase tracking-wide text-cyan-800">
+                  <div className="text-xs print:text-[10px] font-semibold uppercase tracking-wide text-cyan-800">
                     {companyName} · Digital Vehicle Checklist #{detail.id}
                   </div>
-                  <h1 className="mt-1 font-display text-2xl font-bold text-blue-950">
+                  <h1 className="mt-0.5 font-display text-xl sm:text-2xl print:text-base font-bold text-blue-950">
                     {detail.reg_number} — {detail.car_model}
                   </h1>
-                  <div className="mt-1 text-xs text-slate-600">
+                  <div className="mt-0.5 text-xs print:text-[10px] text-slate-600">
                     {detail.vehicle_type}
                     {detail.colour ? ` · ${detail.colour}` : ''}
                     {detail.trip_id ? ` · Linked Trip #${detail.trip_id}` : ''}
@@ -2191,7 +2453,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                 </div>
                 <div className="flex flex-col sm:items-end gap-1.5">
                   <span
-                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 text-xs font-bold ${
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1 print:px-2 print:py-0.5 text-xs print:text-[10px] font-bold ${
                       detail.status === 'completed'
                         ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
                         : 'bg-amber-50 text-amber-900 border border-amber-300'
@@ -2223,12 +2485,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
               {/* Differences highlight box when completed */}
               {detail.differences.length > 0 && (
-                <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 space-y-2">
-                  <div className="flex items-center gap-2 text-sm font-bold text-amber-950">
+                <div className="rounded-xl border border-amber-300 bg-amber-50 p-3 print:p-2 space-y-1.5">
+                  <div className="flex items-center gap-2 text-xs sm:text-sm print:text-[10.5px] font-bold text-amber-950">
                     <AlertTriangle className="h-4 w-4 text-amber-700" aria-hidden="true" />
                     <span>Differences Detected Between Check-Out &amp; Check-In ({detail.differences.length})</span>
                   </div>
-                  <ul className="space-y-1 text-xs text-amber-950">
+                  <ul className="space-y-0.5 text-xs print:text-[9.5px] text-amber-950">
                     {detail.differences.map((diff, i) => (
                       <li key={i} className="font-medium">
                         • <span className="font-bold">{diff.label}:</span> OUT ({diff.out_summary}) &rarr; IN ({diff.in_summary})
@@ -2239,8 +2501,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               )}
 
               {/* Sections A–E Read-Only Summary Grid */}
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 text-xs">
-                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-3 space-y-1">
+              <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2 lg:grid-cols-4 print:grid-cols-4 print:gap-1.5 text-xs print:text-[9.5px]">
+                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-2.5 print:p-1.5 space-y-0.5">
                   <div className="font-bold text-blue-900 uppercase">Section A — Hirer</div>
                   <div>
                     <span className="text-slate-500">
@@ -2257,7 +2519,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-3 space-y-1">
+                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-2.5 print:p-1.5 space-y-0.5">
                   <div className="font-bold text-blue-900 uppercase">Section C — Dates</div>
                   <div>
                     <span className="text-slate-500">Hire Date:</span>{' '}
@@ -2273,7 +2535,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                   </div>
                 </div>
 
-                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-3 space-y-1">
+                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-2.5 print:p-1.5 space-y-0.5">
                   <div className="font-bold text-blue-900 uppercase">Section D — Mileage</div>
                   <div>
                     <span className="text-slate-500">Out:</span>{' '}
@@ -2294,13 +2556,13 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     </div>
                   )}
                   {detail.mileage_out_diff_warning && (
-                    <div className="text-[11px] font-semibold text-amber-800">
+                    <div className="text-[11px] print:text-[9px] font-semibold text-amber-800">
                       Out km differed from {detail.previous_closing_mileage?.toLocaleString()} km
                     </div>
                   )}
                 </div>
 
-                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-3 space-y-1">
+                <div className="rounded-xl border border-blue-100 bg-blue-50/30 p-2.5 print:p-1.5 space-y-0.5">
                   <div className="font-bold text-blue-900 uppercase">Section E — Service &amp; Fuel</div>
                   <div>
                     <span className="text-slate-500">Type:</span>{' '}
@@ -2329,36 +2591,36 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             </div>
 
             {/* Section F Table Read-Only */}
-            <div className="rounded-2xl border border-blue-200 bg-white overflow-hidden">
-              <div className="border-b border-blue-100 bg-blue-50/60 px-4 py-3 text-sm font-bold text-blue-950">
+            <div className="rounded-2xl border border-blue-200 bg-white overflow-hidden print:rounded-lg">
+              <div className="border-b border-blue-100 bg-blue-50/60 px-4 py-2.5 print:px-2.5 print:py-1 text-sm print:text-xs font-bold text-blue-950">
                 Section F — Inspection Checklist ({detail.items.length} items)
               </div>
               <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse text-xs">
+                <table className="w-full text-left border-collapse text-xs print:text-[9.5px]">
                   <thead>
                     <tr className="border-b border-blue-100 bg-slate-50 text-blue-900">
-                      <th className="py-2 px-3 w-10">#</th>
-                      <th className="py-2 px-3">Item</th>
-                      <th className="py-2 px-3">Out</th>
-                      <th className="py-2 px-3">In</th>
-                      <th className="py-2 px-3">Notes / Photo</th>
+                      <th className="py-1.5 px-3 print:py-1 print:px-1.5 w-8">#</th>
+                      <th className="py-1.5 px-3 print:py-1 print:px-1.5">Item</th>
+                      <th className="py-1.5 px-3 print:py-1 print:px-1.5">Out</th>
+                      <th className="py-1.5 px-3 print:py-1 print:px-1.5">In</th>
+                      <th className="py-1.5 px-3 print:py-1 print:px-1.5">Notes / Photo</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-blue-100">
                     {detail.items.map((it, idx) => (
                       <tr key={it.id}>
-                        <td className="py-2 px-3 font-mono text-slate-400">{idx + 1}</td>
-                        <td className="py-2 px-3 font-semibold text-blue-950">{it.custom_label}</td>
-                        <td className="py-2 px-3">{summarizeChecklistVal(it.value_out, it.input_type)}</td>
-                        <td className="py-2 px-3">{summarizeChecklistVal(it.value_in, it.input_type)}</td>
-                        <td className="py-2 px-3">
+                        <td className="py-1.5 px-3 print:py-0.5 print:px-1.5 font-mono text-slate-400">{idx + 1}</td>
+                        <td className="py-1.5 px-3 print:py-0.5 print:px-1.5 font-semibold text-blue-950">{it.custom_label}</td>
+                        <td className="py-1.5 px-3 print:py-0.5 print:px-1.5">{summarizeChecklistVal(it.value_out, it.input_type)}</td>
+                        <td className="py-1.5 px-3 print:py-0.5 print:px-1.5">{summarizeChecklistVal(it.value_in, it.input_type)}</td>
+                        <td className="py-1.5 px-3 print:py-0.5 print:px-1.5">
                           <div className="flex items-center gap-2">
                             {it.note && <span className="text-slate-700">{it.note}</span>}
                             {it.photo_data_url && (
                               <img
                                 src={it.photo_data_url}
                                 alt={`${it.custom_label} photo`}
-                                className="h-9 w-9 rounded border border-blue-200 object-cover"
+                                className="h-9 w-9 print:h-6 print:w-6 rounded border border-blue-200 object-cover"
                               />
                             )}
                             {!it.note && !it.photo_data_url && <span className="text-slate-400">—</span>}
@@ -2388,6 +2650,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               declarationText={detail.declaration_text}
               signatures={detail.signatures}
               mode="view"
+              hirerType={detail.hirer_type}
             />
           </div>
         )}
@@ -2559,7 +2822,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         </div>
 
         <div className="flex flex-wrap items-center gap-2.5">
-          {isAdmin && (
+          {canConfigureTemplates && (
             <button
               type="button"
               onClick={() => setShowTemplateModal(true)}
@@ -2743,14 +3006,19 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         )}
       </div>
 
-      {/* Admin Template Manager Modal */}
-      {showTemplateModal && isAdmin && (
+      {/* Configure Template Rows Modal */}
+      {showTemplateModal && canConfigureTemplates && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-blue-950/50 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="w-full max-w-lg rounded-2xl border border-blue-200 bg-white p-6 shadow-xl my-8 space-y-4">
             <div className="flex items-center justify-between gap-3">
-              <h2 className="font-display text-lg font-bold text-blue-950">
-                Checklist Template Rows ({templates.length})
-              </h2>
+              <div>
+                <h2 className="font-display text-lg font-bold text-blue-950">
+                  Configure Inspection Items ({allTemplates.filter((t) => t.active).length} active)
+                </h2>
+                <p className="text-xs text-slate-600">
+                  Add new default checklist rows or remove/restore existing ones.
+                </p>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowTemplateModal(false)}
@@ -2791,9 +3059,9 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             </form>
 
             <div className="max-h-80 overflow-y-auto divide-y divide-blue-100 rounded-xl border border-blue-100">
-              {templates.map((t, i) => (
+              {allTemplates.map((t, i) => (
                 <div key={t.id} className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
-                  <div>
+                  <div className={t.active ? '' : 'opacity-60 line-through'}>
                     <span className="font-mono text-slate-400 mr-1.5">{i + 1}.</span>
                     <span className="font-semibold text-blue-950">{t.label}</span>
                     <span className="ml-2 font-mono text-[11px] text-slate-500">({t.input_type})</span>
@@ -2803,11 +3071,11 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     onClick={() => void handleToggleTemplateActive(t)}
                     className={`rounded-lg px-2.5 py-1 font-semibold ${
                       t.active
-                        ? 'bg-emerald-50 text-emerald-800 border border-emerald-200'
-                        : 'bg-slate-100 text-slate-600 border border-slate-200'
+                        ? 'bg-red-50 text-red-700 border border-red-200 hover:bg-red-100'
+                        : 'bg-emerald-50 text-emerald-800 border border-emerald-200 hover:bg-emerald-100'
                     }`}
                   >
-                    {t.active ? 'Active' : 'Hidden'}
+                    {t.active ? 'Remove' : 'Restore'}
                   </button>
                 </div>
               ))}

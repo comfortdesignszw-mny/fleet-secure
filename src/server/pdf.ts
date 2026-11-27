@@ -278,6 +278,7 @@ export interface PdfChecklistInput {
   differences: Array<{ label: string; outText: string; inText: string }>;
   sketchSummary: string[];
   declarationText: string;
+  signatureGroupHeaders?: [string, string];
   signaturesSummary: Array<{ roleLabel: string; name: string; idNumber: string; signedAt: string }>;
   generatedAt: string;
 }
@@ -458,12 +459,48 @@ export function buildChecklistPdf(input: PdfChecklistInput): Uint8Array {
   }
 
   y -= 6;
-  for (const sig of input.signaturesSummary) {
-    ensureSpace(15);
-    cmds.push('0.09 0.13 0.22 rg');
-    const txt = `${sig.roleLabel}: ${sig.name || 'Pending'}   |   ID: ${sig.idNumber || '-'}   |   Signed: ${sig.signedAt || 'Pending'}`;
-    cmds.push(`BT /F1 8.5 Tf ${marginX + 4} ${y} Td (${pdfEscape(truncateText(txt, 108))}) Tj ET`);
-    y -= 13;
+  const groupHeaders = input.signatureGroupHeaders ?? [
+    'CHECK-OUT SIGNATURES',
+    'CHECK-IN / RETURN SIGNATURES',
+  ];
+  const sigPairs: Array<[string, number, number]> = [
+    [groupHeaders[0], 0, 1],
+    [groupHeaders[1], 2, 3],
+  ];
+  const halfW = (printableWidth - 10) / 2;
+  for (const [groupTitle, leftIdx, rightIdx] of sigPairs) {
+    ensureSpace(46);
+    cmds.push('0.94 0.97 1.00 rg');
+    cmds.push(`${marginX} ${y - 36} ${printableWidth} 40 re f`);
+    cmds.push('0.80 0.87 0.95 RG 0.5 w');
+    cmds.push(`${marginX} ${y - 36} ${printableWidth} 40 re S`);
+    cmds.push('0.07 0.25 0.52 rg');
+    cmds.push(`BT /F2 7.5 Tf ${marginX + 6} ${y - 6} Td (${pdfEscape(groupTitle)}) Tj ET`);
+
+    const cols: Array<[number, number]> = [
+      [leftIdx, marginX + 6],
+      [rightIdx, marginX + halfW + 14],
+    ];
+    for (const [sigIdx, colX] of cols) {
+      const sig = input.signaturesSummary[sigIdx];
+      if (!sig) continue;
+      cmds.push('0.09 0.13 0.22 rg');
+      cmds.push(
+        `BT /F2 8 Tf ${colX.toFixed(1)} ${y - 17} Td (${pdfEscape(truncateText(sig.roleLabel, 40))}) Tj ET`
+      );
+      const detailLine = `${sig.name || 'Pending'} | ID: ${sig.idNumber || '-'}`;
+      cmds.push('0.20 0.25 0.34 rg');
+      cmds.push(
+        `BT /F1 7.5 Tf ${colX.toFixed(1)} ${y - 27} Td (${pdfEscape(truncateText(detailLine, 46))}) Tj ET`
+      );
+      cmds.push('0.40 0.46 0.55 rg');
+      cmds.push(
+        `BT /F1 7 Tf ${colX.toFixed(1)} ${y - 34} Td (${pdfEscape(
+          truncateText(`Signed: ${sig.signedAt || 'Pending'}`, 46)
+        )}) Tj ET`
+      );
+    }
+    y -= 44;
   }
 
   if (cmds.length > 0) {

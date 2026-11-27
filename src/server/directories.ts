@@ -411,14 +411,28 @@ export function registerDirectoryRoutes(
       .bind(String(id))
       .all<AuditLogEntry>();
 
+    const actor = c.get('user')!;
+    const checklistScopeSql =
+      actor.role === 'DRIVER'
+        ? actor.driver_id !== null
+          ? 'AND (created_by = ? OR trip_id IN (SELECT id FROM trips WHERE driver_id = ?))'
+          : 'AND created_by = ?'
+        : '';
+    const checklistBindArgs: unknown[] =
+      actor.role === 'DRIVER'
+        ? actor.driver_id !== null
+          ? [id, actor.id, actor.driver_id]
+          : [id, actor.id]
+        : [id];
+
     const { results: checklists } = await c.env.DB.prepare(
       `SELECT id, status, hirer_type, hirer_name, hire_date, return_date, mileage_out, mileage_in, fuel_out, fuel_in, created_at
        FROM checklists
-       WHERE vehicle_id = ? AND deleted_at IS NULL
+       WHERE vehicle_id = ? AND deleted_at IS NULL ${checklistScopeSql}
        ORDER BY id DESC
        LIMIT 20`
     )
-      .bind(id)
+      .bind(...checklistBindArgs)
       .all<Record<string, unknown>>();
 
     return c.json({

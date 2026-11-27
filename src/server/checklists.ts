@@ -85,12 +85,20 @@ function emptySketch(vehicleKind: ChecklistSketchData['vehicle_kind'] = 'sedan')
   };
 }
 
-export function inferSketchKind(vehicleType: string): ChecklistSketchData['vehicle_kind'] {
-  const low = vehicleType.toLowerCase();
-  if (low.includes('double cab')) return 'doublecab';
-  if (low.includes('suv')) return 'suv';
-  if (low.includes('kombi') || low.includes('quantum') || low.includes('bus') || low.includes('truck')) {
+export function inferSketchKind(vehicleType: string, makeModel = ''): ChecklistSketchData['vehicle_kind'] {
+  const hay = `${vehicleType} ${makeModel}`.toLowerCase();
+  if (/(single\s*cab|singlecab|chassis\s*cab)/.test(hay)) return 'singlecab';
+  if (/(double\s*cab|doublecab|bakkie|hilux|ranger|amarok|triton|navara|d-?max|bt-?50|np\s?300|pickup)/.test(hay)) {
+    return 'doublecab';
+  }
+  if (/(kombi|quantum|hiace|minibus|sprinter|\bvan\b|mpv|urvan|caravan|nv350|coaster|\bbus\b)/.test(hay)) {
     return 'kombi';
+  }
+  if (/(mini\s*suv|\bsuv\b|4x4|fortuner|prado|cruiser|pajero|rav4|everest|trailblazer|x-?trail|sportage|cr-?v|cx-?5|harrier|tucson|tiguan)/.test(hay)) {
+    return 'suv';
+  }
+  if (/(hatchback|hatch|\bfit\b|\bvitz\b|\bdemio\b|\bpolo\b|\bgolf\b|\bswift\b|\byaris\b|\bi20\b|\bi10\b|\bmarch\b|\brunx\b)/.test(hay)) {
+    return 'hatchback';
   }
   return 'sedan';
 }
@@ -373,6 +381,29 @@ async function fetchChecklistDetail(db: D1DatabaseLike, checklistId: number): Pr
   };
 }
 
+async function canAccessChecklist(
+  db: D1DatabaseLike,
+  actor: UserPublic,
+  checklist: { created_by: number; trip_id: number | null }
+): Promise<boolean> {
+  if (actor.role === 'ADMIN' || actor.role === 'SUPERVISOR' || actor.role === 'FLEET_MANAGER') {
+    return true;
+  }
+  if (checklist.created_by === actor.id) {
+    return true;
+  }
+  if (actor.driver_id !== null && checklist.trip_id !== null) {
+    const trip = await db
+      .prepare('SELECT driver_id FROM trips WHERE id = ?')
+      .bind(checklist.trip_id)
+      .first<{ driver_id: number }>();
+    if (trip && Number(trip.driver_id) === actor.driver_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 export function registerChecklistRoutes(
   app: Hono<{ Bindings: AppEnv; Variables: { user?: UserPublic } }>,
   deps: RouteAuthDeps
@@ -381,7 +412,10 @@ export function registerChecklistRoutes(
 
   // ---------------- CHECKLIST ITEM TEMPLATES ----------------
   app.get('/checklist-templates', requireAuth, requirePinChanged(), async (c) => {
-    const includeInactive = c.req.query('includeInactive') === '1';
+    const actor = c.get('user')!;
+    const canSeeInactive =
+      actor.role === 'ADMIN' || actor.role === 'SUPERVISOR' || actor.role === 'FLEET_MANAGER';
+    const includeInactive = canSeeInactive && c.req.query('includeInactive') === '1';
     const sql = includeInactive
       ? 'SELECT * FROM checklist_item_templates ORDER BY sort_order ASC, id ASC'
       : 'SELECT * FROM checklist_item_templates WHERE active = 1 ORDER BY sort_order ASC, id ASC';
@@ -393,7 +427,7 @@ export function registerChecklistRoutes(
     '/checklist-templates',
     requireAuth,
     requirePinChanged(),
-    requireRole(['ADMIN']),
+    requireRole(['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER']),
     async (c) => {
       const actor = c.get('user')!;
       let body: {
@@ -463,7 +497,7 @@ export function registerChecklistRoutes(
     '/checklist-templates/:id',
     requireAuth,
     requirePinChanged(),
-    requireRole(['ADMIN']),
+    requireRole(['ADMIN', 'SUPERVISOR', 'FLEET_MANAGER']),
     async (c) => {
       const actor = c.get('user')!;
       const id = Number(c.req.param('id'));
@@ -521,6 +555,7 @@ export function registerChecklistRoutes(
 
   // ---------------- CHECKLISTS LIST & DETAIL ----------------
   app.get('/checklists', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
     const status = (c.req.query('status') || '').trim();
     const q = (c.req.query('q') || '').trim().toLowerCase();
     const vehicleId = Number(c.req.query('vehicle_id') || 0);
@@ -529,6 +564,16 @@ export function registerChecklistRoutes(
 
     const clauses: string[] = ['c.deleted_at IS NULL'];
     const params: unknown[] = [];
+
+    if (actor.role === 'DRIVER') {
+      if (actor.driver_id !== null) {
+        clauses.push('(c.created_by = ? OR c.trip_id IN (SELECT id FROM trips WHERE driver_id = ?))');
+        params.push(actor.id, actor.driver_id);
+      } else {
+        clauses.push('c.created_by = ?');
+        params.push(actor.id);
+      }
+    }
 
     if (status === 'out' || status === 'completed') {
       clauses.push('c.status = ?');
@@ -564,6 +609,7 @@ export function registerChecklistRoutes(
   });
 
   app.get('/checklists/:id', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
     const id = Number(c.req.param('id'));
     if (!Number.isInteger(id) || id <= 0) {
       return c.json({ error: 'Invalid checklist ID.' }, 400);
@@ -571,6 +617,9 @@ export function registerChecklistRoutes(
     const detail = await fetchChecklistDetail(c.env.DB, id);
     if (!detail) {
       return c.json({ error: 'Checklist record not found.' }, 404);
+    }
+    if (!(await canAccessChecklist(c.env.DB, actor, detail))) {
+      return c.json({ error: 'You do not have permission to view this checklist.' }, 403);
     }
     return c.json({ checklist: detail });
   });
@@ -726,7 +775,7 @@ export function registerChecklistRoutes(
     const mileageDiffWarning = mileageOut !== prevClosing;
 
     // Validate Sketch (OUT)
-    const rawSketch = body.sketch || emptySketch(inferSketchKind(vehicleType));
+    const rawSketch = body.sketch || emptySketch(inferSketchKind(vehicleType, carModel));
     const strokesOut = Array.isArray(rawSketch.strokes_out) ? rawSketch.strokes_out : [];
     const pinsOut: SketchDamagePin[] = Array.isArray(rawSketch.pins_out) ? rawSketch.pins_out : [];
     const noDamageOut = Boolean(rawSketch.no_damage_out);
@@ -739,9 +788,12 @@ export function registerChecklistRoutes(
 
     const sanitizedSketch: ChecklistSketchData = {
       vehicle_kind:
-        rawSketch.vehicle_kind && ['sedan', 'suv', 'doublecab', 'kombi'].includes(rawSketch.vehicle_kind)
+        rawSketch.vehicle_kind &&
+        ['sedan', 'suv', 'doublecab', 'singlecab', 'kombi', 'hatchback'].includes(
+          rawSketch.vehicle_kind
+        )
           ? rawSketch.vehicle_kind
-          : inferSketchKind(vehicleType),
+          : inferSketchKind(vehicleType, carModel),
       strokes_out: strokesOut,
       pins_out: pinsOut,
       no_damage_out: noDamageOut,
@@ -754,10 +806,15 @@ export function registerChecklistRoutes(
     const sketchPngCheck = validateDataUrlImage(body.sketch_png_data_url, 'Vehicle sketch snapshot');
     if (!sketchPngCheck.ok) return c.json({ error: sketchPngCheck.error }, 400);
 
-    // Validate OUT signatures (Section G)
-    const outRenterSig = validateSignatureEntry(body.signatures?.outRenter, 'Renter / Driver (OUT)');
+    // Validate initial signatures (Section G: OUT for Renter, IN for Owner)
+    const outRenterLabel = hirerType === 'owner' ? 'Checked In By (Owner)' : 'Renter / Driver (OUT)';
+    const outCompanyLabel =
+      hirerType === 'owner'
+        ? 'Checked In By (Company Representative)'
+        : 'Company Representative (OUT)';
+    const outRenterSig = validateSignatureEntry(body.signatures?.outRenter, outRenterLabel);
     if (!outRenterSig.ok) return c.json({ error: outRenterSig.error }, 400);
-    const outCompanySig = validateSignatureEntry(body.signatures?.outCompany, 'Company Representative (OUT)');
+    const outCompanySig = validateSignatureEntry(body.signatures?.outCompany, outCompanyLabel);
     if (!outCompanySig.ok) return c.json({ error: outCompanySig.error }, 400);
 
     const signatures: ChecklistSignatures = {
@@ -812,6 +869,17 @@ export function registerChecklistRoutes(
     const settings = await getSettingsMap(c.env.DB);
     const declarationText = buildDeclarationText(settings.company_name);
     const tripId = body.trip_id && Number.isInteger(Number(body.trip_id)) ? Number(body.trip_id) : null;
+    if (tripId !== null) {
+      const tripRow = await c.env.DB.prepare('SELECT id, driver_id FROM trips WHERE id = ?')
+        .bind(tripId)
+        .first<{ id: number; driver_id: number }>();
+      if (!tripRow) {
+        return c.json({ error: 'Linked trip record was not found.' }, 404);
+      }
+      if (actor.role === 'DRIVER' && actor.driver_id !== null && Number(tripRow.driver_id) !== actor.driver_id) {
+        return c.json({ error: 'You can only link checklists to your own assigned trips.' }, 403);
+      }
+    }
     const notes = String(body.notes || '').trim();
 
     const ins = await c.env.DB.prepare(
@@ -944,11 +1012,22 @@ export function registerChecklistRoutes(
       return c.json({ error: 'Invalid checklist ID.' }, 400);
     }
 
-    const parent = await c.env.DB.prepare('SELECT id, status, deleted_at FROM checklists WHERE id = ?')
+    const parent = await c.env.DB.prepare(
+      'SELECT id, status, deleted_at, created_by, trip_id FROM checklists WHERE id = ?'
+    )
       .bind(checklistId)
-      .first<{ id: number; status: string; deleted_at: string | null }>();
+      .first<{
+        id: number;
+        status: string;
+        deleted_at: string | null;
+        created_by: number;
+        trip_id: number | null;
+      }>();
     if (!parent || parent.deleted_at) {
       return c.json({ error: 'Checklist not found.' }, 404);
+    }
+    if (!(await canAccessChecklist(c.env.DB, actor, parent))) {
+      return c.json({ error: 'You do not have permission to update this checklist.' }, 403);
     }
     if (parent.status !== 'out') {
       return c.json({ error: 'Cannot add rows after a checklist has been completed.' }, 400);
@@ -1030,6 +1109,9 @@ export function registerChecklistRoutes(
     if (!existing) {
       return c.json({ error: 'Checklist not found.' }, 404);
     }
+    if (!(await canAccessChecklist(c.env.DB, actor, existing))) {
+      return c.json({ error: 'You do not have permission to complete this checklist.' }, 403);
+    }
     if (existing.status !== 'out') {
       return c.json({ error: 'This checklist has already been completed and returned.' }, 409);
     }
@@ -1101,10 +1183,16 @@ export function registerChecklistRoutes(
     const sketchPngCheck = validateDataUrlImage(body.sketch_png_data_url, 'Vehicle sketch snapshot');
     if (!sketchPngCheck.ok) return c.json({ error: sketchPngCheck.error }, 400);
 
-    // Validate IN signatures (preserve OUT signatures)
-    const inRenterSig = validateSignatureEntry(body.signatures?.inRenter, 'Renter / Driver (IN)');
+    // Validate closing signatures (IN for Renter, OUT for Owner; preserve initial signatures)
+    const inRenterLabel =
+      existing.hirer_type === 'owner' ? 'Checked Out By (Owner)' : 'Renter / Driver (IN)';
+    const inCompanyLabel =
+      existing.hirer_type === 'owner'
+        ? 'Checked Out By (Company Representative)'
+        : 'Company Representative (IN)';
+    const inRenterSig = validateSignatureEntry(body.signatures?.inRenter, inRenterLabel);
     if (!inRenterSig.ok) return c.json({ error: inRenterSig.error }, 400);
-    const inCompanySig = validateSignatureEntry(body.signatures?.inCompany, 'Company Representative (IN)');
+    const inCompanySig = validateSignatureEntry(body.signatures?.inCompany, inCompanyLabel);
     if (!inCompanySig.ok) return c.json({ error: inCompanySig.error }, 400);
 
     const mergedSignatures: ChecklistSignatures = {
@@ -1406,6 +1494,7 @@ export function registerChecklistRoutes(
 
   // ---------------- CHECKLIST PDF EXPORT ----------------
   app.get('/checklists/:id/pdf', requireAuth, requirePinChanged(), async (c) => {
+    const actor = c.get('user')!;
     const checklistId = Number(c.req.param('id'));
     if (!Number.isInteger(checklistId) || checklistId <= 0) {
       return c.json({ error: 'Invalid checklist ID.' }, 400);
@@ -1413,6 +1502,9 @@ export function registerChecklistRoutes(
     const detail = await fetchChecklistDetail(c.env.DB, checklistId);
     if (!detail) {
       return c.json({ error: 'Checklist not found.' }, 404);
+    }
+    if (!(await canAccessChecklist(c.env.DB, actor, detail))) {
+      return c.json({ error: 'You do not have permission to export this checklist.' }, 403);
     }
 
     const settings = await getSettingsMap(c.env.DB);
@@ -1432,27 +1524,28 @@ export function registerChecklistRoutes(
       }`,
     ];
 
+    const isOwner = detail.hirer_type === 'owner';
     const sigsSummary = [
       {
-        roleLabel: 'Renter / Driver (OUT)',
+        roleLabel: isOwner ? 'Checked In By (Owner)' : 'Renter / Driver (OUT)',
         name: detail.signatures.outRenter?.name || '',
         idNumber: detail.signatures.outRenter?.id_number || '',
         signedAt: detail.signatures.outRenter?.signed_at ? formatHarareTime(detail.signatures.outRenter.signed_at) : '',
       },
       {
-        roleLabel: 'Company Rep (OUT)',
+        roleLabel: isOwner ? 'Checked In By (Company Rep)' : 'Company Rep (OUT)',
         name: detail.signatures.outCompany?.name || '',
         idNumber: detail.signatures.outCompany?.id_number || '',
         signedAt: detail.signatures.outCompany?.signed_at ? formatHarareTime(detail.signatures.outCompany.signed_at) : '',
       },
       {
-        roleLabel: 'Renter / Driver (IN)',
+        roleLabel: isOwner ? 'Checked Out By (Owner)' : 'Renter / Driver (IN)',
         name: detail.signatures.inRenter?.name || '',
         idNumber: detail.signatures.inRenter?.id_number || '',
         signedAt: detail.signatures.inRenter?.signed_at ? formatHarareTime(detail.signatures.inRenter.signed_at) : '',
       },
       {
-        roleLabel: 'Company Rep (IN)',
+        roleLabel: isOwner ? 'Checked Out By (Company Rep)' : 'Company Rep (IN)',
         name: detail.signatures.inCompany?.name || '',
         idNumber: detail.signatures.inCompany?.id_number || '',
         signedAt: detail.signatures.inCompany?.signed_at ? formatHarareTime(detail.signatures.inCompany.signed_at) : '',
@@ -1465,7 +1558,7 @@ export function registerChecklistRoutes(
       companyAddress: settings.company_address,
       checklistId: detail.id,
       statusLabel: detail.status === 'completed' ? 'COMPLETED (RETURNED)' : 'OUT (OPEN)',
-      hirerLabel: detail.hirer_type === 'owner' ? "Owner's Name" : "Renter's Name",
+      hirerLabel: isOwner ? "Owner's Name" : "Renter's Name",
       hirerName: detail.hirer_name,
       representative: detail.representative,
       cell: detail.cell,
@@ -1497,6 +1590,9 @@ export function registerChecklistRoutes(
       })),
       sketchSummary,
       declarationText: detail.declaration_text || buildDeclarationText(settings.company_name),
+      signatureGroupHeaders: isOwner
+        ? ['CHECK-IN SIGNATURES (OWNER)', 'CHECK-OUT SIGNATURES (OWNER)']
+        : ['CHECK-OUT SIGNATURES', 'CHECK-IN / RETURN SIGNATURES'],
       signaturesSummary: sigsSummary,
       generatedAt: formatHarareTime(new Date().toISOString()),
     });

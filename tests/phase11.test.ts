@@ -480,16 +480,19 @@ test('Digital Checklists module: 25 templates, +Add new vehicle, date guard, mil
   assert.equal(adminDelete.status, 200);
 });
 
-test('Checklist 3D sketch selects model-specific left/right assets for sedan, suv, doublecab, and kombi', () => {
+test('Checklist 3D sketch selects model-specific left/right assets for all 6 vehicle models', () => {
   assert.equal(inferSketchKind('Sedan', 'Toyota Corolla'), 'sedan');
   assert.equal(inferSketchKind('SUV', 'Toyota Fortuner'), 'suv');
   assert.equal(inferSketchKind('Double Cab', 'Toyota Hilux'), 'doublecab');
+  assert.equal(inferSketchKind('Single Cab', 'Toyota Hilux'), 'singlecab');
   assert.equal(inferSketchKind('Kombi', 'Toyota Quantum'), 'kombi');
+  assert.equal(inferSketchKind('Van', 'Nissan NV350'), 'kombi');
   assert.equal(inferSketchKind('Quantum', 'HiAce'), 'kombi');
+  assert.equal(inferSketchKind('Hatchback', 'Honda Fit'), 'hatchback');
 
   const seenLeft = new Set<string>();
   const seenRight = new Set<string>();
-  for (const kind of ['sedan', 'suv', 'doublecab', 'kombi'] as const) {
+  for (const kind of ['sedan', 'suv', 'doublecab', 'singlecab', 'kombi', 'hatchback'] as const) {
     const media = SKETCH_3D_MEDIA_BY_KIND[kind];
     assert.ok(media.left.startsWith('/src/assets/images/'));
     assert.ok(media.right.startsWith('/src/assets/images/'));
@@ -500,6 +503,305 @@ test('Checklist 3D sketch selects model-specific left/right assets for sedan, su
     seenLeft.add(media.left);
     seenRight.add(media.right);
   }
-  assert.equal(seenLeft.size, 4);
-  assert.equal(seenRight.size, 4);
+  assert.equal(seenLeft.size, 6);
+  assert.equal(seenRight.size, 6);
 });
+
+test('Checklists support singlecab/hatchback sketch kinds and template customization by Fleet Manager / Supervisor', async () => {
+  const { db, env } = createTestEnv();
+  await ensureInitialSeed(db, env);
+  const app = createApp();
+  const adminCookie = await loginAndChangePin(app, env, 'admin', '1234', '9999');
+
+  // Create a FLEET_MANAGER user
+  const fmRes = await app.fetch(
+    new Request('http://localhost/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        username: 'fleet.mgr',
+        full_name: 'Fleet Manager',
+        role: 'FLEET_MANAGER',
+        pin: '3333',
+      }),
+    }),
+    env
+  );
+  assert.equal(fmRes.status, 201);
+  const fmCookie = await loginAndChangePin(app, env, 'fleet.mgr', '3333', '8888');
+
+  // Fleet Manager adds a custom default inspection item and removes/restores a template item
+  const addTplRes = await app.fetch(
+    new Request('http://localhost/api/checklist-templates', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: fmCookie },
+      body: JSON.stringify({
+        label: 'Canopy Lock & Key',
+        input_type: 'yes_no',
+        options: ['Yes', 'No'],
+      }),
+    }),
+    env
+  );
+  assert.equal(addTplRes.status, 201);
+  const { template: createdTpl } = (await addTplRes.json()) as { template: ChecklistItemTemplate };
+
+  const disableRes = await app.fetch(
+    new Request(`http://localhost/api/checklist-templates/${createdTpl.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Cookie: fmCookie },
+      body: JSON.stringify({ active: false }),
+    }),
+    env
+  );
+  assert.equal(disableRes.status, 200);
+  const disabledData = (await disableRes.json()) as { template: ChecklistItemTemplate };
+  assert.equal(disabledData.template.active, false);
+
+  // Create checklist with Single Cab vehicle & custom subset of 3 items
+  const singleCabRes = await app.fetch(
+    new Request('http://localhost/api/checklists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: fmCookie },
+      body: JSON.stringify({
+        new_vehicle: {
+          vehicle_type: 'Single Cab',
+          make_model: 'Toyota Hilux Workmate',
+          reg_number: 'SCB 1020',
+          fuel_type: 'diesel',
+          last_known_mileage: 12000,
+        },
+        hirer_type: 'renter',
+        hirer_name: 'Tinashe Moyo',
+        representative: 'Tinashe Moyo',
+        cell: '+263771112233',
+        days: 2,
+        mileage_out: 12000,
+        fuel_type: 'diesel',
+        fuel_out: 'Full',
+        sketch: { ...createEmptySketch('singlecab'), no_damage_out: true },
+        signatures: {
+          outRenter: { name: 'Tinashe Moyo', id_number: '63-556677A11', signature_data_url: TINY_PNG_DATA_URL },
+          outCompany: { name: 'Fleet Manager', id_number: 'FM-01', signature_data_url: TINY_PNG_DATA_URL },
+        },
+        items: [
+          { custom_label: 'Spare Wheel', input_type: 'tick_cross', options: [], sort_order: 1, value_out: { choice: 'tick' } },
+          { custom_label: 'Jack & Handle', input_type: 'tick_cross', options: [], sort_order: 2, value_out: { choice: 'tick' } },
+          { custom_label: 'Tailgate Chains', input_type: 'yes_no', options: ['Yes', 'No'], sort_order: 3, value_out: { choice: 'Yes' } },
+        ],
+      }),
+    }),
+    env
+  );
+  assert.equal(singleCabRes.status, 201);
+  const singleCabData = (await singleCabRes.json()) as { checklist: ChecklistDetail };
+  assert.equal(singleCabData.checklist.sketch.vehicle_kind, 'singlecab');
+  assert.equal(singleCabData.checklist.items.length, 3);
+
+  // Create checklist with Hatchback sketch kind
+  const hatchRes = await app.fetch(
+    new Request('http://localhost/api/checklists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: fmCookie },
+      body: JSON.stringify({
+        new_vehicle: {
+          vehicle_type: 'Hatchback',
+          make_model: 'Honda Fit',
+          reg_number: 'HTB 4050',
+          fuel_type: 'petrol',
+          last_known_mileage: 45000,
+        },
+        hirer_type: 'owner',
+        hirer_name: 'Rudo Banda',
+        representative: 'Rudo Banda',
+        cell: '+263779998877',
+        days: 1,
+        mileage_out: 45000,
+        fuel_type: 'petrol',
+        fuel_out: '3/4',
+        sketch: { ...createEmptySketch('hatchback'), no_damage_out: true },
+        signatures: {
+          outRenter: { name: 'Rudo Banda', id_number: '63-887766B22', signature_data_url: TINY_PNG_DATA_URL },
+          outCompany: { name: 'Fleet Manager', id_number: 'FM-01', signature_data_url: TINY_PNG_DATA_URL },
+        },
+        items: [
+          { custom_label: 'Spare Wheel', input_type: 'tick_cross', options: [], sort_order: 1, value_out: { choice: 'tick' } },
+        ],
+      }),
+    }),
+    env
+  );
+  assert.equal(hatchRes.status, 201);
+  const hatchData = (await hatchRes.json()) as { checklist: ChecklistDetail };
+  assert.equal(hatchData.checklist.sketch.vehicle_kind, 'hatchback');
+  assert.equal(hatchData.checklist.hirer_type, 'owner');
+
+  // Complete the Owner checklist and verify PDF contains inverted Check-In -> Check-Out labels
+  const ownerCompleteRes = await app.fetch(
+    new Request(`http://localhost/api/checklists/${hatchData.checklist.id}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: fmCookie },
+      body: JSON.stringify({
+        mileage_in: 45120,
+        fuel_in: '3/4',
+        sketch: { ...hatchData.checklist.sketch, no_damage_in: true },
+        signatures: {
+          inRenter: { name: 'Rudo Banda', id_number: '63-887766B22', signature_data_url: TINY_PNG_DATA_URL },
+          inCompany: { name: 'Fleet Manager', id_number: 'FM-01', signature_data_url: TINY_PNG_DATA_URL },
+        },
+        items: hatchData.checklist.items.map((it) => ({ id: it.id, value_in: it.value_out })),
+      }),
+    }),
+    env
+  );
+  assert.equal(ownerCompleteRes.status, 200);
+  const ownerCompleted = (await ownerCompleteRes.json()) as { checklist: ChecklistDetail };
+  assert.equal(ownerCompleted.checklist.hirer_type, 'owner');
+  assert.equal(ownerCompleted.checklist.signatures.outRenter?.name, 'Rudo Banda');
+  assert.equal(ownerCompleted.checklist.signatures.inRenter?.name, 'Rudo Banda');
+
+  const ownerPdfRes = await app.fetch(
+    new Request(`http://localhost/api/checklists/${hatchData.checklist.id}/pdf`, {
+      headers: { Cookie: fmCookie },
+    }),
+    env
+  );
+  assert.equal(ownerPdfRes.status, 200);
+  const ownerPdfText = Buffer.from(await ownerPdfRes.arrayBuffer()).toString('utf8');
+  assert.ok(ownerPdfText.includes('CHECK-IN SIGNATURES \\(OWNER\\)'));
+  assert.ok(ownerPdfText.includes('CHECK-OUT SIGNATURES \\(OWNER\\)'));
+  assert.ok(ownerPdfText.includes('Checked In By \\(Owner\\)'));
+  assert.ok(ownerPdfText.includes('Checked Out By \\(Owner\\)'));
+
+  // RBAC & RLS enforcement: Drivers can only access their own scoped checklists
+  const driverARes = await app.fetch(
+    new Request('http://localhost/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        username: 'driver.alpha',
+        full_name: 'Driver Alpha',
+        role: 'DRIVER',
+        pin: '1111',
+      }),
+    }),
+    env
+  );
+  assert.equal(driverARes.status, 201);
+  const driverACookie = await loginAndChangePin(app, env, 'driver.alpha', '1111', '7171');
+
+  const driverBRes = await app.fetch(
+    new Request('http://localhost/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: adminCookie },
+      body: JSON.stringify({
+        username: 'driver.bravo',
+        full_name: 'Driver Bravo',
+        role: 'DRIVER',
+        pin: '2222',
+      }),
+    }),
+    env
+  );
+  assert.equal(driverBRes.status, 201);
+  const driverBCookie = await loginAndChangePin(app, env, 'driver.bravo', '2222', '8282');
+
+  // Driver Alpha creates a checklist
+  const alphaChkRes = await app.fetch(
+    new Request('http://localhost/api/checklists', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: driverACookie },
+      body: JSON.stringify({
+        vehicle_id: singleCabData.checklist.vehicle_id,
+        hirer_type: 'renter',
+        hirer_name: 'Alpha Client',
+        representative: 'Driver Alpha',
+        cell: '+263771000111',
+        days: 1,
+        mileage_out: 12050,
+        fuel_type: 'diesel',
+        fuel_out: 'Full',
+        sketch: { ...createEmptySketch('singlecab'), no_damage_out: true },
+        signatures: {
+          outRenter: { name: 'Alpha Client', id_number: 'ID-A', signature_data_url: TINY_PNG_DATA_URL },
+          outCompany: { name: 'Driver Alpha', id_number: 'DRV-A', signature_data_url: TINY_PNG_DATA_URL },
+        },
+        items: [
+          { custom_label: 'Spare Wheel', input_type: 'tick_cross', options: [], sort_order: 1, value_out: { choice: 'tick' } },
+        ],
+      }),
+    }),
+    env
+  );
+  assert.equal(alphaChkRes.status, 201);
+  const alphaChk = ((await alphaChkRes.json()) as { checklist: ChecklistDetail }).checklist;
+
+  // Driver Bravo cannot list, view, PDF-export, add items, complete, amend, or delete Driver Alpha's checklist
+  const bravoListRes = await app.fetch(
+    new Request('http://localhost/api/checklists', { headers: { Cookie: driverBCookie } }),
+    env
+  );
+  assert.equal(bravoListRes.status, 200);
+  const bravoList = (await bravoListRes.json()) as { items: Array<{ id: number }> };
+  assert.equal(bravoList.items.some((c) => c.id === alphaChk.id), false);
+  assert.equal(bravoList.items.some((c) => c.id === hatchData.checklist.id), false);
+
+  const bravoGet = await app.fetch(
+    new Request(`http://localhost/api/checklists/${alphaChk.id}`, { headers: { Cookie: driverBCookie } }),
+    env
+  );
+  assert.equal(bravoGet.status, 403);
+
+  const bravoPdf = await app.fetch(
+    new Request(`http://localhost/api/checklists/${alphaChk.id}/pdf`, { headers: { Cookie: driverBCookie } }),
+    env
+  );
+  assert.equal(bravoPdf.status, 403);
+
+  const bravoAddItem = await app.fetch(
+    new Request(`http://localhost/api/checklists/${alphaChk.id}/items`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: driverBCookie },
+      body: JSON.stringify({ custom_label: 'Unauthorized Item', input_type: 'tick_cross' }),
+    }),
+    env
+  );
+  assert.equal(bravoAddItem.status, 403);
+
+  const bravoComplete = await app.fetch(
+    new Request(`http://localhost/api/checklists/${alphaChk.id}/complete`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Cookie: driverBCookie },
+      body: JSON.stringify({
+        mileage_in: 12100,
+        fuel_in: 'Full',
+        sketch: { ...alphaChk.sketch, no_damage_in: true },
+        signatures: {
+          inRenter: { name: 'Driver Bravo', id_number: 'DRV-B', signature_data_url: TINY_PNG_DATA_URL },
+          inCompany: { name: 'Driver Bravo', id_number: 'DRV-B', signature_data_url: TINY_PNG_DATA_URL },
+        },
+        items: [],
+      }),
+    }),
+    env
+  );
+  assert.equal(bravoComplete.status, 403);
+
+  const driverTplInactive = await app.fetch(
+    new Request('http://localhost/api/checklist-templates?includeInactive=1', {
+      headers: { Cookie: driverBCookie },
+    }),
+    env
+  );
+  assert.equal(driverTplInactive.status, 200);
+  const driverTpls = (await driverTplInactive.json()) as { items: ChecklistItemTemplate[] };
+  assert.equal(driverTpls.items.every((t) => t.active), true);
+
+  // Fleet Manager still has full visibility of Driver Alpha's checklist
+  const fmGetAlpha = await app.fetch(
+    new Request(`http://localhost/api/checklists/${alphaChk.id}`, { headers: { Cookie: fmCookie } }),
+    env
+  );
+  assert.equal(fmGetAlpha.status, 200);
+});
+
