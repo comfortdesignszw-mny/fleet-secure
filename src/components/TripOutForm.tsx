@@ -9,9 +9,11 @@ import {
   ChevronUp,
   Clock,
   HelpCircle,
+  Link2,
   Lock,
   Plus,
   Search,
+  Unlink,
   UserPlus,
   Zap,
 } from 'lucide-react';
@@ -27,8 +29,11 @@ import {
   VEHICLE_CONDITIONS,
   VEHICLE_TYPES,
   VEHICLE_TYPE_TO_CLASS,
+  evaluateChecklistVehicleMatch,
   formatDriverMissingDocsWarning,
   getDriverMissingDocuments,
+  toHarareYmd,
+  type ChecklistSummary,
   type CreateTripOutPayload,
   type Driver,
   type FuelLevel,
@@ -41,12 +46,29 @@ import {
   type Vehicle,
   type VehicleCondition,
 } from '../shared/types';
+import type { ChecklistPrefill } from './ChecklistsView';
 import { DocumentUploadField } from './DocumentUploadField';
 import { FuelGaugePicker } from './FuelGaugePicker';
+import { LinkChecklistModal } from './LinkChecklistModal';
+
+interface LinkedChecklistBadge {
+  id: number;
+  hirer_type?: 'renter' | 'owner';
+  reg_number: string;
+  vehicle_type?: string;
+  hirer_name: string;
+  hire_date: string;
+  created_at?: string;
+  status: 'out' | 'completed';
+  vehicle_id: number;
+}
 
 interface TripOutFormProps {
   tripType: TripType;
   user: UserPublic;
+  externalLinkedChecklist?: ChecklistSummary | null;
+  onConsumeExternalLinkedChecklist?: () => void;
+  onStartCreateChecklist?: (prefill: ChecklistPrefill) => void;
   onCancel: () => void;
   onSaved: (trip: TripSummary, flags: TripFlag[]) => void;
   onQueued?: (summaryLabel: string) => void;
@@ -65,6 +87,7 @@ interface OutDraft {
   daysHired: string;
   expectedReturnDate: string;
   checklistBy: string;
+  linkedChecklist: LinkedChecklistBadge | null;
   notes: string;
 }
 
@@ -91,6 +114,9 @@ const ROADWORTHY_CONDITIONS = VEHICLE_CONDITIONS.filter(
 export const TripOutForm: React.FC<TripOutFormProps> = ({
   tripType,
   user,
+  externalLinkedChecklist = null,
+  onConsumeExternalLinkedChecklist,
+  onStartCreateChecklist,
   onCancel,
   onSaved,
   onQueued,
@@ -147,6 +173,8 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
   const [daysHired, setDaysHired] = useState('');
   const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [checklistBy, setChecklistBy] = useState(user.full_name);
+  const [linkedChecklist, setLinkedChecklist] = useState<LinkedChecklistBadge | null>(null);
+  const [showLinkChecklistModal, setShowLinkChecklistModal] = useState(false);
   const [notes, setNotes] = useState('');
 
   const [confirming, setConfirming] = useState(false);
@@ -171,12 +199,50 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
         if (d.daysHired) setDaysHired(d.daysHired);
         if (d.expectedReturnDate) setExpectedReturnDate(d.expectedReturnDate);
         if (d.checklistBy !== undefined) setChecklistBy(d.checklistBy);
+        if (d.linkedChecklist) setLinkedChecklist(d.linkedChecklist);
         if (d.notes) setNotes(d.notes);
       }
     } catch {
       // Ignore draft parse error
     }
   }, [draftKey]);
+
+  // Accept linked checklist returned from ChecklistsView creation flow
+  useEffect(() => {
+    if (!externalLinkedChecklist || tripType !== 'HIRE') return;
+    if (externalLinkedChecklist.hirer_type === 'renter') {
+      setLinkedChecklist({
+        id: externalLinkedChecklist.id,
+        hirer_type: externalLinkedChecklist.hirer_type,
+        reg_number: externalLinkedChecklist.reg_number,
+        vehicle_type: externalLinkedChecklist.vehicle_type,
+        hirer_name: externalLinkedChecklist.hirer_name,
+        hire_date: externalLinkedChecklist.hire_date,
+        created_at: externalLinkedChecklist.created_at,
+        status: externalLinkedChecklist.status,
+        vehicle_id: externalLinkedChecklist.vehicle_id,
+      });
+      if (!clientName.trim() && externalLinkedChecklist.hirer_name) {
+        setClientName(externalLinkedChecklist.hirer_name);
+      }
+      if (externalLinkedChecklist.created_by_name && !checklistBy.trim()) {
+        setChecklistBy(externalLinkedChecklist.created_by_name);
+      }
+      if (!vehicleId && !pendingVehicle && externalLinkedChecklist.vehicle_id > 0) {
+        setPendingVehicle(null);
+        setVehicleId(String(externalLinkedChecklist.vehicle_id));
+      }
+    }
+    onConsumeExternalLinkedChecklist?.();
+  }, [
+    externalLinkedChecklist,
+    tripType,
+    clientName,
+    checklistBy,
+    vehicleId,
+    pendingVehicle,
+    onConsumeExternalLinkedChecklist,
+  ]);
 
   // Autosave draft whenever fields change
   useEffect(() => {
@@ -193,6 +259,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       daysHired,
       expectedReturnDate,
       checklistBy,
+      linkedChecklist,
       notes,
     };
     try {
@@ -214,6 +281,7 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
     daysHired,
     expectedReturnDate,
     checklistBy,
+    linkedChecklist,
     notes,
   ]);
 
@@ -519,12 +587,46 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
   const effectiveVehicleReg = pendingVehicle
     ? pendingVehicle.reg_number
     : selectedVehicle?.reg_number ?? '';
+  const effectiveVehicleType = pendingVehicle
+    ? pendingVehicle.vehicle_type
+    : selectedVehicle?.vehicle_type ?? '';
   const effectiveVehicleModel = pendingVehicle
     ? pendingVehicle.make_model
     : selectedVehicle?.make_model ?? '';
   const baselineMileage = pendingVehicle
     ? pendingVehicle.last_known_mileage
     : selectedVehicle?.last_known_mileage ?? null;
+
+  const linkedChecklistMatch = useMemo(() => {
+    if (!linkedChecklist || tripType !== 'HIRE') return null;
+    if (!pendingVehicle && vehicleId && !selectedVehicle && loadingLists) return null;
+    return evaluateChecklistVehicleMatch(
+      {
+        hirer_type: linkedChecklist.hirer_type ?? 'renter',
+        hirer_name: linkedChecklist.hirer_name,
+        reg_number: linkedChecklist.reg_number,
+        vehicle_type: linkedChecklist.vehicle_type ?? '',
+        created_at: linkedChecklist.created_at || linkedChecklist.hire_date,
+      },
+      {
+        expectedHirerType: 'renter',
+        partyName: clientName,
+        regNumber: effectiveVehicleReg,
+        vehicleType: effectiveVehicleType,
+        logDateYmd: toHarareYmd(new Date()),
+      }
+    );
+  }, [
+    linkedChecklist,
+    tripType,
+    pendingVehicle,
+    vehicleId,
+    selectedVehicle,
+    loadingLists,
+    clientName,
+    effectiveVehicleReg,
+    effectiveVehicleType,
+  ]);
 
   const mileageDiff = useMemo(() => {
     if (baselineMileage === null || mileageOut === '') return 0;
@@ -585,6 +687,10 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       setError('Enter who completed the opening checklist.');
       return;
     }
+    if (tripType === 'HIRE' && linkedChecklist && linkedChecklistMatch && !linkedChecklistMatch.matched) {
+      setError(linkedChecklistMatch.reasons[0]);
+      return;
+    }
 
     setConfirming(true);
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -632,6 +738,10 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
       mileage_out: Number(mileageOut),
       fuel_out: fuelOut,
       opening_checklist_by: checklistBy.trim(),
+      checklist_id:
+        tripType === 'HIRE' && linkedChecklist && linkedChecklist.id > 0
+          ? linkedChecklist.id
+          : null,
       notes: notes.trim(),
       device_time: deviceTime,
     };
@@ -805,6 +915,14 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                 {checklistBy.trim() || <span className="font-normal text-slate-500">Optional (not recorded)</span>}
               </dd>
             </div>
+            {tripType === 'HIRE' && linkedChecklist && (
+              <div className="py-3 flex justify-between gap-4">
+                <dt className="text-slate-500">Linked Renter&apos;s Checklist</dt>
+                <dd className="font-mono text-sm font-semibold text-cyan-800 text-right">
+                  #{linkedChecklist.id} · {linkedChecklist.reg_number} ({linkedChecklist.hirer_name})
+                </dd>
+              </div>
+            )}
             {notes.trim() && (
               <div className="py-3 flex justify-between gap-4">
                 <dt className="text-slate-500">Notes</dt>
@@ -1730,12 +1848,24 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
             )}
 
             {/* Checklist by */}
-            <div>
-              <label htmlFor="out-checklist" className="block text-sm font-semibold text-blue-950">
-                {tripType === 'ERRAND'
-                  ? 'Opening checklist done by (optional)'
-                  : 'Opening checklist done by'}
-              </label>
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label htmlFor="out-checklist" className="block text-sm font-semibold text-blue-950">
+                  {tripType === 'ERRAND'
+                    ? 'Opening checklist done by (optional)'
+                    : 'Opening checklist done by'}
+                </label>
+                {tripType === 'HIRE' && (
+                  <button
+                    type="button"
+                    onClick={() => setShowLinkChecklistModal(true)}
+                    className="cyan-glow-outline inline-flex min-h-[36px] items-center gap-1.5 rounded-lg border border-cyan-300 bg-cyan-50/70 px-3 text-xs font-semibold text-blue-950 hover:bg-cyan-100"
+                  >
+                    <Link2 className="h-3.5 w-3.5 text-cyan-700" aria-hidden="true" />
+                    <span>{linkedChecklist ? 'Change Linked Checklist' : 'Link the Checklist'}</span>
+                  </button>
+                )}
+              </div>
               <input
                 id="out-checklist"
                 type="text"
@@ -1743,8 +1873,39 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
                 value={checklistBy}
                 onChange={(e) => setChecklistBy(e.target.value)}
                 placeholder={tripType === 'ERRAND' ? 'Optional for errands' : 'Name of person checking'}
-                className="cyan-glow-input mt-1.5 block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
+                className="cyan-glow-input block w-full min-h-[48px] rounded-xl border border-blue-200 px-3.5 text-base text-blue-950"
               />
+              {tripType === 'HIRE' && linkedChecklist && (
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50/80 px-3 py-2 text-xs text-emerald-950">
+                    <span>
+                      Linked Renter&apos;s Checklist:{' '}
+                      <strong className="font-mono">
+                        #{linkedChecklist.id} · {linkedChecklist.reg_number}
+                      </strong>{' '}
+                      {linkedChecklist.vehicle_type ? `(${linkedChecklist.vehicle_type}) · ` : ''}
+                      ({linkedChecklist.hirer_name}, {linkedChecklist.hire_date})
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setLinkedChecklist(null)}
+                      className="inline-flex items-center gap-1 font-semibold text-red-700 hover:underline"
+                    >
+                      <Unlink className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>Unlink</span>
+                    </button>
+                  </div>
+                  {linkedChecklistMatch && !linkedChecklistMatch.matched && (
+                    <div
+                      role="alert"
+                      className="flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800"
+                    >
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-red-700" aria-hidden="true" />
+                      <span>{linkedChecklistMatch.reasons[0]}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Notes */}
@@ -1771,6 +1932,64 @@ export const TripOutForm: React.FC<TripOutFormProps> = ({
           </>
         )}
       </form>
+
+      {showLinkChecklistModal && tripType === 'HIRE' && (
+        <LinkChecklistModal
+          hirerType="renter"
+          vehicleId={selectedVehicle?.id ?? null}
+          regNumber={effectiveVehicleReg}
+          vehicleType={effectiveVehicleType}
+          partyName={clientName}
+          logDateYmd={toHarareYmd(new Date())}
+          selectedChecklistId={linkedChecklist?.id ?? null}
+          onSelect={(chk) => {
+            setLinkedChecklist({
+              id: chk.id,
+              hirer_type: chk.hirer_type,
+              reg_number: chk.reg_number,
+              vehicle_type: chk.vehicle_type,
+              hirer_name: chk.hirer_name,
+              hire_date: chk.hire_date,
+              created_at: chk.created_at,
+              status: chk.status,
+              vehicle_id: chk.vehicle_id,
+            });
+            if (!clientName.trim() && chk.hirer_name) {
+              setClientName(chk.hirer_name);
+            }
+            if (!checklistBy.trim() && chk.created_by_name) {
+              setChecklistBy(chk.created_by_name);
+            }
+            setShowLinkChecklistModal(false);
+          }}
+          onCreateNew={() => {
+            setShowLinkChecklistModal(false);
+            if (!onStartCreateChecklist) return;
+            const parsedDays = Number(daysHired);
+            onStartCreateChecklist({
+              hirer_type: 'renter',
+              vehicle_id: selectedVehicle?.id,
+              hirer_name: clientName.trim(),
+              representative: selectedDriver?.full_name || pendingDriver?.full_name || '',
+              cell: selectedDriver?.phone || pendingDriver?.phone || '',
+              days: Number.isInteger(parsedDays) && parsedDays >= 1 ? parsedDays : 1,
+              mileage_out: mileageOut.trim() !== '' && Number.isInteger(Number(mileageOut)) ? Number(mileageOut) : undefined,
+              fuel_out: fuelOut || null,
+              new_vehicle: pendingVehicle
+                ? {
+                    vehicle_type: pendingVehicle.vehicle_type,
+                    make_model: pendingVehicle.make_model,
+                    reg_number: pendingVehicle.reg_number,
+                    condition: pendingVehicle.condition,
+                    last_known_mileage: pendingVehicle.last_known_mileage,
+                  }
+                : undefined,
+              returnTarget: { kind: 'HIRE' },
+            });
+          }}
+          onClose={() => setShowLinkChecklistModal(false)}
+        />
+      )}
     </div>
   );
 };

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS trips (
   reason TEXT,
   days_hired INTEGER,
   expected_return_date TEXT,
+  checklist_id INTEGER REFERENCES checklists(id),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -312,8 +313,8 @@ CREATE TABLE IF NOT EXISTS checklists (
   colour TEXT,
   reg_number TEXT NOT NULL,
   hire_date TEXT NOT NULL,
-  days INTEGER NOT NULL CHECK (days >= 1),
-  return_date TEXT NOT NULL,
+  days INTEGER CHECK (days IS NULL OR days >= 1),
+  return_date TEXT,
   mileage_out INTEGER NOT NULL CHECK (mileage_out >= 0),
   mileage_out_diff_warning INTEGER NOT NULL DEFAULT 0 CHECK (mileage_out_diff_warning IN (0, 1)),
   previous_closing_mileage INTEGER,
@@ -370,3 +371,29 @@ CREATE TABLE IF NOT EXISTS checklist_items (
 );
 
 CREATE INDEX IF NOT EXISTS idx_checklist_items_parent ON checklist_items(checklist_id, sort_order);
+
+-- 19. Subhired Vehicles Received From External Subhirers
+CREATE TABLE IF NOT EXISTS subhire_receipts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+  checklist_id INTEGER REFERENCES checklists(id),
+  subhirer_name TEXT NOT NULL,
+  representative TEXT NOT NULL DEFAULT '',
+  phone TEXT NOT NULL,
+  address TEXT NOT NULL DEFAULT '',
+  received_mileage INTEGER NOT NULL CHECK (received_mileage >= 0),
+  fuel_level TEXT NOT NULL CHECK (
+    fuel_level IN ('Full', 'Full-', '3/4+', '3/4', '3/4-', '1/2+', '1/2', '1/2-', '1/4+', '1/4', '1/4-', 'Empty+', 'Empty')
+  ),
+  opening_checklist_by TEXT NOT NULL,
+  notes TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RETURNED')),
+  received_at TEXT NOT NULL,
+  device_time TEXT,
+  created_by INTEGER NOT NULL REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_subhires_vehicle ON subhire_receipts(vehicle_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_subhires_checklist ON subhire_receipts(checklist_id);
+

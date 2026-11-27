@@ -304,6 +304,7 @@ export interface TripSummary {
   flags: TripFlag[];
   correction_count: number;
   is_overdue: boolean;
+  checklist_id?: number | null;
 }
 
 export interface NewDriverInput {
@@ -346,6 +347,7 @@ export interface CreateTripOutPayload {
   mileage_out: number;
   fuel_out: FuelLevel;
   opening_checklist_by?: string;
+  checklist_id?: number | null;
   notes?: string;
   device_time?: string;
 }
@@ -790,8 +792,8 @@ export interface ChecklistSummary {
   colour: string | null;
   reg_number: string;
   hire_date: string;
-  days: number;
-  return_date: string;
+  days: number | null;
+  return_date: string | null;
   mileage_out: number;
   mileage_out_diff_warning: boolean;
   previous_closing_mileage: number | null;
@@ -825,7 +827,9 @@ export interface CreateChecklistNewVehicleInput {
   reg_number: string;
   colour?: string | null;
   fuel_type?: VehicleFuelType;
+  condition?: VehicleCondition;
   last_known_mileage?: number;
+  next_service_due_km?: number | null;
 }
 
 export interface CreateChecklistPayload {
@@ -838,7 +842,8 @@ export interface CreateChecklistPayload {
   cell: string;
   colour?: string | null;
   hire_date?: string; // server forces today unless ADMIN
-  days: number;
+  days?: number | null;
+  return_date?: string | null;
   mileage_out: number;
   next_service_mileage?: number | null;
   fuel_type: VehicleFuelType;
@@ -881,4 +886,215 @@ export interface CompleteChecklistPayload {
     photo_data_url?: string | null;
   }>;
 }
+
+// ==================== SUBHIRED VEHICLES RECEIVED INTO FLEET ====================
+
+export function formatSubhiredMakeModel(makeModel: string): string {
+  const trimmed = makeModel.trim().replace(/\s+/g, ' ');
+  if (!trimmed) return '';
+  if (/\(subhired\)$/i.test(trimmed)) {
+    return trimmed.replace(/\(subhired\)$/i, '(Subhired)');
+  }
+  return `${trimmed} (Subhired)`;
+}
+
+export interface SubhireVehicleInput {
+  reg_number: string;
+  vehicle_type: string;
+  make_model: string;
+  colour?: string | null;
+  fuel_type?: VehicleFuelType;
+  condition?: VehicleCondition;
+  last_known_mileage: number;
+  next_service_due_km?: number | null;
+  save_to_directory?: boolean;
+}
+
+export interface SubhireReceipt {
+  id: number;
+  vehicle_id: number;
+  checklist_id: number | null;
+  subhirer_name: string;
+  representative: string;
+  phone: string;
+  address: string;
+  received_mileage: number;
+  fuel_level: FuelLevel;
+  opening_checklist_by: string;
+  notes: string;
+  status: 'ACTIVE' | 'RETURNED';
+  received_at: string;
+  device_time: string | null;
+  created_by: number;
+  created_by_name?: string;
+  created_at: string;
+  reg_number: string;
+  make_model: string;
+  vehicle_type: string;
+  vehicle_class: VehicleClass;
+  checklist_hirer_name?: string | null;
+  checklist_hirer_type?: ChecklistHirerType | null;
+}
+
+export interface CreateSubhirePayload {
+  vehicle_id?: number;
+  new_vehicle?: SubhireVehicleInput;
+  checklist_id?: number | null;
+  subhirer_name: string;
+  representative?: string;
+  phone: string;
+  address?: string;
+  received_mileage: number;
+  fuel_level: FuelLevel;
+  opening_checklist_by: string;
+  notes?: string;
+  device_time?: string;
+}
+
+// ==================== CHECKLIST & VEHICLE MATCHING RULES ====================
+
+export function normalizeMatchReg(val: string | null | undefined): string {
+  return (val ?? '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+export function normalizeMatchName(val: string | null | undefined): string {
+  return (val ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function normalizeMatchVehicleType(val: string | null | undefined): string {
+  return (val ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+export function toHarareYmd(isoOrDate: string | Date | null | undefined): string {
+  if (!isoOrDate) return '';
+  if (typeof isoOrDate === 'string') {
+    const trimmed = isoOrDate.trim();
+    if (!trimmed) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return trimmed;
+    const normalized =
+      /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/.test(trimmed) && !trimmed.endsWith('Z')
+        ? `${trimmed.replace(' ', 'T')}Z`
+        : trimmed;
+    const dt = new Date(normalized);
+    if (Number.isNaN(dt.getTime())) return '';
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Africa/Harare',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(dt);
+  }
+  if (Number.isNaN(isoOrDate.getTime())) return '';
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Africa/Harare',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(isoOrDate);
+}
+
+export interface ChecklistMatchCandidate {
+  hirer_type: ChecklistHirerType;
+  hirer_name: string;
+  reg_number: string;
+  vehicle_type: string;
+  created_at: string;
+}
+
+export interface ChecklistMatchTarget {
+  expectedHirerType: ChecklistHirerType;
+  partyName: string;
+  regNumber: string;
+  vehicleType: string;
+  logDateYmd: string;
+}
+
+export interface ChecklistMatchResult {
+  matched: boolean;
+  reasons: string[];
+  checks: {
+    hirerTypeOk: boolean;
+    dateOk: boolean;
+    regOk: boolean;
+    vehicleTypeOk: boolean;
+    nameOk: boolean;
+  };
+}
+
+export function evaluateChecklistVehicleMatch(
+  candidate: ChecklistMatchCandidate,
+  target: ChecklistMatchTarget
+): ChecklistMatchResult {
+  const reasons: string[] = [];
+
+  const hirerTypeOk = candidate.hirer_type === target.expectedHirerType;
+  if (!hirerTypeOk) {
+    reasons.push(
+      target.expectedHirerType === 'renter'
+        ? "Only checklists with Renter's Name in Section A can be matched to Hired Out vehicles."
+        : "Only checklists with Owner's Name in Section A can be matched to Received Subhired vehicles."
+    );
+  }
+
+  const chkDateYmd = toHarareYmd(candidate.created_at);
+  const targetDateYmd = toHarareYmd(target.logDateYmd);
+  const dateOk = Boolean(chkDateYmd && targetDateYmd && chkDateYmd === targetDateYmd);
+  if (!dateOk) {
+    reasons.push(
+      `Checklist creation date (${chkDateYmd || 'unknown'}) must match the ${
+        target.expectedHirerType === 'renter' ? 'hire out' : 'subhire receipt'
+      } date (${targetDateYmd || 'today'}).`
+    );
+  }
+
+  const candReg = normalizeMatchReg(candidate.reg_number);
+  const targReg = normalizeMatchReg(target.regNumber);
+  const regOk = Boolean(candReg && targReg && candReg === targReg);
+  if (!regOk) {
+    reasons.push(
+      targReg
+        ? `Checklist registration (${candidate.reg_number}) must match vehicle registration (${target.regNumber}).`
+        : 'Select or enter the vehicle registration number to match the checklist.'
+    );
+  }
+
+  const candType = normalizeMatchVehicleType(candidate.vehicle_type);
+  const targType = normalizeMatchVehicleType(target.vehicleType);
+  const vehicleTypeOk = Boolean(candType && targType && candType === targType);
+  if (!vehicleTypeOk) {
+    reasons.push(
+      targType
+        ? `Checklist vehicle type (${candidate.vehicle_type}) must match vehicle type (${target.vehicleType}).`
+        : 'Select the vehicle type to match the checklist.'
+    );
+  }
+
+  const candName = normalizeMatchName(candidate.hirer_name);
+  const targName = normalizeMatchName(target.partyName);
+  const nameOk = Boolean(candName && targName && candName === targName);
+  if (!nameOk) {
+    reasons.push(
+      targName
+        ? target.expectedHirerType === 'renter'
+          ? `Checklist Renter's Name (${candidate.hirer_name}) must match Client Name (${target.partyName}).`
+          : `Checklist Owner's Name (${candidate.hirer_name}) must match Subhirer Name (${target.partyName}).`
+        : target.expectedHirerType === 'renter'
+          ? 'Enter the Client / Renter Name to match the checklist.'
+          : 'Enter the Subhirer / Owner Name to match the checklist.'
+    );
+  }
+
+  return {
+    matched: hirerTypeOk && dateOk && regOk && vehicleTypeOk && nameOk,
+    reasons,
+    checks: {
+      hirerTypeOk,
+      dateOk,
+      regOk,
+      vehicleTypeOk,
+      nameOk,
+    },
+  };
+}
+
 

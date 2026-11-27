@@ -72,6 +72,7 @@ const SCHEMA_STATEMENTS = [
     reason TEXT,
     days_hired INTEGER,
     expected_return_date TEXT,
+    checklist_id INTEGER REFERENCES checklists(id),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_trips_status ON trips(status)`,
@@ -265,8 +266,8 @@ const SCHEMA_STATEMENTS = [
     colour TEXT,
     reg_number TEXT NOT NULL,
     hire_date TEXT NOT NULL,
-    days INTEGER NOT NULL CHECK (days >= 1),
-    return_date TEXT NOT NULL,
+    days INTEGER CHECK (days IS NULL OR days >= 1),
+    return_date TEXT,
     mileage_out INTEGER NOT NULL CHECK (mileage_out >= 0),
     mileage_out_diff_warning INTEGER NOT NULL DEFAULT 0 CHECK (mileage_out_diff_warning IN (0, 1)),
     previous_closing_mileage INTEGER,
@@ -319,6 +320,28 @@ const SCHEMA_STATEMENTS = [
     photo_data_url TEXT
   )`,
   `CREATE INDEX IF NOT EXISTS idx_checklist_items_parent ON checklist_items(checklist_id, sort_order)`,
+  `CREATE TABLE IF NOT EXISTS subhire_receipts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+    checklist_id INTEGER REFERENCES checklists(id),
+    subhirer_name TEXT NOT NULL,
+    representative TEXT NOT NULL DEFAULT '',
+    phone TEXT NOT NULL,
+    address TEXT NOT NULL DEFAULT '',
+    received_mileage INTEGER NOT NULL CHECK (received_mileage >= 0),
+    fuel_level TEXT NOT NULL CHECK (
+      fuel_level IN ('Full', 'Full-', '3/4+', '3/4', '3/4-', '1/2+', '1/2', '1/2-', '1/4+', '1/4', '1/4-', 'Empty+', 'Empty')
+    ),
+    opening_checklist_by TEXT NOT NULL,
+    notes TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RETURNED')),
+    received_at TEXT NOT NULL,
+    device_time TEXT,
+    created_by INTEGER NOT NULL REFERENCES users(id),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_subhires_vehicle ON subhire_receipts(vehicle_id, created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_subhires_checklist ON subhire_receipts(checklist_id)`,
 ];
 
 async function ensureSchemaTables(db: D1DatabaseLike): Promise<void> {
@@ -444,6 +467,9 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     if (!colNames.has('expected_return_date')) {
       await db.exec('ALTER TABLE trips ADD COLUMN expected_return_date TEXT');
     }
+    if (!colNames.has('checklist_id')) {
+      await db.exec('ALTER TABLE trips ADD COLUMN checklist_id INTEGER');
+    }
   } catch {
     // Ignore if table is freshly created from schema.sql
   }
@@ -471,6 +497,132 @@ export async function ensureInitialSeed(db: D1DatabaseLike, env: Partial<AppEnv>
     }
   } catch {
     // Ignore if already exists
+  }
+
+  // Ensure checklists.days and checklists.return_date allow NULL (for Owner checklists)
+  try {
+    const chkCols = await db
+      .prepare('PRAGMA table_info(checklists)')
+      .all<{ name: string; notnull: number }>();
+    const needsNullableMigration = chkCols.results.some(
+      (col) => (col.name === 'days' || col.name === 'return_date') && Number(col.notnull) === 1
+    );
+    if (needsNullableMigration) {
+      const createChecklistsSql = `CREATE TABLE checklists (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        trip_id INTEGER REFERENCES trips(id),
+        vehicle_id INTEGER NOT NULL REFERENCES vehicles(id),
+        status TEXT NOT NULL DEFAULT 'out' CHECK (status IN ('out', 'completed')),
+        hirer_type TEXT NOT NULL CHECK (hirer_type IN ('renter', 'owner')),
+        hirer_name TEXT NOT NULL,
+        representative TEXT NOT NULL DEFAULT '',
+        cell TEXT NOT NULL DEFAULT '',
+        car_model TEXT NOT NULL,
+        vehicle_type TEXT NOT NULL,
+        colour TEXT,
+        reg_number TEXT NOT NULL,
+        hire_date TEXT NOT NULL,
+        days INTEGER CHECK (days IS NULL OR days >= 1),
+        return_date TEXT,
+        mileage_out INTEGER NOT NULL CHECK (mileage_out >= 0),
+        mileage_out_diff_warning INTEGER NOT NULL DEFAULT 0 CHECK (mileage_out_diff_warning IN (0, 1)),
+        previous_closing_mileage INTEGER,
+        mileage_in INTEGER CHECK (mileage_in IS NULL OR mileage_in >= 0),
+        next_service_mileage INTEGER,
+        datetime_in TEXT,
+        fuel_type TEXT NOT NULL DEFAULT 'petrol' CHECK (fuel_type IN ('diesel', 'petrol', 'ev')),
+        fuel_out TEXT,
+        fuel_in TEXT,
+        sketch_json TEXT NOT NULL DEFAULT '{}',
+        sketch_png_data_url TEXT,
+        signatures_json TEXT NOT NULL DEFAULT '{}',
+        declaration_text TEXT NOT NULL DEFAULT '',
+        differences_json TEXT NOT NULL DEFAULT '[]',
+        notes TEXT NOT NULL DEFAULT '',
+        created_by INTEGER NOT NULL REFERENCES users(id),
+        returned_by INTEGER REFERENCES users(id),
+        deleted_at TEXT,
+        deleted_by INTEGER REFERENCES users(id),
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+      )`;
+      const createItemsSql = `CREATE TABLE checklist_items (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
+        template_id INTEGER REFERENCES checklist_item_templates(id),
+        custom_label TEXT NOT NULL,
+        input_type TEXT NOT NULL CHECK (
+          input_type IN (
+            'tick_cross',
+            'status_pair',
+            'yes_no',
+            'text',
+            'text_checkbox',
+            'multi_check',
+            'expiry_checks',
+            'numbers',
+            'available_na'
+          )
+        ),
+        options_json TEXT NOT NULL DEFAULT '[]',
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        value_out_json TEXT NOT NULL DEFAULT '{}',
+        value_in_json TEXT,
+        note TEXT NOT NULL DEFAULT '',
+        photo_data_url TEXT
+      )`;
+
+      await db.exec(`
+        PRAGMA foreign_keys = OFF;
+        DROP TABLE IF EXISTS checklist_items_backup;
+        DROP TABLE IF EXISTS checklists_backup;
+        CREATE TABLE checklists_backup AS SELECT * FROM checklists;
+        CREATE TABLE checklist_items_backup AS SELECT * FROM checklist_items;
+        DROP TABLE checklist_items;
+        DROP TABLE checklists;
+        ${createChecklistsSql};
+        ${createItemsSql};
+        INSERT INTO checklists (
+          id, trip_id, vehicle_id, status, hirer_type, hirer_name, representative, cell,
+          car_model, vehicle_type, colour, reg_number, hire_date, days, return_date,
+          mileage_out, mileage_out_diff_warning, previous_closing_mileage, mileage_in,
+          next_service_mileage, datetime_in, fuel_type, fuel_out, fuel_in,
+          sketch_json, sketch_png_data_url, signatures_json, declaration_text, differences_json,
+          notes, created_by, returned_by, deleted_at, deleted_by, created_at, updated_at
+        )
+        SELECT
+          id, trip_id, vehicle_id, status, hirer_type, hirer_name, representative, cell,
+          car_model, vehicle_type, colour, reg_number, hire_date, days, return_date,
+          mileage_out, mileage_out_diff_warning, previous_closing_mileage, mileage_in,
+          next_service_mileage, datetime_in, fuel_type, fuel_out, fuel_in,
+          sketch_json, sketch_png_data_url, signatures_json, declaration_text, differences_json,
+          notes, created_by, returned_by, deleted_at, deleted_by, created_at, updated_at
+        FROM checklists_backup;
+        INSERT INTO checklist_items (
+          id, checklist_id, template_id, custom_label, input_type, options_json,
+          sort_order, value_out_json, value_in_json, note, photo_data_url
+        )
+        SELECT
+          id, checklist_id, template_id, custom_label, input_type, options_json,
+          sort_order, value_out_json, value_in_json, note, photo_data_url
+        FROM checklist_items_backup;
+        DROP TABLE checklist_items_backup;
+        DROP TABLE checklists_backup;
+        CREATE INDEX IF NOT EXISTS idx_checklists_status ON checklists(status, deleted_at);
+        CREATE INDEX IF NOT EXISTS idx_checklists_reg ON checklists(reg_number, hire_date);
+        CREATE INDEX IF NOT EXISTS idx_checklists_vehicle ON checklists(vehicle_id, created_at);
+        CREATE INDEX IF NOT EXISTS idx_checklists_trip ON checklists(trip_id);
+        CREATE INDEX IF NOT EXISTS idx_checklist_items_parent ON checklist_items(checklist_id, sort_order);
+        PRAGMA foreign_keys = ON;
+      `);
+    }
+  } catch (chkMigErr) {
+    try {
+      await db.prepare('PRAGMA foreign_keys = ON').run();
+    } catch {
+      // Ignore cleanup
+    }
+    console.warn('Checklists nullable migration warning:', chkMigErr);
   }
 
   // Ensure users table CHECK constraint allows FLEET_MANAGER on pre-existing databases

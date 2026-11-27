@@ -56,6 +56,7 @@ import {
   DEFAULT_SETTINGS,
   ROLE_LABELS,
   type AppSettings,
+  type ChecklistSummary,
   type TripSummary,
   type UserPublic,
 } from './shared/types';
@@ -65,7 +66,7 @@ import { ChecklistsView, type ChecklistPrefill } from './components/ChecklistsVi
 import { DriversView } from './components/DriversView';
 import { FleetMaintenanceView } from './components/FleetMaintenanceView';
 import { HelpView } from './components/HelpView';
-import { HomeView, type NavSection } from './components/HomeView';
+import { HomeView, type NavSection, type PendingYardRestore } from './components/HomeView';
 import { LoginView } from './components/LoginView';
 import { NotificationsView } from './components/NotificationsView';
 import { OfflineIndicator } from './components/OfflineIndicator';
@@ -92,6 +93,8 @@ export default function App() {
   } | null>(null);
   const [pendingChecklistPrefill, setPendingChecklistPrefill] =
     useState<ChecklistPrefill | null>(null);
+  const [pendingYardRestore, setPendingYardRestore] =
+    useState<PendingYardRestore | null>(null);
   const [pendingNotificationLink, setPendingNotificationLink] = useState<{
     notificationId: number | null;
   } | null>(() => {
@@ -546,6 +549,33 @@ export default function App() {
     setMobileMenuOpen(false);
   };
 
+  const handleStartChecklistFromYardForm = (prefill: ChecklistPrefill) => {
+    setPendingChecklistPrefill(prefill);
+    setSection('checklists');
+    setMobileMenuOpen(false);
+  };
+
+  const handleChecklistCreatedAndReturn = (
+    checklist: ChecklistSummary,
+    target: { kind: 'HIRE' | 'SUBHIRE' }
+  ) => {
+    setPendingYardRestore({
+      mode: target.kind === 'HIRE' ? { kind: 'OUT', tripType: 'HIRE' } : { kind: 'SUBHIRE' },
+      linkedChecklist: checklist,
+    });
+    setSection('home');
+    setMobileMenuOpen(false);
+  };
+
+  const handleCancelChecklistReturn = (target: { kind: 'HIRE' | 'SUBHIRE' }) => {
+    setPendingYardRestore({
+      mode: target.kind === 'HIRE' ? { kind: 'OUT', tripType: 'HIRE' } : { kind: 'SUBHIRE' },
+      linkedChecklist: null,
+    });
+    setSection('home');
+    setMobileMenuOpen(false);
+  };
+
   return (
     <div className="min-h-screen bg-[#F4F9FF] text-slate-900 flex flex-col md:flex-row">
       {/* Desktop Sidebar */}
@@ -855,10 +885,13 @@ export default function App() {
               user={user}
               companyName={settings.company_name}
               homeResetKey={homeResetKey}
+              pendingYardRestore={pendingYardRestore}
+              onConsumePendingYardRestore={() => setPendingYardRestore(null)}
               onNavigate={navigateTo}
               onOpenVehicle={openVehicleFromDashboard}
               onOpenPinSettings={openPinChangeInSettings}
               onCreateChecklistForTrip={handleCreateChecklistFromTrip}
+              onStartCreateChecklist={handleStartChecklistFromYardForm}
             />
           )}
           {(section === 'settings' || section === 'change-pin') && (
@@ -952,6 +985,8 @@ export default function App() {
               initialPrefill={pendingChecklistPrefill}
               onConsumePrefill={() => setPendingChecklistPrefill(null)}
               onOpenVehicle={openVehicleFromDashboard}
+              onChecklistCreatedAndReturn={handleChecklistCreatedAndReturn}
+              onCancelReturnToForm={handleCancelChecklistReturn}
             />
           )}
           {!user.must_change_pin && section === 'notifications' && isAlertRecipient && (

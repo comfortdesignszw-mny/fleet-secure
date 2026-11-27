@@ -381,7 +381,7 @@ async function buildReportDataset(
         vehicle: `${cRow.car_model} (${cRow.vehicle_type})`,
         hirer: `${cRow.hirer_name} (${cRow.hirer_type === 'owner' ? 'Owner' : 'Renter'})`,
         hire_date: hireDate,
-        return_date: String(cRow.return_date),
+        return_date: cRow.return_date ? String(cRow.return_date) : '-',
         km_out_in: `${cRow.mileage_out} -> ${cRow.mileage_in ?? '-'}`,
         fuel: `${cRow.fuel_out ?? 'EV'} -> ${cRow.fuel_in ?? '-'}`,
         diffs: diffsLen > 0 ? `${diffsLen} diff(s)` : 'None',

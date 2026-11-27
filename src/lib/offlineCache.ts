@@ -178,7 +178,7 @@ export interface CachedVehicleDetail {
     hirer_type: 'renter' | 'owner';
     hirer_name: string;
     hire_date: string;
-    return_date: string;
+    return_date: string | null;
     mileage_out: number;
     mileage_in: number | null;
     fuel_out: FuelLevel | null;

@@ -3,9 +3,11 @@ import type {
   ChecklistDetail,
   CompleteChecklistPayload,
   CreateChecklistPayload,
+  CreateSubhirePayload,
   CreateTripOutPayload,
   Driver,
   FuelLevel,
+  SubhireReceipt,
   TripFlag,
   TripSummary,
   Vehicle,
@@ -101,6 +103,14 @@ export type QueuedTripEntry =
       createdAtDevice: string;
       payload: { checklist_id: number; payload: CompleteChecklistPayload };
       lastError?: string | null;
+    }
+  | {
+      id: string;
+      kind: 'SUBHIRE_CREATE';
+      summaryLabel: string;
+      createdAtDevice: string;
+      payload: CreateSubhirePayload;
+      lastError?: string | null;
     };
 
 function notifyQueueChanged() {
@@ -186,6 +196,9 @@ export interface OfflineSyncHandlers {
     checklistId: number,
     payload: CompleteChecklistPayload
   ) => Promise<{ checklist: ChecklistDetail }>;
+  createSubhire?: (
+    payload: CreateSubhirePayload
+  ) => Promise<{ receipt: SubhireReceipt; vehicle: Vehicle }>;
 }
 
 const defaultHandlers: OfflineSyncHandlers = {
@@ -195,6 +208,7 @@ const defaultHandlers: OfflineSyncHandlers = {
   createVehicle: (payload) => api.createVehicle(payload),
   createChecklist: (payload) => api.createChecklist(payload),
   completeChecklist: (checklistId, payload) => api.completeChecklist(checklistId, payload),
+  createSubhire: (payload) => api.createSubhire(payload),
 };
 
 let inFlightFlushPromise: Promise<SyncFlushResult> | null = null;
@@ -238,6 +252,9 @@ async function runFlushOfflineQueue(
         const sendComplete =
           handlers.completeChecklist ?? ((id, p) => api.completeChecklist(id, p));
         await sendComplete(item.payload.checklist_id, item.payload.payload);
+      } else if (item.kind === 'SUBHIRE_CREATE') {
+        const sendSubhire = handlers.createSubhire ?? ((p) => api.createSubhire(p));
+        await sendSubhire(item.payload);
       }
       syncedCount++;
     } catch (err) {

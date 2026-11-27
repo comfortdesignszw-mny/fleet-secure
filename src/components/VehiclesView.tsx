@@ -737,7 +737,7 @@ export const VehiclesView: React.FC<VehiclesViewProps> = ({
                           Checklist #{chk.id} · {chk.hirer_type === 'owner' ? 'Owner:' : 'Renter:'} {chk.hirer_name}
                         </div>
                         <div className="text-xs font-mono tabular-nums text-slate-500">
-                          Out {chk.hire_date} · Return {chk.return_date} · {chk.mileage_out.toLocaleString()} km
+                          Out {chk.hire_date} · {chk.return_date ? `Return ${chk.return_date}` : 'Return Optional'} · {chk.mileage_out.toLocaleString()} km
                           {chk.mileage_in !== null ? ` → ${chk.mileage_in.toLocaleString()} km` : ''}
                         </div>
                       </div>

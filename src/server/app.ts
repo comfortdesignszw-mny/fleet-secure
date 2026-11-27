@@ -23,6 +23,7 @@ import {
 import { notifyManagersInApp, registerNotificationRoutes } from './notifications';
 import { registerMaintenanceRoutes } from './maintenance';
 import { registerReportRoutes } from './reports';
+import { registerSubhireRoutes } from './subhires';
 import { registerTripRoutes } from './trips';
 import type { AppEnv, D1DatabaseLike } from './types';
 
@@ -1210,6 +1211,14 @@ export function createApp() {
   });
 
   registerChecklistRoutes(app, {
+    requireAuth,
+    requirePinChanged,
+    requireRole,
+    getClientIp,
+    getUserAgent,
+  });
+
+  registerSubhireRoutes(app, {
     requireAuth,
     requirePinChanged,
     requireRole,

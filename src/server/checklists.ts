@@ -277,8 +277,8 @@ function mapChecklistSummaryRow(row: Record<string, unknown>): ChecklistSummary 
     colour: row.colour ? String(row.colour) : null,
     reg_number: String(row.reg_number),
     hire_date: String(row.hire_date),
-    days: Number(row.days),
-    return_date: String(row.return_date),
+    days: row.days !== null && row.days !== undefined ? Number(row.days) : null,
+    return_date: row.return_date ? String(row.return_date) : null,
     mileage_out: Number(row.mileage_out),
     mileage_out_diff_warning: Number(row.mileage_out_diff_warning ?? 0) === 1,
     previous_closing_mileage:
@@ -557,6 +557,7 @@ export function registerChecklistRoutes(
   app.get('/checklists', requireAuth, requirePinChanged(), async (c) => {
     const actor = c.get('user')!;
     const status = (c.req.query('status') || '').trim();
+    const hirerType = (c.req.query('hirer_type') || '').trim().toLowerCase();
     const q = (c.req.query('q') || '').trim().toLowerCase();
     const vehicleId = Number(c.req.query('vehicle_id') || 0);
     const tripId = Number(c.req.query('trip_id') || 0);
@@ -578,6 +579,10 @@ export function registerChecklistRoutes(
     if (status === 'out' || status === 'completed') {
       clauses.push('c.status = ?');
       params.push(status);
+    }
+    if (hirerType === 'renter' || hirerType === 'owner') {
+      clauses.push('c.hirer_type = ?');
+      params.push(hirerType);
     }
     if (vehicleId > 0) {
       clauses.push('c.vehicle_id = ?');
@@ -648,9 +653,22 @@ export function registerChecklistRoutes(
       return c.json({ error: 'Enter a valid contact Cell phone number.' }, 400);
     }
 
-    const days = Number(body.days);
-    if (!Number.isInteger(days) || days < 1 || days > 365) {
-      return c.json({ error: 'Days must be a whole number of at least 1.' }, 400);
+    const rawDays = body.days;
+    const hasDaysInput =
+      rawDays !== undefined && rawDays !== null && String(rawDays).trim() !== '';
+    let days: number | null = null;
+    if (hirerType === 'renter') {
+      const parsed = Number(rawDays);
+      if (!hasDaysInput || !Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+        return c.json({ error: 'Days must be a whole number of at least 1.' }, 400);
+      }
+      days = parsed;
+    } else if (hasDaysInput) {
+      const parsed = Number(rawDays);
+      if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+        return c.json({ error: 'Days must be a whole number between 1 and 365 when provided.' }, 400);
+      }
+      days = parsed;
     }
 
     const todayHarare = getHarareTodayDate();
@@ -669,7 +687,22 @@ export function registerChecklistRoutes(
       hireDate = body.hire_date.trim();
       hireDateOverridden = true;
     }
-    const returnDate = addDaysToYmd(hireDate, days);
+
+    let returnDate: string | null = null;
+    const rawReturnDate =
+      body.return_date !== undefined && body.return_date !== null
+        ? String(body.return_date).trim()
+        : '';
+    if (hirerType === 'renter') {
+      returnDate = addDaysToYmd(hireDate, days!);
+    } else if (rawReturnDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(rawReturnDate)) {
+        return c.json({ error: 'Return date must be YYYY-MM-DD.' }, 400);
+      }
+      returnDate = rawReturnDate;
+    } else if (days !== null) {
+      returnDate = addDaysToYmd(hireDate, days);
+    }
 
     const fuelType = (body.fuel_type || 'petrol') as VehicleFuelType;
     if (!VALID_FUEL_TYPES.includes(fuelType)) {
@@ -740,11 +773,23 @@ export function registerChecklistRoutes(
         );
       }
 
+      const vCondition =
+        nv.condition && ['Very Good', 'Good', 'Needs Little Attention', 'Bad Condition'].includes(nv.condition)
+          ? nv.condition
+          : 'Good';
+      const vNextDue =
+        nv.next_service_due_km !== undefined &&
+        nv.next_service_due_km !== null &&
+        Number.isInteger(Number(nv.next_service_due_km)) &&
+        Number(nv.next_service_due_km) >= 0
+          ? Number(nv.next_service_due_km)
+          : nextServiceMileage;
+
       const vIns = await c.env.DB.prepare(
         `INSERT INTO vehicles (reg_number, vehicle_type, vehicle_class, make_model, colour, fuel_type, condition, last_known_mileage, next_service_due_km, next_service_mileage, active)
-         VALUES (?, ?, ?, ?, ?, ?, 'Good', ?, ?, ?, 1)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`
       )
-        .bind(reg, vType, vClass, makeModel, colour, vFuel, startKm, nextServiceMileage, nextServiceMileage)
+        .bind(reg, vType, vClass, makeModel, colour, vFuel, vCondition, startKm, vNextDue, vNextDue)
         .run();
 
       vehicleRow = await c.env.DB.prepare('SELECT * FROM vehicles WHERE id = ?')
@@ -955,6 +1000,14 @@ export function registerChecklistRoutes(
     )
       .bind(colour, fuelType, nextServiceMileage, nextServiceMileage, mileageOut, mileageOut, vehicleId)
       .run();
+
+    if (tripId !== null && hirerType === 'renter') {
+      await c.env.DB.prepare(
+        `UPDATE trips SET checklist_id = COALESCE(checklist_id, ?) WHERE id = ? AND trip_type = 'HIRE'`
+      )
+        .bind(checklistId, tripId)
+        .run();
+    }
 
     const detail = await fetchChecklistDetail(c.env.DB, checklistId);
 
@@ -1370,7 +1423,8 @@ export function registerChecklistRoutes(
         cell?: string;
         colour?: string | null;
         hire_date?: string;
-        days?: number;
+        days?: number | null;
+        return_date?: string | null;
         notes?: string;
         reason?: string;
       };
@@ -1390,17 +1444,48 @@ export function registerChecklistRoutes(
       const nextCell = body.cell !== undefined ? body.cell.trim() : existing.cell;
       const nextColour = body.colour !== undefined ? (body.colour ? body.colour.trim() : null) : existing.colour;
       const nextHireDate = body.hire_date !== undefined ? body.hire_date.trim() : existing.hire_date;
-      const nextDays = body.days !== undefined ? Number(body.days) : existing.days;
       const nextNotes = body.notes !== undefined ? body.notes.trim() : existing.notes;
 
       if (nextHirer.length < 2) return c.json({ error: 'Hirer name is required.' }, 400);
       if (!/^\d{4}-\d{2}-\d{2}$/.test(nextHireDate)) {
         return c.json({ error: 'Hire date must be YYYY-MM-DD.' }, 400);
       }
-      if (!Number.isInteger(nextDays) || nextDays < 1) {
-        return c.json({ error: 'Days must be 1 or more.' }, 400);
+
+      let nextDays: number | null;
+      if (body.days === undefined) {
+        nextDays = existing.days;
+      } else if (body.days === null || String(body.days).trim() === '') {
+        nextDays = null;
+      } else {
+        const parsed = Number(body.days);
+        if (!Number.isInteger(parsed) || parsed < 1 || parsed > 365) {
+          return c.json({ error: 'Days must be 1 or more.' }, 400);
+        }
+        nextDays = parsed;
       }
-      const nextReturnDate = addDaysToYmd(nextHireDate, nextDays);
+
+      if (existing.hirer_type === 'renter' && (nextDays === null || nextDays < 1)) {
+        return c.json({ error: 'Days must be 1 or more for Renter checklists.' }, 400);
+      }
+
+      let nextReturnDate: string | null = null;
+      if (existing.hirer_type === 'renter') {
+        nextReturnDate = addDaysToYmd(nextHireDate, nextDays!);
+      } else if (body.return_date !== undefined) {
+        const trimmedRet = body.return_date ? String(body.return_date).trim() : '';
+        if (trimmedRet) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmedRet)) {
+            return c.json({ error: 'Return date must be YYYY-MM-DD.' }, 400);
+          }
+          nextReturnDate = trimmedRet;
+        } else {
+          nextReturnDate = nextDays !== null ? addDaysToYmd(nextHireDate, nextDays) : null;
+        }
+      } else if (nextDays !== null) {
+        nextReturnDate = addDaysToYmd(nextHireDate, nextDays);
+      } else {
+        nextReturnDate = existing.return_date;
+      }
 
       await c.env.DB.prepare(
         `UPDATE checklists

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownLeft,
+  ArrowDownToLine,
   ArrowUpRight,
   Car,
   CheckCircle2,
@@ -40,12 +41,15 @@ import {
 import {
   ROLE_LABELS,
   formatHarareTime,
+  type ChecklistSummary,
   type TripFlag,
   type TripSummary,
   type TripType,
   type UserPublic,
 } from '../shared/types';
+import type { ChecklistPrefill } from './ChecklistsView';
 import { DashboardView } from './DashboardView';
+import { SubhireReceiveForm } from './SubhireReceiveForm';
 import { TripInForm } from './TripInForm';
 import { TripOutForm } from './TripOutForm';
 
@@ -64,19 +68,28 @@ export type NavSection =
   | 'help'
   | 'change-pin';
 
+export interface PendingYardRestore {
+  mode: { kind: 'OUT'; tripType: 'HIRE' } | { kind: 'SUBHIRE' };
+  linkedChecklist: ChecklistSummary | null;
+}
+
 interface HomeViewProps {
   user: UserPublic;
   companyName: string;
   homeResetKey?: number;
+  pendingYardRestore?: PendingYardRestore | null;
+  onConsumePendingYardRestore?: () => void;
   onNavigate: (section: NavSection, tripId?: number) => void;
   onOpenVehicle: (vehicleId: number) => void;
   onOpenPinSettings: () => void;
   onCreateChecklistForTrip?: (trip: TripSummary) => void;
+  onStartCreateChecklist?: (prefill: ChecklistPrefill) => void;
 }
 
 type ActiveYardMode =
   | { kind: 'OUT'; tripType: TripType }
   | { kind: 'IN'; tripType: TripType; tripId?: number | null }
+  | { kind: 'SUBHIRE' }
   | null;
 
 function getHarareTodayDateStr(): string {
@@ -104,12 +117,16 @@ export const HomeView: React.FC<HomeViewProps> = ({
   user,
   companyName,
   homeResetKey = 0,
+  pendingYardRestore = null,
+  onConsumePendingYardRestore,
   onNavigate,
   onOpenVehicle,
   onOpenPinSettings,
   onCreateChecklistForTrip,
+  onStartCreateChecklist,
 }) => {
   const [mode, setMode] = useState<ActiveYardMode>(null);
+  const [restoredChecklist, setRestoredChecklist] = useState<ChecklistSummary | null>(null);
   const [ongoing, setOngoing] = useState<TripSummary[]>([]);
   const [loadingOngoing, setLoadingOngoing] = useState(true);
   const [usingOngoingCache, setUsingOngoingCache] = useState(false);
@@ -185,11 +202,21 @@ export const HomeView: React.FC<HomeViewProps> = ({
   }, []);
 
   useEffect(() => {
+    if (pendingYardRestore) return;
     setMode(null);
     setPinActionWarning(false);
     setQuickActionsOpen(false);
     setHeaderRecordOpen(false);
-  }, [homeResetKey]);
+  }, [homeResetKey, pendingYardRestore]);
+
+  useEffect(() => {
+    if (!pendingYardRestore) return;
+    setMode(pendingYardRestore.mode);
+    setRestoredChecklist(pendingYardRestore.linkedChecklist);
+    setHeaderRecordOpen(false);
+    setQuickActionsOpen(false);
+    onConsumePendingYardRestore?.();
+  }, [pendingYardRestore, onConsumePendingYardRestore]);
 
   useEffect(() => {
     if (!headerRecordOpen) return;
@@ -286,6 +313,13 @@ export const HomeView: React.FC<HomeViewProps> = ({
       icon: ClipboardCheck,
       badgeClass: 'from-sky-600 to-cyan-500',
     },
+    {
+      label: 'Receive a Vehicle From Subhirer',
+      hint: 'Subhirer intake, (Subhired) & checklist',
+      mode: { kind: 'SUBHIRE' },
+      icon: ArrowDownToLine,
+      badgeClass: 'from-indigo-600 to-cyan-500',
+    },
   ];
 
   const handleLoadDemoData = async () => {
@@ -328,13 +362,56 @@ export const HomeView: React.FC<HomeViewProps> = ({
     }
   };
 
+  if (mode?.kind === 'SUBHIRE') {
+    return (
+      <SubhireReceiveForm
+        user={user}
+        externalLinkedChecklist={restoredChecklist}
+        onConsumeExternalLinkedChecklist={() => setRestoredChecklist(null)}
+        onStartCreateChecklist={onStartCreateChecklist}
+        onCancel={() => {
+          setRestoredChecklist(null);
+          setMode(null);
+        }}
+        onSaved={(receipt, vehicle) => {
+          setRestoredChecklist(null);
+          setMode(null);
+          setSavedBanner({
+            message: `Received ${vehicle.reg_number} (${vehicle.make_model}) from subhirer ${receipt.subhirer_name}.`,
+            flags: [],
+            tripId: null,
+          });
+          void loadOngoing();
+          void warmOfflineCaches(user.role, { force: true });
+        }}
+        onQueued={(summaryLabel) => {
+          setRestoredChecklist(null);
+          setMode(null);
+          setQueuedEntries(getOfflineQueue());
+          setSavedBanner({
+            message: `Saved offline (Waiting to send): ${summaryLabel}. It will upload automatically when internet returns.`,
+            flags: [],
+            tripId: null,
+          });
+        }}
+      />
+    );
+  }
+
   if (mode?.kind === 'OUT') {
     return (
       <TripOutForm
         tripType={mode.tripType}
         user={user}
-        onCancel={() => setMode(null)}
+        externalLinkedChecklist={mode.tripType === 'HIRE' ? restoredChecklist : null}
+        onConsumeExternalLinkedChecklist={() => setRestoredChecklist(null)}
+        onStartCreateChecklist={onStartCreateChecklist}
+        onCancel={() => {
+          setRestoredChecklist(null);
+          setMode(null);
+        }}
         onSaved={(trip, flags) => {
+          setRestoredChecklist(null);
           setMode(null);
           setSavedBanner({
             message: `Saved ${trip.trip_type === 'HIRE' ? 'Hire Out' : 'Errand Out'} for ${trip.reg_number} (${trip.driver_name}).`,
@@ -345,6 +422,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
           void warmOfflineCaches(user.role, { force: true });
         }}
         onQueued={(summaryLabel) => {
+          setRestoredChecklist(null);
           setMode(null);
           setQueuedEntries(getOfflineQueue());
           setSavedBanner({
@@ -858,7 +936,7 @@ export const HomeView: React.FC<HomeViewProps> = ({
         </div>
 
         {quickActionsOpen && (
-          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 border-t border-blue-100 pt-3">
+          <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 border-t border-blue-100 pt-3">
             {compactActions.map((act) => {
               const Icon = act.icon;
               return (

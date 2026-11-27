@@ -6,7 +6,9 @@ import {
   UNRECORDED_LICENCE_PREFIX,
   VEHICLE_CONDITIONS,
   VEHICLE_TYPE_TO_CLASS,
+  evaluateChecklistVehicleMatch,
   normalizeDriverLicenceNumber,
+  toHarareYmd,
   type AppSettings,
   type FuelLevel,
   type NewDriverInput,
@@ -204,13 +206,14 @@ function mapTripSummaryRow(
     flags: combinedFlags,
     correction_count: Number(row.correction_count ?? 0),
     is_overdue: isOverdue,
+    checklist_id: row.checklist_id !== null && row.checklist_id !== undefined ? Number(row.checklist_id) : null,
   };
 }
 
 const TRIP_SUMMARY_SELECT = `
   SELECT
     t.id, t.trip_type, t.vehicle_id, t.driver_id, t.status, t.client_name, t.destination, t.reason,
-    t.days_hired, t.expected_return_date, t.created_at,
+    t.days_hired, t.expected_return_date, t.checklist_id, t.created_at,
     v.reg_number, v.make_model, v.vehicle_type, v.vehicle_class,
     d.full_name AS driver_name, d.phone AS driver_phone,
     tout.out_at, tout.mileage_out, tout.fuel_out, tout.flags AS out_flags,
@@ -426,6 +429,7 @@ export function registerTripRoutes(
       mileage_out?: number;
       fuel_out?: FuelLevel;
       opening_checklist_by?: string;
+      checklist_id?: number | null;
       notes?: string;
       device_time?: string;
     };
@@ -491,6 +495,18 @@ export function registerTripRoutes(
     }
     if (tripType === 'HIRE' && !checklistBy) {
       return c.json({ error: 'Enter the name of the person who did the opening checklist.' }, 400);
+    }
+
+    let parsedChecklistId: number | null = null;
+    if (body.checklist_id !== undefined && body.checklist_id !== null && Number(body.checklist_id) !== 0) {
+      const candidateId = Number(body.checklist_id);
+      if (!Number.isInteger(candidateId) || candidateId <= 0) {
+        return c.json({ error: 'Invalid linked checklist ID.' }, 400);
+      }
+      if (tripType !== 'HIRE') {
+        return c.json({ error: 'Renter checklists can only be linked to Hire Out trips.' }, 400);
+      }
+      parsedChecklistId = candidateId;
     }
 
     // Validate vehicle (either existing directory selection or new inline creation)
@@ -725,6 +741,66 @@ export function registerTripRoutes(
       }
     }
 
+    let linkedChecklistId: number | null = null;
+    if (parsedChecklistId !== null) {
+      const chkRow = await c.env.DB.prepare(
+        `SELECT id, hirer_type, hirer_name, vehicle_id, reg_number, vehicle_type, hire_date, created_at, created_by, deleted_at
+         FROM checklists WHERE id = ?`
+      )
+        .bind(parsedChecklistId)
+        .first<{
+          id: number;
+          hirer_type: string;
+          hirer_name: string;
+          vehicle_id: number;
+          reg_number: string;
+          vehicle_type: string;
+          hire_date: string;
+          created_at: string;
+          created_by: number;
+          deleted_at: string | null;
+        }>();
+      if (!chkRow || chkRow.deleted_at) {
+        return c.json({ error: 'Selected checklist was not found.' }, 404);
+      }
+      if (actor.role === 'DRIVER' && Number(chkRow.created_by) !== actor.id) {
+        return c.json({ error: 'You can only link checklists that you created.' }, 403);
+      }
+
+      const targetRegNumber = newVehicleSpec
+        ? newVehicleSpec.regNumber
+        : String(vehicle!.reg_number);
+      const targetVehicleType = newVehicleSpec
+        ? newVehicleSpec.vehicleType
+        : String(vehicle!.vehicle_type);
+      const logDateYmd = toHarareYmd(
+        deviceTime && !Number.isNaN(new Date(deviceTime).getTime())
+          ? new Date(deviceTime)
+          : new Date()
+      );
+
+      const matchResult = evaluateChecklistVehicleMatch(
+        {
+          hirer_type: chkRow.hirer_type as 'renter' | 'owner',
+          hirer_name: chkRow.hirer_name,
+          reg_number: chkRow.reg_number,
+          vehicle_type: chkRow.vehicle_type,
+          created_at: chkRow.created_at,
+        },
+        {
+          expectedHirerType: 'renter',
+          partyName: clientName,
+          regNumber: targetRegNumber,
+          vehicleType: targetVehicleType,
+          logDateYmd,
+        }
+      );
+      if (!matchResult.matched) {
+        return c.json({ error: matchResult.reasons[0] }, 400);
+      }
+      linkedChecklistId = parsedChecklistId;
+    }
+
     // All validation passed; insert inline vehicle / driver records if requested
     let vehicleId = requestedVehicleId;
     if (newVehicleSpec) {
@@ -920,8 +996,8 @@ export function registerTripRoutes(
     }
 
     const tripRes = await c.env.DB.prepare(
-      `INSERT INTO trips (trip_type, vehicle_id, driver_id, status, client_name, destination, reason, days_hired, expected_return_date)
-       VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?)`
+      `INSERT INTO trips (trip_type, vehicle_id, driver_id, status, client_name, destination, reason, days_hired, expected_return_date, checklist_id)
+       VALUES (?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?)`
     )
       .bind(
         tripType,
@@ -931,11 +1007,20 @@ export function registerTripRoutes(
         tripType === 'ERRAND' ? destination : null,
         tripType === 'ERRAND' ? reason : null,
         tripType === 'HIRE' ? daysHired : null,
-        tripType === 'HIRE' ? expectedReturnDate : null
+        tripType === 'HIRE' ? expectedReturnDate : null,
+        linkedChecklistId
       )
       .run();
 
     const tripId = tripRes.meta.last_row_id;
+
+    if (linkedChecklistId !== null) {
+      await c.env.DB.prepare(
+        `UPDATE checklists SET trip_id = COALESCE(trip_id, ?) WHERE id = ?`
+      )
+        .bind(tripId, linkedChecklistId)
+        .run();
+    }
 
     await c.env.DB.prepare(
       `INSERT INTO trip_out (trip_id, out_at, device_time, received_at, mileage_out, fuel_out, opening_checklist_by, notes, flags, recorded_by)
@@ -983,6 +1068,7 @@ export function registerTripRoutes(
         expected_return_date: summary.expected_return_date,
         mileage_out: mileageOut,
         fuel_out: fuelOut,
+        checklist_id: linkedChecklistId,
         flags: outFlags,
       },
       ip: getClientIp(c),

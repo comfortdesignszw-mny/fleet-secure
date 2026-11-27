@@ -10,6 +10,7 @@ import type {
   ChecklistSummary,
   CompleteChecklistPayload,
   CreateChecklistPayload,
+  CreateSubhirePayload,
   CreateTripOutPayload,
   DashboardData,
   Driver,
@@ -27,6 +28,7 @@ import type {
   ReportType,
   ExportFormat,
   Role,
+  SubhireReceipt,
   TripCorrection,
   TripDetail,
   TripSummary,
@@ -388,7 +390,7 @@ export const api = {
         hirer_type: 'renter' | 'owner';
         hirer_name: string;
         hire_date: string;
-        return_date: string;
+        return_date: string | null;
         mileage_out: number;
         mileage_in: number | null;
         fuel_out: FuelLevel | null;
@@ -872,10 +874,18 @@ export const api = {
     }),
 
   listChecklists: (
-    params: { status?: 'out' | 'completed' | ''; q?: string; vehicle_id?: number; trip_id?: number; limit?: number } = {}
+    params: {
+      status?: 'out' | 'completed' | '';
+      hirer_type?: 'renter' | 'owner' | '';
+      q?: string;
+      vehicle_id?: number;
+      trip_id?: number;
+      limit?: number;
+    } = {}
   ) => {
     const qs = new URLSearchParams();
     if (params.status) qs.set('status', params.status);
+    if (params.hirer_type) qs.set('hirer_type', params.hirer_type);
     if (params.q) qs.set('q', params.q);
     if (params.vehicle_id) qs.set('vehicle_id', String(params.vehicle_id));
     if (params.trip_id) qs.set('trip_id', String(params.trip_id));
@@ -929,7 +939,8 @@ export const api = {
       cell?: string;
       colour?: string | null;
       hire_date?: string;
-      days?: number;
+      days?: number | null;
+      return_date?: string | null;
       notes?: string;
       reason: string;
     }
@@ -945,4 +956,18 @@ export const api = {
     }),
 
   getChecklistPdfUrl: (checklistId: number) => `/api/checklists/${checklistId}/pdf`,
+
+  // ---------------- SUBHIRED VEHICLES ----------------
+  listSubhires: (limit = 50) =>
+    request<{ items: SubhireReceipt[] }>(`/subhires?limit=${limit}`),
+
+  createSubhire: async (payload: CreateSubhirePayload) => {
+    const res = await request<{ receipt: SubhireReceipt; vehicle: Vehicle }>('/subhires', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+    requestNotificationsRefresh();
+    notifyMaintenanceUpdated();
+    return res;
+  },
 };

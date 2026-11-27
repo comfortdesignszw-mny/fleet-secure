@@ -259,8 +259,8 @@ export interface PdfChecklistInput {
   colour: string;
   regNumber: string;
   hireDate: string;
-  days: number;
-  returnDate: string;
+  days: number | null;
+  returnDate: string | null;
   mileageOut: number;
   mileageIn: number | null;
   nextServiceMileage: number | null;
@@ -365,7 +365,7 @@ export function buildChecklistPdf(input: PdfChecklistInput): Uint8Array {
   const metaRows: [string, string][] = [
     [`${input.hirerLabel}: ${input.hirerName}`, `Representative: ${input.representative || '-'}   |   Cell: ${input.cell || '-'}`],
     [`Vehicle: ${input.carModel} (${input.vehicleType})`, `Reg: ${input.regNumber}   |   Colour: ${input.colour || '-'}`],
-    [`Hire Date: ${input.hireDate} (${input.days} day${input.days === 1 ? '' : 's'})`, `Expected Return: ${input.returnDate}`],
+    [`Hire Date: ${input.hireDate}${input.days !== null ? ` (${input.days} day${input.days === 1 ? '' : 's'})` : ' (Open-ended)'}`, `Expected Return: ${input.returnDate || 'Optional / Not set'}`],
     [`Mileage OUT: ${input.mileageOut.toLocaleString()} km`, `Mileage IN: ${input.mileageIn !== null ? `${input.mileageIn.toLocaleString()} km` : 'Open'}`],
     [
       `Fuel (${input.fuelType.toUpperCase()}): OUT ${input.fuelOut || 'N/A'} | IN ${input.fuelIn || '-'}`,

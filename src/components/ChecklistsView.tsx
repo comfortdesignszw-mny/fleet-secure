@@ -37,6 +37,7 @@ import {
   VEHICLE_FUEL_TYPES,
   VEHICLE_TYPES,
   formatHarareTime,
+  formatSubhiredMakeModel,
   type ChecklistDetail,
   type ChecklistHirerType,
   type ChecklistInputType,
@@ -46,11 +47,13 @@ import {
   type ChecklistSketchData,
   type ChecklistSummary,
   type CompleteChecklistPayload,
+  type CreateChecklistNewVehicleInput,
   type CreateChecklistPayload,
   type FuelLevel,
   type Role,
   type UserPublic,
   type Vehicle,
+  type VehicleCondition,
   type VehicleFuelType,
 } from '../shared/types';
 import {
@@ -68,10 +71,13 @@ export interface ChecklistPrefill {
   hirer_type?: ChecklistHirerType;
   hirer_name?: string;
   representative?: string;
+  cell?: string;
   hire_date?: string;
   days?: number;
   mileage_out?: number;
   fuel_out?: FuelLevel | null;
+  new_vehicle?: CreateChecklistNewVehicleInput;
+  returnTarget?: { kind: 'HIRE' | 'SUBHIRE' };
 }
 
 interface ChecklistsViewProps {
@@ -80,6 +86,11 @@ interface ChecklistsViewProps {
   initialPrefill?: ChecklistPrefill | null;
   onConsumePrefill?: () => void;
   onOpenVehicle?: (vehicleId: number) => void;
+  onChecklistCreatedAndReturn?: (
+    checklist: ChecklistSummary,
+    target: { kind: 'HIRE' | 'SUBHIRE' }
+  ) => void;
+  onCancelReturnToForm?: (target: { kind: 'HIRE' | 'SUBHIRE' }) => void;
 }
 
 interface DraftChecklistRow {
@@ -232,6 +243,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   initialPrefill = null,
   onConsumePrefill,
   onOpenVehicle,
+  onChecklistCreatedAndReturn,
+  onCancelReturnToForm,
 }) => {
   const isAdmin = currentUser.role === 'ADMIN';
   const canConfigureTemplates =
@@ -301,6 +314,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   const [amendColour, setAmendColour] = useState('');
   const [amendHireDate, setAmendHireDate] = useState('');
   const [amendDays, setAmendDays] = useState('1');
+  const [amendReturnDate, setAmendReturnDate] = useState('');
   const [amendNotes, setAmendNotes] = useState('');
   const [amendReason, setAmendReason] = useState('');
   const [savingAmend, setSavingAmend] = useState(false);
@@ -314,6 +328,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   const [savingTpl, setSavingTpl] = useState(false);
 
   // Create form state (Sections A–G)
+  const [cReturnTarget, setCReturnTarget] = useState<{ kind: 'HIRE' | 'SUBHIRE' } | null>(null);
   const [cTripId, setCTripId] = useState<number | null>(null);
   const [cHirerType, setCHirerType] = useState<ChecklistHirerType>('renter');
   const [cHirerName, setCHirerName] = useState('');
@@ -326,10 +341,12 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
   const [cNewType, setCNewType] = useState<string>(VEHICLE_TYPES[0]);
   const [cNewMakeModel, setCNewMakeModel] = useState('');
   const [cNewReg, setCNewReg] = useState('');
+  const [cNewCondition, setCNewCondition] = useState<VehicleCondition | undefined>(undefined);
   const [cColour, setCColour] = useState('');
 
   const [cHireDate, setCHireDate] = useState(todayStr);
   const [cDays, setCDays] = useState('1');
+  const [cReturnDateManual, setCReturnDateManual] = useState('');
   const [cMileageOut, setCMileageOut] = useState('0');
   const [cExpectedMileage, setCExpectedMileage] = useState<number | null>(null);
   const [cNextService, setCNextService] = useState('');
@@ -506,13 +523,22 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
       setError(null);
       setNotice(null);
       const today = getHarareTodayStr();
+      const nextHirerType: ChecklistHirerType = prefill?.hirer_type ?? 'renter';
+      setCReturnTarget(prefill?.returnTarget ?? null);
       setCTripId(prefill?.trip_id ?? null);
-      setCHirerType(prefill?.hirer_type ?? 'renter');
+      setCHirerType(nextHirerType);
       setCHirerName(prefill?.hirer_name ?? '');
       setCRepresentative(prefill?.representative ?? '');
-      setCCell('');
+      setCCell(prefill?.cell ?? '');
       setCHireDate(prefill?.hire_date ?? today);
-      setCDays(String(prefill?.days && prefill.days >= 1 ? prefill.days : 1));
+      setCDays(
+        prefill?.days && prefill.days >= 1
+          ? String(prefill.days)
+          : nextHirerType === 'owner'
+            ? ''
+            : '1'
+      );
+      setCReturnDateManual('');
       setCNotes('');
       setShowAddRow(false);
       setExpandedRowExtras({});
@@ -539,16 +565,40 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
           : readCachedEntry<CachedVehiclesPayload>(CACHE_KEYS.vehiclesAll)?.data.items ?? [];
 
       const matchedVehicle =
-        (prefill?.vehicle_id ? availableVehicles.find((v) => v.id === prefill.vehicle_id) : null) ??
-        availableVehicles.find((v) => v.active) ??
-        availableVehicles[0] ??
-        null;
+        !prefill?.new_vehicle && prefill?.vehicle_id
+          ? availableVehicles.find((v) => v.id === prefill.vehicle_id) ?? null
+          : !prefill?.new_vehicle
+            ? availableVehicles.find((v) => v.active) ?? availableVehicles[0] ?? null
+            : null;
 
-      if (matchedVehicle) {
+      if (prefill?.new_vehicle) {
+        const nv = prefill.new_vehicle;
+        setCVehicleMode('new');
+        setCVehicleId(0);
+        setCNewType(nv.vehicle_type || VEHICLE_TYPES[0]);
+        setCNewMakeModel(nv.make_model || '');
+        setCNewReg((nv.reg_number || '').toUpperCase());
+        setCNewCondition(nv.condition);
+        setCColour(nv.colour ?? '');
+        setCExpectedMileage(null);
+        const startMileage =
+          prefill.mileage_out !== undefined ? prefill.mileage_out : nv.last_known_mileage ?? 0;
+        setCMileageOut(String(startMileage));
+        setCNextService(
+          nv.next_service_due_km !== null && nv.next_service_due_km !== undefined
+            ? String(nv.next_service_due_km)
+            : ''
+        );
+        setCFuelType(nv.fuel_type ?? 'diesel');
+        setCFuelOut(prefill.fuel_out ?? 'Full');
+        setCSketch(createEmptySketch(inferSketchKind(nv.vehicle_type, nv.make_model)));
+      } else if (matchedVehicle) {
+        setCNewCondition(undefined);
         applyVehicleSelection(matchedVehicle, prefill?.mileage_out, prefill?.fuel_out);
       } else {
         setCVehicleMode('new');
         setCVehicleId(0);
+        setCNewCondition(undefined);
         setCColour('');
         setCExpectedMileage(null);
         setCMileageOut(prefill?.mileage_out !== undefined ? String(prefill.mileage_out) : '0');
@@ -664,10 +714,17 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     );
   }, [vehicles, vehicleSearch]);
 
-  const cReturnDate = useMemo(
-    () => addDaysToIsoDate(cHireDate, Number(cDays) || 1),
-    [cHireDate, cDays]
-  );
+  const cReturnDate = useMemo(() => {
+    if (cHirerType === 'owner') {
+      if (cReturnDateManual.trim()) return cReturnDateManual.trim();
+      const d = Number(cDays);
+      if (cDays.trim() && Number.isInteger(d) && d >= 1) {
+        return addDaysToIsoDate(cHireDate, d);
+      }
+      return '';
+    }
+    return addDaysToIsoDate(cHireDate, Number(cDays) || 1);
+  }, [cHirerType, cHireDate, cDays, cReturnDateManual]);
 
   const mileageDiffWarning = useMemo(() => {
     if (cExpectedMileage === null) return false;
@@ -792,11 +849,19 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     e.preventDefault();
     setError(null);
 
-    const daysNum = Number(cDays);
-    if (!Number.isInteger(daysNum) || daysNum < 1) {
-      setError('Days must be at least 1.');
+    const rawDays = cDays.trim();
+    const hasDays = rawDays !== '';
+    const daysNum = hasDays ? Number(rawDays) : null;
+    if (cHirerType === 'renter') {
+      if (!hasDays || daysNum === null || !Number.isInteger(daysNum) || daysNum < 1 || daysNum > 365) {
+        setError('Days must be a whole number between 1 and 365.');
+        return;
+      }
+    } else if (hasDays && (daysNum === null || !Number.isInteger(daysNum) || daysNum < 1 || daysNum > 365)) {
+      setError('When entered, Days must be a whole number between 1 and 365.');
       return;
     }
+
     const mileageNum = Number(cMileageOut);
     if (!Number.isInteger(mileageNum) || mileageNum < 0) {
       setError('Mileage Out must be 0 or greater.');
@@ -831,6 +896,10 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     try {
       const sketchPng = await exportSketchPngDataUrl(cSketch);
       const nextServiceNum = cNextService.trim() ? Number(cNextService.trim()) : null;
+      const newMakeModelFormatted =
+        cReturnTarget?.kind === 'SUBHIRE'
+          ? formatSubhiredMakeModel(cNewMakeModel.trim())
+          : cNewMakeModel.trim();
 
       const payload: CreateChecklistPayload = {
         trip_id: cTripId,
@@ -839,11 +908,14 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
           : {
               new_vehicle: {
                 vehicle_type: cNewType,
-                make_model: cNewMakeModel.trim(),
+                make_model: newMakeModelFormatted,
                 reg_number: cNewReg.trim().toUpperCase(),
                 colour: cColour.trim() || null,
                 fuel_type: cFuelType,
+                condition: cNewCondition,
                 last_known_mileage: mileageNum,
+                next_service_due_km:
+                  nextServiceNum !== null && Number.isInteger(nextServiceNum) ? nextServiceNum : null,
               },
             }),
         hirer_type: cHirerType,
@@ -853,6 +925,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         colour: cColour.trim() || null,
         ...(isAdmin ? { hire_date: cHireDate } : {}),
         days: daysNum,
+        ...(cHirerType === 'owner' ? { return_date: cReturnDate || null } : {}),
         mileage_out: mileageNum,
         next_service_mileage:
           nextServiceNum !== null && Number.isInteger(nextServiceNum) ? nextServiceNum : null,
@@ -879,6 +952,14 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
 
       try {
         const res = await api.createChecklist(payload);
+        if (cReturnTarget && onChecklistCreatedAndReturn) {
+          const target = cReturnTarget;
+          setCReturnTarget(null);
+          void fetchChecklists();
+          void loadReferenceData();
+          onChecklistCreatedAndReturn(res.checklist, target);
+          return;
+        }
         if (printA4OnSave) {
           pendingAutoPrintRef.current = {
             reg: res.checklist.reg_number,
@@ -914,14 +995,17 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
             car_model:
               cVehicleMode === 'existing'
                 ? selectedVehicle?.make_model ?? ''
-                : cNewMakeModel.trim(),
+                : newMakeModelFormatted,
             vehicle_type:
               cVehicleMode === 'existing' ? selectedVehicle?.vehicle_type ?? '' : cNewType,
             colour: cColour.trim() || null,
             reg_number: regLabel,
             hire_date: isAdmin ? cHireDate : todayStr,
             days: daysNum,
-            return_date: addDaysToIsoDate(isAdmin ? cHireDate : todayStr, daysNum),
+            return_date:
+              cHirerType === 'owner'
+                ? cReturnDate || null
+                : addDaysToIsoDate(isAdmin ? cHireDate : todayStr, daysNum ?? 1),
             mileage_out: mileageNum,
             mileage_out_diff_warning: mileageDiffWarning,
             previous_closing_mileage: cExpectedMileage,
@@ -943,6 +1027,7 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
           const merged = [optimistic, ...(cached?.data ?? checklists)];
           writeCachedEntry(CACHE_KEYS.checklistsAll, merged);
           setChecklists(merged);
+          setCReturnTarget(null);
           setScreen('list');
           setNotice(
             `Saved checklist for ${regLabel} offline in local cache. It will sync automatically when connection returns.`
@@ -1054,7 +1139,8 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     setAmendCell(detail.cell);
     setAmendColour(detail.colour ?? '');
     setAmendHireDate(detail.hire_date);
-    setAmendDays(String(detail.days));
+    setAmendDays(detail.days !== null ? String(detail.days) : '');
+    setAmendReturnDate(detail.return_date ?? '');
     setAmendNotes(detail.notes);
     setAmendReason('');
     setShowAmendModal(true);
@@ -1066,13 +1152,15 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
     setSavingAmend(true);
     setError(null);
     try {
+      const parsedDays = amendDays.trim() ? Number(amendDays.trim()) : null;
       const res = await api.amendChecklist(detail.id, {
         hirer_name: amendHirerName.trim(),
         representative: amendRep.trim(),
         cell: amendCell.trim(),
         colour: amendColour.trim() || null,
         hire_date: amendHireDate,
-        days: Number(amendDays) || 1,
+        days: detail.hirer_type === 'owner' ? parsedDays : (parsedDays ?? 1),
+        ...(detail.hirer_type === 'owner' ? { return_date: amendReturnDate.trim() || null } : {}),
         notes: amendNotes.trim(),
         reason: amendReason.trim(),
       });
@@ -1674,16 +1762,38 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <button
             type="button"
-            onClick={() => setScreen('list')}
+            onClick={() => {
+              if (cReturnTarget && onCancelReturnToForm) {
+                const target = cReturnTarget;
+                setCReturnTarget(null);
+                onCancelReturnToForm(target);
+              } else {
+                setScreen('list');
+              }
+            }}
             className="cyan-glow-outline inline-flex min-h-[44px] items-center gap-2 rounded-xl border border-blue-200 bg-white px-4 text-sm font-semibold text-blue-900"
           >
             <ArrowLeft className="h-4 w-4 text-cyan-600" aria-hidden="true" />
-            <span>Back to Checklists</span>
+            <span>
+              {cReturnTarget?.kind === 'HIRE'
+                ? 'Back to Hire Out Form'
+                : cReturnTarget?.kind === 'SUBHIRE'
+                  ? 'Back to Subhirer Form'
+                  : 'Back to Checklists'}
+            </span>
           </button>
           <span className="text-xs font-semibold uppercase tracking-wide text-cyan-800 bg-cyan-50 border border-cyan-200 rounded-lg px-3 py-1.5">
-            New Vehicle Check-Out Slip
+            {cHirerType === 'owner' ? 'New Owner Check-In Slip' : 'New Vehicle Check-Out Slip'}
           </span>
         </div>
+
+        {cReturnTarget && (
+          <div className="rounded-xl border border-cyan-300 bg-cyan-50/70 px-4 py-3 text-sm text-blue-950">
+            Complete and save this{' '}
+            <strong>{cReturnTarget.kind === 'HIRE' ? "Renter's" : "Owner's"}</strong> checklist to automatically return and link it to your{' '}
+            <strong>{cReturnTarget.kind === 'HIRE' ? 'Hire Out' : 'Receive from Subhirer'}</strong> form.
+          </div>
+        )}
 
         <div>
           <h1 className="font-display text-2xl font-bold text-blue-950">Digital Vehicle Checklist</h1>
@@ -1710,12 +1820,27 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                 <select
                   id="chk-hirer-type"
                   value={cHirerType}
-                  onChange={(e) => setCHirerType(e.target.value as ChecklistHirerType)}
-                  className="cyan-glow-input mt-1 block w-full min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950"
+                  disabled={Boolean(cReturnTarget)}
+                  onChange={(e) => {
+                    const nextType = e.target.value as ChecklistHirerType;
+                    setCHirerType(nextType);
+                    if (nextType === 'owner') {
+                      if (cDays === '1') setCDays('');
+                      setCReturnDateManual('');
+                    } else if (!cDays.trim()) {
+                      setCDays('1');
+                    }
+                  }}
+                  className="cyan-glow-input mt-1 block w-full min-h-[44px] rounded-xl border border-blue-200 bg-white px-3 text-sm text-blue-950 disabled:bg-slate-100 disabled:text-slate-600"
                 >
                   <option value="renter">Renter&apos;s Name</option>
                   <option value="owner">Owner&apos;s Name</option>
                 </select>
+                {cReturnTarget && (
+                  <p className="mt-1 text-[11px] text-cyan-800">
+                    Locked for {cReturnTarget.kind === 'HIRE' ? 'Hire Out' : 'Subhired Receipt'}.
+                  </p>
+                )}
               </div>
               <div>
                 <label htmlFor="chk-hirer-name" className="block text-xs font-semibold text-blue-950">
@@ -1935,24 +2060,54 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
               </div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-semibold text-blue-950">Days *</label>
+                  <label htmlFor="chk-days" className="block text-xs font-semibold text-blue-950">
+                    {cHirerType === 'owner' ? 'Days (optional)' : 'Days *'}
+                  </label>
                   <input
+                    id="chk-days"
                     type="number"
                     min={1}
                     max={365}
-                    required
+                    required={cHirerType === 'renter'}
+                    placeholder={cHirerType === 'owner' ? 'Optional' : undefined}
                     value={cDays}
-                    onChange={(e) => setCDays(e.target.value)}
+                    onChange={(e) => {
+                      setCDays(e.target.value);
+                      if (e.target.value.trim()) setCReturnDateManual('');
+                    }}
                     className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-xl border border-blue-200 px-3 font-mono text-sm text-blue-950"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-blue-950">Return Date</label>
+                  <div className="flex items-center justify-between gap-1">
+                    <label htmlFor="chk-return-date" className="block text-xs font-semibold text-blue-950">
+                      {cHirerType === 'owner' ? 'Return Date (optional)' : 'Return Date'}
+                    </label>
+                    {cHirerType === 'owner' && cReturnDate && !cDays.trim() && (
+                      <button
+                        type="button"
+                        onClick={() => setCReturnDateManual('')}
+                        className="text-[11px] font-semibold text-blue-700 hover:underline"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
                   <input
+                    id="chk-return-date"
                     type="date"
-                    readOnly
+                    readOnly={cHirerType === 'renter'}
                     value={cReturnDate}
-                    className="mt-1 block w-full min-h-[42px] rounded-xl border border-slate-200 bg-slate-100 px-3 font-mono text-sm text-slate-600"
+                    onChange={(e) => {
+                      if (cHirerType === 'owner') {
+                        setCReturnDateManual(e.target.value);
+                      }
+                    }}
+                    className={`mt-1 block w-full min-h-[42px] rounded-xl border px-3 font-mono text-sm ${
+                      cHirerType === 'owner'
+                        ? 'cyan-glow-input border-blue-200 bg-white text-blue-950'
+                        : 'border-slate-200 bg-slate-100 text-slate-600'
+                    }`}
                   />
                 </div>
               </div>
@@ -2527,11 +2682,15 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                   </div>
                   <div>
                     <span className="text-slate-500">Days:</span>{' '}
-                    <span className="font-mono font-semibold">{detail.days}</span>
+                    <span className="font-mono font-semibold">
+                      {detail.days !== null ? detail.days : 'Optional'}
+                    </span>
                   </div>
                   <div>
                     <span className="text-slate-500">Return Date:</span>{' '}
-                    <span className="font-mono font-semibold">{detail.return_date}</span>
+                    <span className="font-mono font-semibold">
+                      {detail.return_date ?? 'Optional'}
+                    </span>
                   </div>
                 </div>
 
@@ -2724,16 +2883,33 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs font-semibold text-blue-950">Days</label>
+                    <label className="block text-xs font-semibold text-blue-950">
+                      {detail.hirer_type === 'owner' ? 'Days (optional)' : 'Days'}
+                    </label>
                     <input
                       type="number"
                       min={1}
+                      required={detail.hirer_type === 'renter'}
+                      placeholder={detail.hirer_type === 'owner' ? 'Optional' : undefined}
                       value={amendDays}
                       onChange={(e) => setAmendDays(e.target.value)}
                       className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-xl border border-blue-200 px-3 font-mono text-sm"
                     />
                   </div>
                 </div>
+                {detail.hirer_type === 'owner' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-blue-950">
+                      Return Date (optional)
+                    </label>
+                    <input
+                      type="date"
+                      value={amendReturnDate}
+                      onChange={(e) => setAmendReturnDate(e.target.value)}
+                      className="cyan-glow-input mt-1 block w-full min-h-[42px] rounded-xl border border-blue-200 px-3 font-mono text-sm"
+                    />
+                  </div>
+                )}
                 <div>
                   <label className="block text-xs font-semibold text-blue-950">Notes</label>
                   <textarea
@@ -2979,7 +3155,13 @@ export const ChecklistsView: React.FC<ChecklistsViewProps> = ({
                     <span className="font-mono text-xs">{c.cell}</span>
                   </div>
                   <div className="text-xs font-mono tabular-nums text-slate-500">
-                    Out {c.hire_date} · {c.days}d (Return {c.return_date}) · {c.mileage_out.toLocaleString()} km
+                    Out {c.hire_date} ·{' '}
+                    {c.days !== null
+                      ? `${c.days}d (${c.return_date ? `Return ${c.return_date}` : 'Return Optional'})`
+                      : c.return_date
+                        ? `Return ${c.return_date}`
+                        : 'Return Optional'}{' '}
+                    · {c.mileage_out.toLocaleString()} km
                     {c.mileage_in !== null ? ` → ${c.mileage_in.toLocaleString()} km` : ''}
                     {c.differences.length > 0 ? ` · ${c.differences.length} difference(s)` : ''}
                   </div>
